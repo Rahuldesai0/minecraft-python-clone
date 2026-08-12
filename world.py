@@ -591,6 +591,30 @@ class World:
 						if y > 1 and down_num == 0:
 							self.liquid_tick_queue.add(down_pos)
 
+				# Lava Horizontal Flow check (3-Block Flow Distance, NO source creation)
+				lava_upstream = []
+				for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
+					n_num = self.get_block_number((nx, ny, nz))
+					n_down_num = self.get_block_number((nx, ny - 1, nz))
+					if n_down_num not in (0, 9, 19, 15, 20):
+						if n_num == 15:
+							lava_upstream.append(0)
+						elif n_num == 20:
+							n_lvl = self.get_lava_level((nx, ny, nz))
+							if 0 <= n_lvl <= 4:
+								lava_upstream.append(0 if n_lvl == 4 else n_lvl)
+
+				if lava_upstream:
+					min_l = min(lava_upstream)
+					target_l = min_l + 1
+					if target_l <= 3:
+						self.set_block(pos, 20)
+						self.liquid_levels[pos] = target_l
+						self.liquid_tick_queue.add(pos)
+						down_pos = (x, y - 1, z)
+						if y > 1 and down_num == 0:
+							self.liquid_tick_queue.add(down_pos)
+
 			elif b_num in (9, 19):
 				curr_lvl = self.get_water_level(pos)
 
@@ -643,6 +667,58 @@ class World:
 								self.liquid_tick_queue.add((nx, ny, nz))
 
 				if is_supported and curr_lvl < 7:
+					for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
+						n_pos = (nx, ny, nz)
+						if ny > 0 and self.get_block_number(n_pos) == 0:
+							self.liquid_tick_queue.add(n_pos)
+
+			# --- 2. LAVA ENGINE ---
+			elif b_num in (15, 20):
+				curr_l = self.get_lava_level(pos)
+
+				down_pos = (x, y - 1, z)
+				if y > 1 and self.get_block_number(down_pos) == 0:
+					self.set_block(down_pos, 20)
+					self.liquid_levels[down_pos] = 4
+					self.liquid_tick_queue.add(down_pos)
+					continue
+
+				down_num = self.get_block_number((x, y - 1, z))
+				is_supported = down_num not in (0, 9, 19, 15, 20) or (self.liquid_levels.get((x, y - 1, z)) == 4)
+
+				if is_supported and b_num == 20:
+					lava_upstream = []
+
+					for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
+						n_num = self.get_block_number((nx, ny, nz))
+						n_down_num = self.get_block_number((nx, ny - 1, nz))
+						if n_down_num not in (0, 9, 19, 15, 20):
+							if n_num == 15:
+								lava_upstream.append(0)
+							elif n_num == 20:
+								n_lvl = self.get_lava_level((nx, ny, nz))
+								if 0 <= n_lvl <= 4:
+									eff_l = 0 if n_lvl == 4 else n_lvl
+									if eff_l < curr_l or curr_l == 0:
+										lava_upstream.append(eff_l)
+
+					if lava_upstream:
+						new_id = 20
+						min_l = min(lava_upstream)
+						target_l = min_l + 1
+						if target_l > 3:
+							new_id = 0
+					else:
+						new_id, target_l = 0, 4
+
+					if (target_l != curr_l or new_id != b_num) and new_id != 0:
+						self.set_block(pos, new_id)
+						self.liquid_levels[pos] = target_l
+						for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
+							if ny > 0:
+								self.liquid_tick_queue.add((nx, ny, nz))
+
+				if is_supported and curr_l < 3:
 					for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
 						n_pos = (nx, ny, nz)
 						if ny > 0 and self.get_block_number(n_pos) == 0:
