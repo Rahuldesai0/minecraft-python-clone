@@ -70,13 +70,30 @@ class Camera:
 			movement_vector[1] = up_down * delta_time
 			self.velocity_y = 0.0
 		elif in_liquid:
-			# Liquid Mode: slow buoyancy, swim up with Space
-			speed *= 0.65
+			# Liquid Mode: swim up with Space. Near surface gives strong water jump impulse (v_y = 7.8 m/s) onto shore!
+			bx = int(round(self.position[0]))
+			by = int(round(self.position[1]))
+			bz = int(round(self.position[2]))
+			eye_b = world.get_block_number((bx, by, bz))
+			above_eye_b = world.get_block_number((bx, by + 1, bz))
+
+			near_surface = (eye_b not in (9, 19, 15, 20)) or (above_eye_b not in (9, 19, 15, 20))
+
 			if keys_down.get(pyglet.window.key.SPACE, False):
-				movement_vector[1] = 4.5 * delta_time
+				if near_surface:
+					# Launch out of water onto shore (7.8 m/s impulse & full walking speed)
+					self.velocity_y = 7.8
+					movement_vector[1] = self.velocity_y * delta_time
+					speed = base_speed
+				else:
+					# Deep swimming upward
+					speed *= 0.75
+					movement_vector[1] = 5.5 * delta_time
+					self.velocity_y = 0.0
 			else:
-				movement_vector[1] = -2.5 * delta_time
-			self.velocity_y = 0.0
+				speed *= 0.65
+				movement_vector[1] = -2.0 * delta_time
+				self.velocity_y = 0.0
 		else:
 			# Normal Minecraft Ground & Gravity Physics
 			if self.on_ground:
