@@ -1,0 +1,223 @@
+import math
+import pyglet
+import matrix
+
+class Camera:
+	def __init__(self, shader, width, height):
+		self.width = width
+		self.height = height
+		self.mv_matrix = matrix.Matrix()
+		self.p_matrix = matrix.Matrix()
+		self.shader = shader
+		self.shader_matrix_location = self.shader.find_uniform(b"matrix")
+		self.input = [0, 0, 0]
+		self.position = [0, 81.5, 0]
+		self.rotation = [-math.tau / 4, 0]
+        
+		self.velocity_y = 0.0
+		self.on_ground = False
+		self.sneaking = False
+		self.eye_offset = 1.62
+
+	def round_position(self, position):
+		return [round(coord) for coord in position]
+
+	def is_in_liquid(self, world):
+		bx = int(round(self.position[0]))
+		by = int(round(self.position[1]))
+		bz = int(round(self.position[2]))
+		eye_b = world.get_block_number((bx, by, bz))
+		feet_b = world.get_block_number((bx, by - 1, bz))
+		return eye_b in (9, 19, 15, 20) or feet_b in (9, 19, 15, 20)
+
+	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
+		# Cap delta_time to prevent huge displacement on lag spikes
+		delta_time = min(delta_time, 0.05)
+
+		in_liquid = self.is_in_liquid(world)
+
+		# Ground check: verify if player's feet are resting on a solid block
+		is_grounded = not self.check_collision(world, [self.position[0], self.position[1] - 0.05, self.position[2]])
+		self.on_ground = is_grounded
+
+		# Sneak check: Shift pressed while on ground, not flying, not swimming
+		is_shift_down = keys_down.get(pyglet.window.key.LSHIFT, False)
+		self.sneaking = is_shift_down and self.on_ground and not flying and not in_liquid
+
+		# Smooth eye height lowering when sneaking (1.28 when sneaking vs 1.62 standing)
+		target_eye = 1.28 if self.sneaking else 1.62
+		old_eye = self.eye_offset
+		self.eye_offset += (target_eye - self.eye_offset) * min(1.0, 18.0 * delta_time)
+		if self.on_ground:
+			self.position[1] += (self.eye_offset - old_eye)
+
+		base_speed = 4.3  # Minecraft walking speed (~4.3 m/s)
+		if self.sneaking:
+			speed = 1.3  # Sneak walking speed (~1.3 m/s)
+		else:
+			sprint_multiplier = 1.3 if sprinting else 1.0
+			speed = base_speed * sprint_multiplier
+
+		movement_vector = [0.0, 0.0, 0.0]
+
+		if flying:
+			# Flying Mode: move up with Space, down with Shift
+			up_down = 0.0
+			if keys_down.get(pyglet.window.key.SPACE, False):
+				up_down += 10.0
+			if keys_down.get(pyglet.window.key.LSHIFT, False):
+				up_down -= 10.0
+			movement_vector[1] = up_down * delta_time
+			self.velocity_y = 0.0
+		elif in_liquid:
+			# Liquid Mode: slow buoyancy, swim up with Space
+			speed *= 0.65
+			if keys_down.get(pyglet.window.key.SPACE, False):
+				movement_vector[1] = 4.5 * delta_time
+			else:
+				movement_vector[1] = -2.5 * delta_time
+			self.velocity_y = 0.0
+		else:
+			# Normal Minecraft Ground & Gravity Physics
+			if self.on_ground:
+				if keys_down.get(pyglet.window.key.SPACE, False):
+					# Jump impulse: v0 = 8.5 m/s yields an exact 1.25-block jump height with g = 28.5 m/s^2
+					self.velocity_y = 8.5
+					self.on_ground = False
+				else:
+					self.velocity_y = 0.0
+			else:
+				# Apply gravity (28.5 m/s^2)
+				self.velocity_y -= 28.5 * delta_time
+				self.velocity_y = max(-35.0, self.velocity_y)  # Terminal velocity
+
+			movement_vector[1] = self.velocity_y * delta_time
+
+		# Horizontal Movement (X, Z)
+		if self.input[0] != 0 or self.input[2] != 0:
+			angle = self.rotation[0] - math.atan2(self.input[2], self.input[0]) + math.tau / 4
+			movement_vector[0] = math.cos(angle) * speed * delta_time
+			movement_vector[2] = math.sin(angle) * speed * delta_time
+
+		# Sneak Ledge Protection: prevent stepping off block edges into air
+		if self.sneaking and self.on_ground:
+			test_x_pos = [self.position[0] + movement_vector[0], self.position[1] - 0.05, self.position[2]]
+			if self.check_collision(world, test_x_pos):
+				movement_vector[0] = 0.0
+
+			test_z_pos = [self.position[0], self.position[1] - 0.05, self.position[2] + movement_vector[2]]
+			if self.check_collision(world, test_z_pos):
+				movement_vector[2] = 0.0
+
+		next_position = [
+			self.position[0] + movement_vector[0],
+			self.position[1] + movement_vector[1],
+			self.position[2] + movement_vector[2],
+		]
+
+		# X-axis collision
+		if self.check_collision(world, [next_position[0], self.position[1], self.position[2]]):
+			self.position[0] = next_position[0]
+
+		# Y-axis incremental collision resolution
+		dy = movement_vector[1]
+		if dy != 0:
+			step_size = 0.4
+			remaining = dy
+			sign = 1 if dy > 0 else -1
+			while abs(remaining) > 0.001:
+				step = sign * min(step_size, abs(remaining))
+				test_y = self.position[1] + step
+				if self.check_collision(world, [self.position[0], test_y, self.position[2]]):
+					self.position[1] = test_y
+					remaining -= step
+				else:
+					# Hit a ceiling or floor
+					if dy < 0:
+						self.velocity_y = 0.0
+						self.on_ground = True
+					elif dy > 0:
+						self.velocity_y = 0.0
+					break
+
+		# Z-axis collision
+		if self.check_collision(world, [self.position[0], self.position[1], next_position[2]]):
+			self.position[2] = next_position[2]
+
+	def check_collision(self, world, position):
+		"""Return True when the camera's player body is unobstructed.
+		Liquid blocks (water & lava) are passable and do not cause collision.
+		"""
+		x, y, z = position
+
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = x - half_width
+		body_max_x = x + half_width
+		body_min_y = y - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = z - half_width
+		body_max_z = z + half_width
+
+		epsilon = 0.001
+
+		min_bx = round(body_min_x + epsilon)
+		max_bx = round(body_max_x - epsilon)
+		min_by = round(body_min_y + epsilon)
+		max_by = round(body_max_y - epsilon)
+		min_bz = round(body_min_z + epsilon)
+		max_bz = round(body_max_z - epsilon)
+
+		for block_x in range(min_bx, max_bx + 1):
+			for block_y in range(min_by, max_by + 1):
+				for block_z in range(min_bz, max_bz + 1):
+					block_num = world.get_block_number((block_x, block_y, block_z))
+					if block_num != 0 and block_num not in (9, 19, 15, 20):
+						return False
+		return True
+
+	def intersects_player(self, block_position):
+		"""Return True if placing a block at block_position (bx, by, bz)
+		would intersect the player's body bounding box.
+		Allows sneaking edge block placement while preventing block entrapment.
+		"""
+		px, py, pz = self.position
+		bx, by, bz = block_position
+
+		half_width = 0.22
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		body_h = 1.4 if getattr(self, 'sneaking', False) else 1.65
+
+		p_min_x, p_max_x = px - half_width, px + half_width
+		p_min_y = py - eye_h + 0.01  # Feet bottom + epsilon
+		p_max_y = p_min_y + body_h
+		p_min_z, p_max_z = pz - half_width, pz + half_width
+
+		b_min_x, b_max_x = bx - 0.5, bx + 0.5
+		b_min_y, b_max_y = by - 0.5, by + 0.5
+		b_min_z, b_max_z = bz - 0.5, bz + 0.5
+
+		overlap_x = (p_min_x < b_max_x) and (p_max_x > b_min_x)
+		overlap_y = (p_min_y < b_max_y) and (p_max_y > b_min_y)
+		overlap_z = (p_min_z < b_max_z) and (p_max_z > b_min_z)
+
+		return overlap_x and overlap_y and overlap_z
+
+
+
+
+	def update_matrices(self):
+        # create projection matrix
+		self.p_matrix.load_identity()
+		self.p_matrix.perspective(90, float(self.width) / self.height, 0.1, 500)
+
+        # create modelview matrix
+		self.mv_matrix.load_identity()
+		self.mv_matrix.rotate_2d(self.rotation[0] + math.tau / 4, self.rotation[1])
+		self.mv_matrix.translate(-self.position[0], -self.position[1], -self.position[2])
+
+        # modelviewprojection matrix
+		mvp_matrix = self.mv_matrix * self.p_matrix
+		self.shader.uniform_matrix(self.shader_matrix_location, mvp_matrix)
