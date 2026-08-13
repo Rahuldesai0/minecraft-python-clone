@@ -462,17 +462,137 @@ class Window(pyglet.window.Window):
 		gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
 		gl.glUniform1i(self.shader_sampler_location, 0)
 
-		# 1. Render 3D World Geometry
+		# 1. Render 3D Overworld Terrain Geometry FIRST
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glEnable(gl.GL_CULL_FACE)
+		gl.glDepthMask(gl.GL_TRUE)
 		self.clear()
+
+		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position)
+
+		# 2. Render 3D Celestial Bodies (Sun & Moon) SECOND behind terrain blocks
+		gl.glEnable(gl.GL_DEPTH_TEST)
+		gl.glDepthMask(gl.GL_FALSE)
+		self.draw_celestial_bodies()
+		gl.glDepthMask(gl.GL_TRUE)
 
 		# Render 3D overworld dropped items & 2D item sprites
 		self.item_drop_manager.draw(self.shader, self.gui)
 
 		# Render 3D block breaking crack overlay
 		self.draw_breaking_overlay()
+
+	def draw_celestial_bodies(self):
+		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
+			self.celestial_vao = gl.GLuint(0)
+			gl.glGenVertexArrays(1, self.celestial_vao)
+
+			self.celestial_vbo_pos = gl.GLuint(0)
+			gl.glGenBuffers(1, self.celestial_vbo_pos)
+
+			self.celestial_vbo_tex = gl.GLuint(0)
+			gl.glGenBuffers(1, self.celestial_vbo_tex)
+
+			self.celestial_vbo_shading = gl.GLuint(0)
+			gl.glGenBuffers(1, self.celestial_vbo_shading)
+
+			self.celestial_ibo = gl.GLuint(0)
+			gl.glGenBuffers(1, self.celestial_ibo)
+
+		tod = self.time_of_day % 1.0
+		theta = (tod - 0.50) * math.tau
+
+		# Sun & Moon East to West trajectory
+		sun_dx = -math.sin(theta)
+		sun_dy = math.cos(theta)
+		sun_dz = 0.0
+
+		moon_dx = math.sin(theta)
+		moon_dy = -math.cos(theta)
+		moon_dz = 0.0
+
+		cam_x, cam_y, cam_z = self.camera.position
+		R = 380.0
+
+		sun_layer = float(self.world.texture_manager.textures.index("sun")) if "sun" in self.world.texture_manager.textures else 0.0
+		moon_layer = float(self.world.texture_manager.textures.index("moon")) if "moon" in self.world.texture_manager.textures else 0.0
+
+		pos_data = []
+		tex_data = []
+		shading_data = []
+		idx_data = []
+		v_idx = 0
+
+		def build_celestial_quad(dx, dy, dz, layer, size=45.0):
+			nonlocal v_idx
+			cx = cam_x + dx * R
+			cy = cam_y + dy * R
+			cz = cam_z + dz * R
+
+			rx, ry, rz = 0.0, 0.0, size
+			ux, uy, uz = dy * size, -dx * size, 0.0
+
+			p0 = (cx - rx + ux, cy - ry + uy, cz - rz + uz)
+			p1 = (cx + rx + ux, cy + ry + uy, cz + rz + uz)
+			p2 = (cx + rx - ux, cy + ry - uy, cz + rz - uz)
+			p3 = (cx - rx - ux, cy - ry - uy, cz - rz - uz)
+
+			for px, py, pz in [p0, p1, p2, p3]:
+				pos_data.extend([px, py, pz])
+
+			tex_data.extend([
+				0.0, 0.0, layer,
+				1.0, 0.0, layer,
+				1.0, 1.0, layer,
+				0.0, 1.0, layer
+			])
+
+			shading_data.extend([1.0, 1.0, 1.0, 1.0])
+
+			idx_data.extend([
+				v_idx, v_idx + 1, v_idx + 2,
+				v_idx, v_idx + 2, v_idx + 3
+			])
+			v_idx += 4
+
+		build_celestial_quad(sun_dx, sun_dy, sun_dz, sun_layer, size=45.0)
+		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=40.0)
+
+		gl.glBindVertexArray(self.celestial_vao)
+
+		pos_bytes = (gl.GLfloat * len(pos_data))(*pos_data)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_pos)
+		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(pos_bytes), pos_bytes, gl.GL_STREAM_DRAW)
+		gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glEnableVertexAttribArray(0)
+
+		tex_bytes = (gl.GLfloat * len(tex_data))(*tex_data)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_tex)
+		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(tex_bytes), tex_bytes, gl.GL_STREAM_DRAW)
+		gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glEnableVertexAttribArray(1)
+
+		shading_bytes = (gl.GLfloat * len(shading_data))(*shading_data)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_shading)
+		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(shading_bytes), shading_bytes, gl.GL_STREAM_DRAW)
+		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glEnableVertexAttribArray(2)
+
+		idx_bytes = (gl.GLuint * len(idx_data))(*idx_data)
+		gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self.celestial_ibo)
+		gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, ctypes.sizeof(idx_bytes), idx_bytes, gl.GL_STREAM_DRAW)
+
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glDepthMask(gl.GL_FALSE)
+
+		gl.glDrawElements(gl.GL_TRIANGLES, len(idx_data), gl.GL_UNSIGNED_INT, 0)
+
+		gl.glDepthMask(gl.GL_TRUE)
+		gl.glEnable(gl.GL_CULL_FACE)
+		gl.glBindVertexArray(0)
+		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
+		gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, 0)
 
 		# 2. Render 2D F3 Debug Text Overlay over the 3D World
 		if self.show_debug:

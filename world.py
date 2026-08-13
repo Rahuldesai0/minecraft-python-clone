@@ -384,6 +384,10 @@ class World:
 		for item_id, item_name, tex_name in gui.TOOL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
 
+		# Register celestial sky textures (Sun & Moon) into texture_manager
+		self.texture_manager.add_texture("sun")
+		self.texture_manager.add_texture("moon")
+
 		self.texture_manager.generate_mipmaps()
 
 		self.chunks = {}
