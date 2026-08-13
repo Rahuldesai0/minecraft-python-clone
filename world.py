@@ -36,7 +36,7 @@ def _generate_ring_offsets(max_rd):
 RING_OFFSETS = _generate_ring_offsets(MAX_RENDER_DISTANCE)
 
 
-def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, cave_scale, cave_threshold, save_dir):
+def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, cave_scale, cave_threshold, save_dir, seed=0):
 	"""Independent worker function for ProcessPoolExecutor.
 	Generates authentic Minecraft 1.0 style terrain:
 	- Smooth plains, sandy beaches, deep oceans, and high mountain ranges.
@@ -67,7 +67,10 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		for _ in range(chunk.CHUNK_HEIGHT)]
 		for _ in range(chunk.CHUNK_WIDTH)]
 
-	rng = Random((x * 341873128712 + z * 132897987541) & ((1 << 64) - 1))
+	seed_offset_x = float((seed * 10007) % 50000)
+	seed_offset_z = float((seed * 16007) % 50000)
+
+	rng = Random((x * 341873128712 + z * 132897987541 + seed) & ((1 << 64) - 1))
 	surface_heights = [[0 for _ in range(chunk.CHUNK_LENGTH)]
 		for _ in range(chunk.CHUNK_WIDTH)]
 
@@ -77,8 +80,8 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	# 1. Heightmap (Smooth Beach Descent, Plains, Rolling Hills & Steep Cone-Shaped Mountain Peaks)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
-			wx = chunk_offset_x + i
-			wz = chunk_offset_z + k
+			wx = chunk_offset_x + i + seed_offset_x
+			wz = chunk_offset_z + k + seed_offset_z
 
 			# Continentalness: Ocean vs Coast vs Plains vs High Mountains
 			cont = pnoise2(wx / 350.0, wz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
@@ -88,21 +91,23 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			ridge = 1.0 - abs(peaks_raw * 2.0)
 			cone_shape = max(0.0, ridge) ** 2.4  # Sharp, steep cone peak profile
 
-			# Compute target surface height
+			# Smooth, continuous height map transition (eliminates shear vertical cliff walls)
 			if cont < 0.10:
 				# Smooth gradual S-curve from deep ocean (y=48) to beach (y=60) to plains (y=62)
 				t = max(0.0, min(1.0, (cont - (-0.25)) / 0.35))
 				smooth_t = 3.0 * t * t - 2.0 * t * t * t
 				target_y = 48.0 + smooth_t * 14.0 + (peaks_raw * 1.5)
-			elif cont < 0.20:
-				# Grassy Plains & Rolling Hills (y = 62..75)
-				t = (cont - 0.10) / 0.10
-				target_y = 62.0 + t * 13.0 + (ridge * 5.0)
+			elif cont < 0.30:
+				# Grassy Plains & Rolling Hills (y = 62..74)
+				t = (cont - 0.10) / 0.20
+				smooth_t = 3.0 * t * t - 2.0 * t * t * t
+				target_y = 62.0 + smooth_t * 12.0 + (ridge * 4.0)
 			else:
-				# Soaring Cone-Shaped Mountain Peaks (reaching heights 140 to 155 blocks!)
-				t = min(1.0, (cont - 0.20) / 0.50)
-				mountain_boost = (t ** 1.1) * 80.0 * (0.25 + 0.75 * cone_shape)
-				target_y = 75.0 + mountain_boost
+				# Gently sloped climbable alpine mountains (y = 74..108)
+				t = min(1.0, (cont - 0.30) / 0.50)
+				smooth_t = 3.0 * t * t - 2.0 * t * t * t
+				mountain_boost = smooth_t * 32.0 + (ridge * 6.0)
+				target_y = 74.0 + mountain_boost
 
 			# Winding Rivers (smooth shallow U-shaped channels)
 			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
@@ -318,7 +323,22 @@ class GeneratedChunkData:
 			for _ in range(chunk.CHUNK_WIDTH)]
 
 class World:
-	def __init__(self):
+	def __init__(self, seed=None, save_folder=None, render_distance=6):
+		if seed is None or seed == "":
+			self.seed = Random().randint(100000, 999999999)
+		elif isinstance(seed, str):
+			if seed.lstrip("-").isdigit():
+				self.seed = int(seed)
+			else:
+				self.seed = abs(hash(seed)) % 1000000000
+		else:
+			self.seed = int(seed)
+
+		self.save_folder = save_folder or "default"
+		import world_save
+		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, 'chunks')
+		os.makedirs(self.save_dir, exist_ok=True)
+
 		self.texture_manager = texture_manager.Texture_manager(16, 16, 256)
 		self.block_types = [None]
 
@@ -376,14 +396,14 @@ class World:
 		self.cave_scale = 15.0  # Controls the frequency of the cave noise
 		self.cave_threshold = 0.1 # Threshold for cave generation
 
-		self.render_distance = 6
+		self.render_distance = max(2, min(12, render_distance))
 		self.unload_distance = self.render_distance + 3  # Hysteresis buffer zone (3 extra chunks) prevents load/unload thrashing
 		self.dirty_chunks = set()  # chunks modified by player (need saving)
 		self._last_player_chunk = None  # cache to avoid redundant work
 		self._load_queue = []  # pre-sorted list of chunk positions to generate
 
 		# ensure save directory exists
-		os.makedirs(SAVE_DIR, exist_ok=True)
+		os.makedirs(self.save_dir, exist_ok=True)
 
 		# ProcessPoolExecutor runs chunk block generation in disjoint OS processes with their own GIL and CPU cores.
 		self.chunk_generation_executor = ProcessPoolExecutor(max_workers=2)
@@ -404,6 +424,11 @@ class World:
 		self.water_levels = {}
 		self.liquid_tick_queue = set()
 
+	def set_render_distance(self, new_rd):
+		self.render_distance = max(2, min(12, new_rd))
+		self.unload_distance = self.render_distance + 3
+		self._load_queue.clear()
+
 		# Generate a small spawn area synchronously so the player has ground
 		for x in range(-2, 3):
 			for z in range(-2, 3):
@@ -420,7 +445,7 @@ class World:
 		chunk_position = (x, 0, z)
 		blocks = build_chunk_blocks_process(
 			x, z, self.scale, self.octaves, self.persistence, self.lacunarity,
-			self.cave_scale, self.cave_threshold, SAVE_DIR)
+			self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
 		if blocks_only:
 			return blocks
 		current_chunk = chunk.Chunk(self, chunk_position)
@@ -871,7 +896,7 @@ class World:
 		
 		current_chunk = self.chunks[chunk_position]
 		cx, _, cz = chunk_position
-		save_path = os.path.join(SAVE_DIR, f"{cx}_{cz}.chunk")
+		save_path = os.path.join(self.save_dir, f"{cx}_{cz}.chunk")
 		
 		data = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
 		idx = 0
@@ -950,7 +975,7 @@ class World:
 					build_chunk_blocks_process,
 					chunk_pos[0], chunk_pos[2],
 					self.scale, self.octaves, self.persistence, self.lacunarity,
-					self.cave_scale, self.cave_threshold, SAVE_DIR))
+					self.cave_scale, self.cave_threshold, self.save_dir, self.seed))
 			return  # one submission per frame
 
 	def update_chunks(self, player_position):
@@ -967,9 +992,9 @@ class World:
 		# 2. Submit at most 1 background generation job
 		self._submit_generations()
 
-		# 3. Handle chunk boundary crossing & load queue replenishment
+		# 3. Handle chunk boundary crossing & load queue replenishment ONLY when player crosses a chunk boundary
 		current_chunk_pos = (player_cx, player_cz)
-		if current_chunk_pos != self._last_player_chunk or not self._load_queue:
+		if current_chunk_pos != self._last_player_chunk:
 			self._last_player_chunk = current_chunk_pos
 			self._rebuild_load_queue(player_cx, player_cz)
 

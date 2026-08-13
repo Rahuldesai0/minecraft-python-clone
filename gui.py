@@ -132,6 +132,15 @@ class InventoryGUI:
 			color=(255, 255, 255, 255)
 		)
 
+	def reset_inventory(self):
+		self.survival_hotbar = [[0, 0] for _ in range(9)]
+		self.survival_inventory = [[0, 0] for _ in range(27)]
+		self.crafting_grid = [[0, 0] for _ in range(9)]
+		self.crafting_result = [0, 0]
+		self.selected_slot = 0
+		self.held_stack = None
+		self.inventory_open = False
+
 	def _load_icons(self):
 		for b_id, name, tex_name in ALL_ITEMS:
 			img_path = os.path.join("textures", f"{tex_name}.png")
@@ -201,6 +210,508 @@ class InventoryGUI:
 					return True
 
 		return count == 0
+
+	def draw_loading_screen(self, progress, status_text="Generating Terrain..."):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		w = self.window.width
+		h = self.window.height
+
+		# Dark dirt backdrop (Minecraft dirt background color)
+		bg = pyglet.shapes.Rectangle(0, 0, w, h, color=(35, 25, 20, 255))
+		bg.draw()
+
+		# Tile dirt texture if available
+		if 4 in self.icon_textures:
+			img = self.icon_textures[4]
+			for bx in range(0, w, 64):
+				for by in range(0, h, 64):
+					spr = pyglet.sprite.Sprite(img, x=bx, y=by)
+					spr.scale_x = 64.0 / img.width
+					spr.scale_y = 64.0 / img.height
+					spr.color = (60, 50, 45)
+					spr.draw()
+
+		# Dark dimming veil
+		veil = pyglet.shapes.Rectangle(0, 0, w, h, color=(0, 0, 0, 160))
+		veil.draw()
+
+		cx = w // 2
+		cy = h // 2
+
+		# Title Header: "Generating World"
+		title_lbl = pyglet.text.Label(
+			"Generating World", font_name="Arial", font_size=22,
+			x=cx, y=cy + 75, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		# Progress Bar Outer Frame
+		bar_w = 400
+		bar_h = 24
+		pad = 2
+		draw_bordered_box(cx - bar_w // 2, cy - bar_h // 2, bar_w, bar_h, pad, (15, 15, 20, 230), (180, 180, 200, 255))
+
+		# Progress Fill (Minecraft Emerald Green)
+		pct = max(0.0, min(1.0, progress))
+		fill_w = max(1, int((bar_w - 2 * pad) * pct))
+		fill_bar = pyglet.shapes.Rectangle(cx - bar_w // 2 + pad, cy - bar_h // 2 + pad, fill_w, bar_h - 2 * pad, color=(80, 210, 90, 255))
+		fill_bar.draw()
+
+		# Percentage Text centered on Progress Bar
+		pct_text = f"{int(pct * 100)}%"
+		pct_lbl = pyglet.text.Label(
+			pct_text, font_name="Arial", font_size=11,
+			x=cx, y=cy, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		pct_lbl.draw()
+
+		# Status Text below Progress Bar
+		stat_lbl = pyglet.text.Label(
+			status_text, font_name="Arial", font_size=11,
+			x=cx, y=cy - 45, anchor_x="center", anchor_y="center",
+			color=(200, 200, 220, 255)
+		)
+		# Status Text below Progress Bar
+		stat_lbl = pyglet.text.Label(
+			status_text, font_name="Arial", font_size=11,
+			x=cx, y=cy - 45, anchor_x="center", anchor_y="center",
+			color=(200, 200, 220, 255)
+		)
+		stat_lbl.draw()
+
+	def serialize_inventory(self):
+		return {
+			'hotbar': [list(slot) for slot in self.survival_hotbar],
+			'inventory': [list(slot) for slot in self.survival_inventory],
+			'crafting_grid': [list(slot) for slot in self.crafting_grid],
+			'crafting_result': list(self.crafting_result),
+			'selected_slot': self.selected_slot
+		}
+
+	def load_inventory_data(self, data):
+		if not data:
+			return
+		if 'hotbar' in data:
+			self.survival_hotbar = [list(slot) for slot in data['hotbar']]
+		if 'inventory' in data:
+			self.survival_inventory = [list(slot) for slot in data['inventory']]
+		if 'crafting_grid' in data:
+			self.crafting_grid = [list(slot) for slot in data['crafting_grid']]
+		if 'crafting_result' in data:
+			self.crafting_result = list(data['crafting_result'])
+		if 'selected_slot' in data:
+			self.selected_slot = data['selected_slot']
+
+	def draw_menu_background(self):
+		w = self.window.width
+		h = self.window.height
+
+		bg = pyglet.shapes.Rectangle(0, 0, w, h, color=(35, 25, 20, 255))
+		bg.draw()
+
+		if 4 in self.icon_textures:
+			img = self.icon_textures[4]
+			for bx in range(0, w, 64):
+				for by in range(0, h, 64):
+					spr = pyglet.sprite.Sprite(img, x=bx, y=by)
+					spr.scale_x = 64.0 / img.width
+					spr.scale_y = 64.0 / img.height
+					spr.color = (60, 50, 45)
+					spr.draw()
+
+		veil = pyglet.shapes.Rectangle(0, 0, w, h, color=(0, 0, 0, 170))
+		veil.draw()
+
+	def draw_main_menu(self, saved_worlds, selected_index=0):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		self.draw_menu_background()
+
+		w = self.window.width
+		h = self.window.height
+		cx = w // 2
+		cy = h // 2
+
+		# Title Header: MINECRAFT CLONE
+		title_lbl = pyglet.text.Label(
+			"MINECRAFT CLONE", font_name="Arial", font_size=26,
+			x=cx, y=h - 45, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		sub_lbl = pyglet.text.Label(
+			"Select Saved World", font_name="Arial", font_size=12,
+			x=cx, y=h - 75, anchor_x="center", anchor_y="center",
+			color=(200, 200, 220, 255)
+		)
+		sub_lbl.draw()
+
+		# Saved Worlds List Box (Center Screen)
+		list_w = 460
+		list_h = 240
+		list_y = cy + 20
+		draw_bordered_box(cx - list_w // 2, list_y - list_h // 2, list_w, list_h, 2, (15, 15, 20, 230), (140, 140, 160, 255))
+
+		if not saved_worlds:
+			no_lbl = pyglet.text.Label(
+				"No Saved Worlds Found. Click 'Create New World' below!", font_name="Arial", font_size=11,
+				x=cx, y=list_y, anchor_x="center", anchor_y="center",
+				color=(180, 180, 190, 255)
+			)
+			no_lbl.draw()
+		else:
+			item_h = 52
+			start_y = list_y + list_h // 2 - 32
+			for idx, w_info in enumerate(saved_worlds[:4]):  # display up to 4 worlds
+				item_cy = start_y - idx * (item_h + 4)
+				is_sel = (idx == selected_index)
+
+				box_bg = (40, 70, 40, 230) if is_sel else (25, 25, 30, 210)
+				border_c = (255, 215, 0, 255) if is_sel else (100, 100, 120, 255)
+
+				draw_bordered_box(cx - (list_w - 20) // 2, item_cy - item_h // 2, list_w - 20, item_h, 2, box_bg, border_c)
+
+				w_name = w_info.get('name', 'New World')
+				w_seed = w_info.get('seed', 0)
+				w_date = w_info.get('last_played_str', 'Recently')
+
+				name_lbl = pyglet.text.Label(
+					w_name, font_name="Arial", font_size=12,
+					x=cx - (list_w - 40) // 2, y=item_cy + 10, anchor_x="left", anchor_y="center",
+					color=(255, 230, 120, 255) if is_sel else (240, 240, 240, 255)
+				)
+				name_lbl.draw()
+
+				info_text = f"Seed: {w_seed}  |  Last Played: {w_date}"
+				info_lbl = pyglet.text.Label(
+					info_text, font_name="Arial", font_size=9,
+					x=cx - (list_w - 40) // 2, y=item_cy - 12, anchor_x="left", anchor_y="center",
+					color=(170, 170, 190, 255)
+				)
+				info_lbl.draw()
+
+		# Action Buttons at Bottom
+		btn_y = cy - 140
+		btn_w = 210
+		btn_h = 38
+
+		# Play Selected World
+		play_bg = (30, 120, 40, 230) if saved_worlds else (40, 40, 45, 180)
+		play_border = (100, 230, 110, 255) if saved_worlds else (80, 80, 90, 255)
+		draw_bordered_box(cx - btn_w - 10, btn_y, btn_w, btn_h, 2, play_bg, play_border)
+		play_lbl = pyglet.text.Label(
+			"Play Selected World", font_name="Arial", font_size=12,
+			x=cx - btn_w // 2 - 10, y=btn_y + btn_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255) if saved_worlds else (140, 140, 140, 255)
+		)
+		play_lbl.draw()
+
+		# Create New World
+		draw_bordered_box(cx + 10, btn_y, btn_w, btn_h, 2, (30, 80, 130, 230), (100, 170, 240, 255))
+		create_lbl = pyglet.text.Label(
+			"Create New World", font_name="Arial", font_size=12,
+			x=cx + btn_w // 2 + 10, y=btn_y + btn_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		create_lbl.draw()
+
+		# Secondary Buttons: Rename & Delete
+		btn2_y = cy - 190
+		btn2_w = 140
+		btn2_h = 32
+
+		# Rename World
+		ren_bg = (45, 45, 55, 220) if saved_worlds else (40, 40, 45, 180)
+		draw_bordered_box(cx - btn2_w - 10, btn2_y, btn2_w, btn2_h, 2, ren_bg, (160, 160, 180, 255))
+		ren_lbl = pyglet.text.Label(
+			"Rename World", font_name="Arial", font_size=10,
+			x=cx - btn2_w // 2 - 10, y=btn2_y + btn2_h // 2, anchor_x="center", anchor_y="center",
+			color=(240, 240, 240, 255) if saved_worlds else (140, 140, 140, 255)
+		)
+		ren_lbl.draw()
+
+		# Delete World
+		del_bg = (120, 30, 30, 220) if saved_worlds else (40, 40, 45, 180)
+		del_border = (230, 90, 90, 255) if saved_worlds else (80, 80, 90, 255)
+		draw_bordered_box(cx + 10, btn2_y, btn2_w, btn2_h, 2, del_bg, del_border)
+		del_lbl = pyglet.text.Label(
+			"Delete World", font_name="Arial", font_size=10,
+			x=cx + btn2_w // 2 + 10, y=btn2_y + btn2_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255) if saved_worlds else (140, 140, 140, 255)
+		)
+		del_lbl.draw()
+
+	def draw_create_world(self, name_text="", seed_text="", active_field="name"):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		self.draw_menu_background()
+
+		w = self.window.width
+		h = self.window.height
+		cx = w // 2
+		cy = h // 2
+
+		title_lbl = pyglet.text.Label(
+			"Create New World", font_name="Arial", font_size=24,
+			x=cx, y=cy + 130, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		# 1. World Name Field
+		name_lbl = pyglet.text.Label(
+			"World Name (Default: New World):", font_name="Arial", font_size=11,
+			x=cx, y=cy + 75, anchor_x="center", anchor_y="center",
+			color=(220, 220, 230, 255)
+		)
+		name_lbl.draw()
+
+		box_w = 340
+		box_h = 32
+		pad = 2
+		is_name_act = (active_field == "name")
+		draw_bordered_box(cx - box_w // 2, cy + 30, box_w, box_h, pad, (15, 15, 20, 230), (255, 215, 0, 255) if is_name_act else (140, 140, 160, 255))
+
+		disp_name = (name_text + ("|" if is_name_act else "")) if name_text else ("| New World" if is_name_act else "New World")
+		disp_name_lbl = pyglet.text.Label(
+			disp_name, font_name="Arial", font_size=12,
+			x=cx, y=cy + 30 + box_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255) if name_text else (150, 150, 170, 255)
+		)
+		disp_name_lbl.draw()
+
+		# 2. Seed Field
+		seed_lbl = pyglet.text.Label(
+			"World Seed (Leave blank for random seed):", font_name="Arial", font_size=11,
+			x=cx, y=cy - 15, anchor_x="center", anchor_y="center",
+			color=(220, 220, 230, 255)
+		)
+		seed_lbl.draw()
+
+		is_seed_act = (active_field == "seed")
+		draw_bordered_box(cx - box_w // 2, cy - 60, box_w, box_h, pad, (15, 15, 20, 230), (255, 215, 0, 255) if is_seed_act else (140, 140, 160, 255))
+
+		disp_seed = (seed_text + ("|" if is_seed_act else "")) if seed_text else ("| Random Seed" if is_seed_act else "Random Seed")
+		disp_seed_lbl = pyglet.text.Label(
+			disp_seed, font_name="Arial", font_size=12,
+			x=cx, y=cy - 60 + box_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255) if seed_text else (150, 150, 170, 255)
+		)
+		disp_seed_lbl.draw()
+
+		# Buttons: Create World & Cancel
+		btn_y = cy - 130
+		btn1_w = 180
+		btn1_h = 38
+
+		# Create
+		draw_bordered_box(cx - btn1_w - 10, btn_y, btn1_w, btn1_h, 2, (30, 120, 40, 230), (100, 230, 110, 255))
+		create_btn_lbl = pyglet.text.Label(
+			"Create World", font_name="Arial", font_size=13,
+			x=cx - btn1_w // 2 - 10, y=btn_y + btn1_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		create_btn_lbl.draw()
+
+		# Cancel
+		cancel_w = 120
+		draw_bordered_box(cx + 10, btn_y, cancel_w, btn1_h, 2, (100, 30, 30, 230), (220, 90, 90, 255))
+		cancel_btn_lbl = pyglet.text.Label(
+			"Cancel", font_name="Arial", font_size=13,
+			x=cx + cancel_w // 2 + 10, y=btn_y + btn1_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		cancel_btn_lbl.draw()
+
+	def draw_rename_world(self, name_text=""):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		self.draw_menu_background()
+
+		w = self.window.width
+		h = self.window.height
+		cx = w // 2
+		cy = h // 2
+
+		title_lbl = pyglet.text.Label(
+			"Rename World", font_name="Arial", font_size=24,
+			x=cx, y=cy + 90, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		box_w = 340
+		box_h = 34
+		draw_bordered_box(cx - box_w // 2, cy + 10, box_w, box_h, 2, (15, 15, 20, 230), (255, 215, 0, 255))
+
+		disp_name = (name_text + "|") if name_text else "|"
+		disp_name_lbl = pyglet.text.Label(
+			disp_name, font_name="Arial", font_size=13,
+			x=cx, y=cy + 10 + box_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		disp_name_lbl.draw()
+
+		btn_y = cy - 60
+		btn_w = 160
+		btn_h = 38
+
+		# Save Name
+		draw_bordered_box(cx - btn_w - 10, btn_y, btn_w, btn_h, 2, (30, 120, 40, 230), (100, 230, 110, 255))
+		save_lbl = pyglet.text.Label(
+			"Save Name", font_name="Arial", font_size=13,
+			x=cx - btn_w // 2 - 10, y=btn_y + btn_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		save_lbl.draw()
+
+		# Cancel
+		cancel_w = 120
+		draw_bordered_box(cx + 10, btn_y, cancel_w, btn_h, 2, (100, 30, 30, 230), (220, 90, 90, 255))
+		cancel_lbl = pyglet.text.Label(
+			"Cancel", font_name="Arial", font_size=13,
+			x=cx + cancel_w // 2 + 10, y=btn_y + btn_h // 2, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		cancel_lbl.draw()
+
+	def draw_pause_menu(self):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		w = self.window.width
+		h = self.window.height
+		cx = w // 2
+		cy = h // 2
+
+		# Translucent dark veil over 3D world
+		veil = pyglet.shapes.Rectangle(0, 0, w, h, color=(0, 0, 0, 175))
+		veil.draw()
+
+		title_lbl = pyglet.text.Label(
+			"Game Paused", font_name="Arial", font_size=24,
+			x=cx, y=cy + 110, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		btn_w = 240
+		btn_h = 40
+		pad = 2
+
+		# 1. Back to Game
+		b1_y = cy + 30
+		draw_bordered_box(cx - btn_w // 2, b1_y - btn_h // 2, btn_w, btn_h, pad, (30, 110, 40, 230), (100, 220, 110, 255))
+		lbl1 = pyglet.text.Label(
+			"Back to Game", font_name="Arial", font_size=13,
+			x=cx, y=b1_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		lbl1.draw()
+
+		# 2. Settings
+		b2_y = cy - 25
+		draw_bordered_box(cx - btn_w // 2, b2_y - btn_h // 2, btn_w, btn_h, pad, (45, 45, 55, 230), (160, 160, 180, 255))
+		lbl2 = pyglet.text.Label(
+			"Settings", font_name="Arial", font_size=13,
+			x=cx, y=b2_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		lbl2.draw()
+
+		# 3. Save and Quit to Title
+		b3_y = cy - 80
+		draw_bordered_box(cx - btn_w // 2, b3_y - btn_h // 2, btn_w, btn_h, pad, (110, 35, 35, 230), (230, 100, 100, 255))
+		lbl3 = pyglet.text.Label(
+			"Save and Quit to Title", font_name="Arial", font_size=13,
+			x=cx, y=b3_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		lbl3.draw()
+
+	def draw_settings_menu(self, render_distance=6):
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		w = self.window.width
+		h = self.window.height
+		cx = w // 2
+		cy = h // 2
+
+		veil = pyglet.shapes.Rectangle(0, 0, w, h, color=(0, 0, 0, 185))
+		veil.draw()
+
+		title_lbl = pyglet.text.Label(
+			"Options / Settings", font_name="Arial", font_size=22,
+			x=cx, y=cy + 100, anchor_x="center", anchor_y="center",
+			color=(255, 215, 0, 255)
+		)
+		title_lbl.draw()
+
+		# Render Distance Control Box
+		ctrl_w = 320
+		ctrl_h = 44
+		ctrl_y = cy + 20
+		draw_bordered_box(cx - ctrl_w // 2, ctrl_y - ctrl_h // 2, ctrl_w, ctrl_h, 2, (20, 20, 25, 230), (140, 140, 160, 255))
+
+		rd_lbl = pyglet.text.Label(
+			f"Render Distance:  {render_distance} Chunks", font_name="Arial", font_size=13,
+			x=cx, y=ctrl_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		rd_lbl.draw()
+
+		# Minus Button
+		minus_w = 40
+		draw_bordered_box(cx - ctrl_w // 2 - minus_w - 10, ctrl_y - ctrl_h // 2, minus_w, ctrl_h, 2, (45, 45, 55, 230), (180, 180, 200, 255))
+		m_lbl = pyglet.text.Label(
+			"-", font_name="Arial", font_size=18,
+			x=cx - ctrl_w // 2 - minus_w // 2 - 10, y=ctrl_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		m_lbl.draw()
+
+		# Plus Button
+		plus_w = 40
+		draw_bordered_box(cx + ctrl_w // 2 + 10, ctrl_y - ctrl_h // 2, plus_w, ctrl_h, 2, (45, 45, 55, 230), (180, 180, 200, 255))
+		p_lbl = pyglet.text.Label(
+			"+", font_name="Arial", font_size=18,
+			x=cx + ctrl_w // 2 + plus_w // 2 + 10, y=ctrl_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		p_lbl.draw()
+
+		# Done Button
+		done_w = 180
+		done_h = 38
+		done_y = cy - 60
+		draw_bordered_box(cx - done_w // 2, done_y - done_h // 2, done_w, done_h, 2, (30, 110, 40, 230), (100, 220, 110, 255))
+		done_lbl = pyglet.text.Label(
+			"Done", font_name="Arial", font_size=13,
+			x=cx, y=done_y, anchor_x="center", anchor_y="center",
+			color=(255, 255, 255, 255)
+		)
+		done_lbl.draw()
 
 	def evaluate_crafting(self):
 		"""Evaluate 3x3 crafting grid and set self.crafting_result."""
