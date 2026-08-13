@@ -261,18 +261,45 @@ class Window(pyglet.window.Window):
 		)
 
 		self.time_of_day = 0.0  # Represents time of day, 0.0 to 1.0 where 0.0 is midnight and 0.5 is noon
-		self.cycle_speed = 0.01  # Speed of the day-night cycle
+		self.cycle_speed = 1.0 / 1200.0  # Exactly 20-minute full day/night cycle (1200 seconds)
 
 	def update_sky_color(self):
-		if self.time_of_day < 0.25 or self.time_of_day > 0.75:
-			# Night
-			gl.glClearColor(0.05, 0.05, 0.1, 1.0)
-		elif 0.25 <= self.time_of_day < 0.30 or 0.70 <= self.time_of_day <= 0.75:
-			# Sunrise/Sunset
-			gl.glClearColor(0.8, 0.4, 0.2, 1.0)
-		else:
-			# Day
-			gl.glClearColor(0.5, 0.8, 1.0, 1.0)
+		tod = self.time_of_day % 1.0
+
+		night_c = (0.05, 0.05, 0.12)
+		dawn_c  = (0.90, 0.48, 0.22)
+		day_c   = (0.50, 0.78, 1.00)
+		dusk_c  = (0.85, 0.38, 0.18)
+
+		def lerp(c1, c2, t):
+			t = max(0.0, min(1.0, t))
+			return (
+				c1[0] + (c2[0] - c1[0]) * t,
+				c1[1] + (c2[1] - c1[1]) * t,
+				c1[2] + (c2[2] - c1[2]) * t,
+				1.0
+			)
+
+		if tod < 0.20 or tod >= 0.80:
+			# Deep Night
+			r, g, b, a = night_c[0], night_c[1], night_c[2], 1.0
+		elif 0.20 <= tod < 0.25:
+			# Night -> Dawn / Sunrise
+			r, g, b, a = lerp(night_c, dawn_c, (tod - 0.20) / 0.05)
+		elif 0.25 <= tod < 0.30:
+			# Dawn / Sunrise -> Day
+			r, g, b, a = lerp(dawn_c, day_c, (tod - 0.25) / 0.05)
+		elif 0.30 <= tod < 0.70:
+			# Full Day
+			r, g, b, a = day_c[0], day_c[1], day_c[2], 1.0
+		elif 0.70 <= tod < 0.75:
+			# Day -> Sunset / Dusk
+			r, g, b, a = lerp(day_c, dusk_c, (tod - 0.70) / 0.05)
+		else:  # 0.75 <= tod < 0.80
+			# Sunset / Dusk -> Night
+			r, g, b, a = lerp(dusk_c, night_c, (tod - 0.75) / 0.05)
+
+		gl.glClearColor(r, g, b, a)
 
 	def get_surface_height(self, x=0, z=0):
 		"""Find the highest solid block y-coordinate at world column (x, z)."""
