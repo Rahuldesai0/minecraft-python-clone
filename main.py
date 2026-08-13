@@ -471,14 +471,19 @@ class Window(pyglet.window.Window):
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position)
 
-		# 2. Render 3D Celestial Bodies (Sun & Moon) SECOND behind terrain blocks
+		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
+		self.item_drop_manager.draw(self.shader, self.gui)
+
+		# 3. Render 3D Celestial Bodies (Sun & Moon) SECOND behind terrain blocks
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glDepthMask(gl.GL_FALSE)
 		self.draw_celestial_bodies()
 		gl.glDepthMask(gl.GL_TRUE)
 
-		# Render 3D overworld dropped items & 2D item sprites
-		self.item_drop_manager.draw(self.shader, self.gui)
+		# 4. Render 2D UI overlays (F3 debug, crosshair, mining progress, inventory, menus)
+		self.draw_2d_overlays()
+
+		gl.glFlush()
 
 	def draw_celestial_bodies(self):
 		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
@@ -619,6 +624,9 @@ class Window(pyglet.window.Window):
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
 		gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, 0)
 
+	def draw_2d_overlays(self):
+		gl.glDepthMask(gl.GL_FALSE)
+
 		# 2. Render 2D F3 Debug Text Overlay over the 3D World
 		if self.show_debug:
 			x, y, z = self.camera.position
@@ -701,7 +709,7 @@ class Window(pyglet.window.Window):
 			rd = getattr(self.world, "render_distance", self.global_render_distance) if hasattr(self, "world") else self.global_render_distance
 			self.gui.draw_settings_menu(rd)
 
-		gl.glFlush()
+		gl.glDepthMask(gl.GL_TRUE)
 
 	def draw_breaking_overlay(self):
 		if not self.breaking_block or self.break_progress <= 0:
@@ -1093,18 +1101,22 @@ class Window(pyglet.window.Window):
 			slot = self.gui.hotbar_slots[self.gui.selected_slot]
 			if slot[0] != 0 and slot[1] > 0:
 				px, py, pz = self.camera.position
-				rad_x = self.camera.rotation[0]
-				rad_y = self.camera.rotation[1]
-				vx = math.sin(rad_x) * math.cos(rad_y) * 4.0
-				vy = math.sin(rad_y) * 4.0 + 1.5
-				vz = -math.cos(rad_x) * math.cos(rad_y) * 4.0
+				rad_x, rad_y = self.camera.rotation
+				dir_x = math.cos(rad_x) * math.cos(rad_y)
+				dir_y = math.sin(rad_y)
+				dir_z = math.sin(rad_x) * math.cos(rad_y)
+
+				vx = dir_x * 4.0
+				vy = dir_y * 4.0 + 1.5
+				vz = dir_z * 4.0
 
 				is_ctrl = bool(modifiers & pyglet.window.key.MOD_CTRL) or self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False)
 				drop_cnt = slot[1] if is_ctrl else 1
 
+				drop_pos = [px + dir_x * 0.5, py - 0.3 + dir_y * 0.5, pz + dir_z * 0.5]
 				self.item_drop_manager.spawn_drop(
 					slot[0], drop_cnt,
-					[px, py - 0.4, pz], velocity=[vx, vy, vz]
+					drop_pos, velocity=[vx, vy, vz]
 				)
 
 				slot[1] -= drop_cnt

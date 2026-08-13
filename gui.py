@@ -826,6 +826,7 @@ class InventoryGUI:
 
 	def draw(self):
 		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDepthMask(gl.GL_FALSE)
 		gl.glDisable(gl.GL_CULL_FACE)
 		gl.glEnable(gl.GL_BLEND)
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -870,6 +871,7 @@ class InventoryGUI:
 				cnt_lbl = pyglet.text.Label(str(cnt), font_name="Arial", font_size=10, x=self.mouse_x + 14, y=self.mouse_y - 14, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
 				cnt_lbl.draw()
 
+		gl.glDepthMask(gl.GL_TRUE)
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glEnable(gl.GL_CULL_FACE)
 		self.window.shader.use()

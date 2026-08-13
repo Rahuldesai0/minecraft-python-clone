@@ -14,18 +14,19 @@ class DroppedItem:
 		if velocity:
 			self.velocity = list(velocity)
 		else:
-			self.velocity = [random.uniform(-1.0, 1.0), 2.5, random.uniform(-1.0, 1.0)]
+			self.velocity = [random.uniform(-0.8, 0.8), 2.2, random.uniform(-0.8, 0.8)]
 		
 		self.age = 0.0
 		self.rotation = random.uniform(0, 360)
 		self.grounded = False
-		self.pickup_delay = 1.5  # 1.5s timer after dropping before item can be picked up!
+		self.pickup_delay = 1.2  # 1.2s delay before dropped item can be picked up!
 
 	def update(self, dt, world, player_pos):
 		self.age += dt
 		if self.pickup_delay > 0:
 			self.pickup_delay -= dt
 
+		# Continuous smooth 360-degree rotation around vertical Y-axis
 		self.rotation = (self.rotation + 120.0 * dt) % 360.0
 
 		# Gravity & Ground Collision Physics
@@ -36,19 +37,20 @@ class DroppedItem:
 			ny = self.position[1] + self.velocity[1] * dt
 			nz = self.position[2] + self.velocity[2] * dt
 
-			bx, by, bz = int(round(nx)), int(math.floor(ny - 0.15)), int(round(nz))
+			bx = int(round(nx))
+			by = int(math.floor(ny - 0.15))
+			bz = int(round(nz))
+
 			if world.get_block_number((bx, by, bz)) != 0:
-				self.velocity[1] = 0.0
-				self.velocity[0] *= 0.3
-				self.velocity[2] *= 0.3
+				self.velocity = [0.0, 0.0, 0.0]
 				self.grounded = True
-				self.position[1] = by + 1.35
+				self.position[1] = by + 1.25
 			else:
 				self.position[0] = nx
 				self.position[1] = ny
 				self.position[2] = nz
 
-		# Magnet attraction toward player within 2.5 blocks (only when pickup_delay <= 0)
+		# Magnet attraction toward player when pickup delay is finished
 		px, py, pz = player_pos
 		dx = px - self.position[0]
 		dy = (py - 0.8) - self.position[1]
@@ -66,72 +68,49 @@ class ItemDropManager:
 		self.world = world
 		self.drops = []
 
-		# Base 3D mini-cube geometry template for block drops (scale 0.16)
-		s = 0.16
+		# 3D Mini-cube template for Block Drops (scale 0.18)
+		s = 0.18
 		self.raw_cube = [
-			# Front
-			(-s, -s,  s), ( s, -s,  s), ( s,  s,  s), (-s,  s,  s),
-			# Back
-			(-s, -s, -s), (-s,  s, -s), ( s,  s, -s), ( s, -s, -s),
-			# Top
-			(-s,  s, -s), (-s,  s,  s), ( s,  s,  s), ( s,  s, -s),
-			# Bottom
-			(-s, -s, -s), ( s, -s, -s), ( s, -s,  s), (-s, -s,  s),
-			# Right
-			( s, -s, -s), ( s,  s, -s), ( s,  s,  s), ( s, -s,  s),
-			# Left
-			(-s, -s, -s), (-s, -s,  s), (-s,  s,  s), (-s,  s, -s),
+			# Front (z = +s)
+			[(-s, -s,  s), ( s, -s,  s), ( s,  s,  s), (-s,  s,  s)],
+			# Back (z = -s)
+			[( s, -s, -s), (-s, -s, -s), (-s,  s, -s), ( s,  s, -s)],
+			# Top (y = +s)
+			[(-s,  s,  s), ( s,  s,  s), ( s,  s, -s), (-s,  s, -s)],
+			# Bottom (y = -s)
+			[(-s, -s, -s), ( s, -s, -s), ( s, -s,  s), (-s, -s,  s)],
+			# Right (x = +s)
+			[( s, -s,  s), ( s, -s, -s), ( s,  s, -s), ( s,  s,  s)],
+			# Left (x = -s)
+			[(-s, -s, -s), (-s, -s,  s), (-s,  s,  s), (-s,  s, -s)],
 		]
 
-		self.shading_values = [
-			0.9, 0.9, 0.9, 0.9,
-			0.7, 0.7, 0.7, 0.7,
-			1.0, 1.0, 1.0, 1.0,
-			0.5, 0.5, 0.5, 0.5,
-			0.8, 0.8, 0.8, 0.8,
-			0.8, 0.8, 0.8, 0.8,
+		self.cube_shading = [
+			[0.9, 0.9, 0.9, 0.9],  # Front
+			[0.7, 0.7, 0.7, 0.7],  # Back
+			[1.0, 1.0, 1.0, 1.0],  # Top
+			[0.5, 0.5, 0.5, 0.5],  # Bottom
+			[0.8, 0.8, 0.8, 0.8],  # Right
+			[0.8, 0.8, 0.8, 0.8],  # Left
 		]
 
-		# Flat 2D Item Sprite Billboard template for non-block items (scale 0.22)
+		# Flat 2D item card template for tool drops (scale 0.22)
 		sf = 0.22
 		self.raw_flat_sprite = [
-			# Front face quad
-			(-sf, -sf, 0), ( sf, -sf, 0), ( sf,  sf, 0), (-sf,  sf, 0),
-			# Back face quad
-			(-sf, -sf, 0), (-sf,  sf, 0), ( sf,  sf, 0), ( sf, -sf, 0),
+			# Front face (+z)
+			[(-sf, -sf, 0.01), ( sf, -sf, 0.01), ( sf,  sf, 0.01), (-sf,  sf, 0.01)],
+			# Back face (-z)
+			[( sf, -sf, -0.01), (-sf, -sf, -0.01), (-sf,  sf, -0.01), ( sf,  sf, -0.01)],
 		]
 
-		self.flat_uv = [
-			0.0, 0.0,  1.0, 0.0,  1.0, 1.0,  0.0, 1.0,
-			0.0, 0.0,  0.0, 1.0,  1.0, 1.0,  1.0, 0.0,
-		]
+		self.flat_uv_front = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+		self.flat_uv_back = [[1.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
 
-		self.flat_shading = [1.0] * 8
-
-		# VAO & VBO Buffer Setup for 3D Shader Rendering
-		self.vao = gl.GLuint(0)
-		gl.glGenVertexArrays(1, self.vao)
-		gl.glBindVertexArray(self.vao)
-
-		self.vbo_pos = gl.GLuint(0)
-		gl.glGenBuffers(1, self.vbo_pos)
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
-		gl.glEnableVertexAttribArray(0)
-		gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-
-		self.vbo_tex = gl.GLuint(0)
-		gl.glGenBuffers(1, self.vbo_tex)
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_tex)
-		gl.glEnableVertexAttribArray(1)
-		gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-
-		self.vbo_shading = gl.GLuint(0)
-		gl.glGenBuffers(1, self.vbo_shading)
-		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shading)
-		gl.glEnableVertexAttribArray(2)
-		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-
-		gl.glBindVertexArray(0)
+		# GPU Buffers
+		self.vao = None
+		self.vbo_pos = None
+		self.vbo_tex = None
+		self.vbo_shd = None
 
 	def spawn_drop(self, block_id, count, position, velocity=None):
 		if block_id == 0 or count <= 0:
@@ -141,7 +120,7 @@ class ItemDropManager:
 		self.merge_nearby_drops()
 
 	def merge_nearby_drops(self):
-		"""Merge nearby drops of the same block_id within 1.5 blocks ('club together')."""
+		"""Merge nearby drops of the same block_id within 1.5 blocks."""
 		i = 0
 		while i < len(self.drops):
 			d1 = self.drops[i]
@@ -152,7 +131,7 @@ class ItemDropManager:
 					dx = d1.position[0] - d2.position[0]
 					dy = d1.position[1] - d2.position[1]
 					dz = d1.position[2] - d2.position[2]
-					if dx * dx + dy * dy + dz * dz < 2.25:  # 1.5 blocks distance threshold
+					if dx * dx + dy * dy + dz * dz < 2.25:
 						addable = min(d2.count, 64 - d1.count)
 						d1.count += addable
 						d2.count -= addable
@@ -172,13 +151,13 @@ class ItemDropManager:
 			drop = self.drops[i]
 			drop.update(dt, self.world, player_pos)
 
-			# Pickup check when player is within 0.75 blocks and pickup delay is finished
+			# Pickup check when player is within 0.8 blocks and pickup delay is finished
 			dx = px - drop.position[0]
 			dy = (py - 0.8) - drop.position[1]
 			dz = pz - drop.position[2]
 			dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-			if drop.pickup_delay <= 0 and dist < 0.75:
+			if drop.pickup_delay <= 0 and dist < 0.8:
 				if gui.add_item(drop.block_id, drop.count):
 					self.drops.pop(i)
 					continue
@@ -195,9 +174,9 @@ class ItemDropManager:
 		if not self.drops:
 			return
 
-		pos_data = array.array('f')
-		tex_data = array.array('f')
-		shd_data = array.array('f')
+		pos_data = []
+		tex_data = []
+		shd_data = []
 
 		face_map = [4, 5, 2, 3, 0, 1]
 
@@ -213,68 +192,112 @@ class ItemDropManager:
 			b_num = drop.block_id
 
 			if 0 < b_num < len(self.world.block_types) and self.world.block_types[b_num] is not None:
-				# 1. Block Item: Render 3D mini cube with exact 6-face block textures
-				for vx, vy, vz in self.raw_cube:
-					rx = vx * cos_r - vz * sin_r
-					rz = vx * sin_r + vz * cos_r
-					pos_data.extend([rx + x, vy + y_pos, rz + z])
-
+				# 1. 3D Mini Cube for Block Items
 				b_type = self.world.block_types[b_num]
-				for f_idx in face_map:
-					if f_idx < len(b_type.tex_coords):
-						tex_data.extend(b_type.tex_coords[f_idx])
-					else:
-						tex_data.extend(b_type.tex_coords[0])
+				for face_i, f_idx in enumerate(face_map):
+					raw_t = b_type.tex_coords[f_idx] if f_idx < len(b_type.tex_coords) else b_type.tex_coords[0]
+					t_corners = [
+						(raw_t[0], raw_t[1], raw_t[2]),
+						(raw_t[3], raw_t[4], raw_t[5]),
+						(raw_t[6], raw_t[7], raw_t[8]),
+						(raw_t[9], raw_t[10], raw_t[11])
+					]
+					s_corners = self.cube_shading[face_i]
 
-				shd_data.extend(self.shading_values)
+					v_corners = []
+					for vx, vy, vz in self.raw_cube[face_i]:
+						rx = vx * cos_r - vz * sin_r + x
+						ry = vy + y_pos
+						rz = vx * sin_r + vz * cos_r + z
+						v_corners.append((rx, ry, rz))
+
+					# Render 2 triangles per quad face (0, 1, 2) and (0, 2, 3)
+					for idx in (0, 1, 2, 0, 2, 3):
+						pos_data.extend(v_corners[idx])
+						tex_data.extend(t_corners[idx])
+						shd_data.append(s_corners[idx])
 			else:
-				# 2. Non-Block Tool Item (Sticks, Pickaxes, Axes, Shovels, Swords): Render flat 2D double-sided item sprite card!
-				for vx, vy, vz in self.raw_flat_sprite:
-					rx = vx * cos_r - vz * sin_r
-					rz = vx * sin_r + vz * cos_r
-					pos_data.extend([rx + x, vy + y_pos, rz + z])
-
+				# 2. 2D Item Sprite Card for Tool Items
 				if b_num in gui_module.BLOCK_INFO:
 					tex_name = gui_module.BLOCK_INFO[b_num][1]
-					if tex_name in self.world.texture_manager.textures:
-						layer = float(self.world.texture_manager.textures.index(tex_name))
-					else:
-						layer = 0.0
+					layer = float(self.world.texture_manager.textures.index(tex_name)) if tex_name in self.world.texture_manager.textures else 0.0
 				else:
 					layer = 0.0
 
-				for i in range(8):
-					u = self.flat_uv[i * 2]
-					v = self.flat_uv[i * 2 + 1]
-					tex_data.extend([u, v, layer])
+				uv_maps = [self.flat_uv_front, self.flat_uv_back]
 
-				shd_data.extend(self.flat_shading)
+				for q_i, face_verts in enumerate(self.raw_flat_sprite):
+					v_corners = []
+					for vx, vy, vz in face_verts:
+						rx = vx * cos_r - vz * sin_r + x
+						ry = vy + y_pos
+						rz = vx * sin_r + vz * cos_r + z
+						v_corners.append((rx, ry, rz))
+
+					uv_set = uv_maps[q_i]
+					t_corners = [
+						(uv_set[k][0], uv_set[k][1], layer)
+						for k in range(4)
+					]
+
+					# Render 2 triangles per quad face (0, 1, 2) and (0, 2, 3)
+					for idx in (0, 1, 2, 0, 2, 3):
+						pos_data.extend(v_corners[idx])
+						tex_data.extend(t_corners[idx])
+						shd_data.append(1.0)
 
 		if pos_data:
-			gl.glDisable(gl.GL_CULL_FACE)
+			shader.use()
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
+			sampler_loc = shader.find_uniform(b"texture_array_sampler")
+			if sampler_loc != -1:
+				gl.glUniform1i(sampler_loc, 0)
+
+			if self.vao is None:
+				self.vao = gl.GLuint(0)
+				gl.glGenVertexArrays(1, self.vao)
+
+				self.vbo_pos = gl.GLuint(0)
+				gl.glGenBuffers(1, self.vbo_pos)
+
+				self.vbo_tex = gl.GLuint(0)
+				gl.glGenBuffers(1, self.vbo_tex)
+
+				self.vbo_shd = gl.GLuint(0)
+				gl.glGenBuffers(1, self.vbo_shd)
+
 			gl.glBindVertexArray(self.vao)
 
+			# Position VBO (location 0)
 			c_pos = (gl.GLfloat * len(pos_data))(*pos_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
-			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_pos), c_pos, gl.GL_DYNAMIC_DRAW)
+			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_pos), c_pos, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(0)
 
+			# TexCoord VBO (location 1)
 			c_tex = (gl.GLfloat * len(tex_data))(*tex_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_tex)
-			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_tex), c_tex, gl.GL_DYNAMIC_DRAW)
+			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_tex), c_tex, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(1)
 
+			# Shading VBO (location 2)
 			c_shd = (gl.GLfloat * len(shd_data))(*shd_data)
-			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shading)
-			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_DYNAMIC_DRAW)
+			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shd)
+			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(2)
 
-			num_vertices = len(pos_data) // 3
-			gl.glDrawArrays(gl.GL_QUADS, 0, num_vertices)
+			# Disable culling so spinning items & double-sided 2D cards render cleanly
+			gl.glDisable(gl.GL_CULL_FACE)
+			gl.glEnable(gl.GL_DEPTH_TEST)
+			gl.glDepthMask(gl.GL_TRUE)
 
+			num_vertices = len(pos_data) // 3
+			gl.glDrawArrays(gl.GL_TRIANGLES, 0, num_vertices)
+
+			gl.glEnable(gl.GL_CULL_FACE)
 			gl.glBindVertexArray(0)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
-			gl.glEnable(gl.GL_CULL_FACE)
