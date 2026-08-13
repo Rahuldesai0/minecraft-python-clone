@@ -11,7 +11,7 @@ CHUNK_HEIGHT = 256
 CHUNK_LENGTH = 16
 
 class Chunk:
-	def __init__(self, world, chunk_position):
+	def __init__(self, world, chunk_position, blocks=None):
 		self.world = world
 		
 		self.chunk_position = chunk_position
@@ -21,10 +21,13 @@ class Chunk:
 			self.chunk_position[1] * CHUNK_HEIGHT,
 			self.chunk_position[2] * CHUNK_LENGTH)
 		
-		self.blocks = [[[0
-			for z in range(CHUNK_LENGTH)]
-			for y in range(CHUNK_HEIGHT)]
-			for x in range(CHUNK_WIDTH )]
+		if blocks is not None:
+			self.blocks = blocks
+		else:
+			self.blocks = [[[0
+				for z in range(CHUNK_LENGTH)]
+				for y in range(CHUNK_HEIGHT)]
+				for x in range(CHUNK_WIDTH )]
 		
 		self.subchunks = {}
 
@@ -136,7 +139,27 @@ class Chunk:
 		if not hasattr(self, "mesh_indices") or not len(self.mesh_indices):
 			return
 
-		gl.glBindVertexArray(self.vao)
+		if self.vao is None:
+			# Check if there is a recycled VAO/VBO handle tuple in world's free pool!
+			if hasattr(self.world, 'free_chunk_pool') and self.world.free_chunk_pool:
+				handles = self.world.free_chunk_pool.pop()
+				self.vao, self.vertex_position_vbo, self.tex_coord_vbo, self.shading_values_vbo, self.ibo = handles
+				gl.glBindVertexArray(self.vao)
+			else:
+				self.vao = gl.GLuint(0)
+				gl.glGenVertexArrays(1, self.vao)
+				gl.glBindVertexArray(self.vao)
+
+				self.vertex_position_vbo = gl.GLuint(0)
+				gl.glGenBuffers(1, self.vertex_position_vbo)
+				self.tex_coord_vbo = gl.GLuint(0)
+				gl.glGenBuffers(1, self.tex_coord_vbo)
+				self.shading_values_vbo = gl.GLuint(0)
+				gl.glGenBuffers(1, self.shading_values_vbo)
+				self.ibo = gl.GLuint(0)
+				gl.glGenBuffers(1, self.ibo)
+		else:
+			gl.glBindVertexArray(self.vao)
 
 		pos_ptr = (gl.GLfloat * len(self.mesh_vertex_positions)).from_buffer(self.mesh_vertex_positions)
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_position_vbo)
@@ -191,12 +214,23 @@ class Chunk:
 		self.mesh_indices_length = len(idx_ptr)
 	
 	def delete(self):
-		"""Delete OpenGL resources when unloading this chunk."""
-		gl.glDeleteVertexArrays(1, self.vao)
-		gl.glDeleteBuffers(1, self.vertex_position_vbo)
-		gl.glDeleteBuffers(1, self.tex_coord_vbo)
-		gl.glDeleteBuffers(1, self.shading_values_vbo)
-		gl.glDeleteBuffers(1, self.ibo)
+		"""Recycle OpenGL buffers to free pool instead of invoking driver pipeline flushes!"""
+		if self.vao is not None:
+			if hasattr(self.world, 'free_chunk_pool'):
+				self.world.free_chunk_pool.append((
+					self.vao,
+					self.vertex_position_vbo,
+					self.tex_coord_vbo,
+					self.shading_values_vbo,
+					self.ibo
+				))
+			else:
+				gl.glDeleteVertexArrays(1, self.vao)
+				gl.glDeleteBuffers(1, self.vertex_position_vbo)
+				gl.glDeleteBuffers(1, self.tex_coord_vbo)
+				gl.glDeleteBuffers(1, self.shading_values_vbo)
+				gl.glDeleteBuffers(1, self.ibo)
+			self.vao = None
 
 	def draw_opaque(self):
 		if not self.opaque_indices_length:

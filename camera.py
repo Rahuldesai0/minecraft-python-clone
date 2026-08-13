@@ -19,6 +19,31 @@ class Camera:
 		self.sneaking = False
 		self.eye_offset = 1.62
 
+		# Survival Mode Health (20 HP = 10 Hearts) & Damage Tracking
+		self.health = 20
+		self.max_health = 20
+		self.fall_start_y = None
+		self.hurt_time = 0.0
+		self.last_damage_time = 0.0
+
+	def take_damage(self, damage, flying=False):
+		import time
+		if flying or damage <= 0 or self.health <= 0:
+			return
+		
+		self.health = max(0, self.health - damage)
+		self.hurt_time = 0.4
+		self.last_damage_time = time.time()
+
+		if self.health == 0:
+			self.respawn()
+
+	def respawn(self):
+		self.health = self.max_health
+		self.position = [0, 85, 0]
+		self.velocity_y = 0.0
+		self.fall_start_y = None
+
 	def round_position(self, position):
 		return [round(coord) for coord in position]
 
@@ -31,14 +56,43 @@ class Camera:
 		return eye_b in (9, 19, 15, 20) or feet_b in (9, 19, 15, 20)
 
 	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
+		import time
+
 		# Cap delta_time to prevent huge displacement on lag spikes
 		delta_time = min(delta_time, 0.05)
+
+		# Decay hurt time red flash overlay
+		if self.hurt_time > 0:
+			self.hurt_time = max(0.0, self.hurt_time - delta_time)
+
+		# Passive Health Regeneration in Survival Mode
+		if not flying and 0 < self.health < self.max_health:
+			if (time.time() - self.last_damage_time) >= 4.0:
+				self.health = min(self.max_health, self.health + 1)
+				self.last_damage_time = time.time()
 
 		in_liquid = self.is_in_liquid(world)
 
 		# Ground check: verify if player's feet are resting on a solid block
 		is_grounded = not self.check_collision(world, [self.position[0], self.position[1] - 0.05, self.position[2]])
 		self.on_ground = is_grounded
+
+		# Survival Mode Fall Damage Physics:
+		# Safe fall distance is 3 blocks. Landing in water/lava resets fall distance to 0.
+		if flying or in_liquid:
+			self.fall_start_y = None
+		else:
+			if not self.on_ground:
+				if self.fall_start_y is None or self.position[1] > self.fall_start_y:
+					self.fall_start_y = self.position[1]
+			else:
+				if self.fall_start_y is not None:
+					fall_dist = self.fall_start_y - self.position[1]
+					if fall_dist > 3.0:
+						dmg = int(round(fall_dist - 3.0))
+						if dmg > 0:
+							self.take_damage(dmg, flying=flying)
+					self.fall_start_y = None
 
 		# Sneak check: Shift pressed while on ground, not flying, not swimming
 		is_shift_down = keys_down.get(pyglet.window.key.LSHIFT, False)

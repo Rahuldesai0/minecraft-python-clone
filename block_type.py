@@ -2,8 +2,10 @@ import models.cube # default model
 
 class Block_type:
 	# new optional model argument (cube model by default)
-	def __init__(self, texture_manager, name = "unknown", block_face_textures = {"all": "cobblestone"}, model = models.cube, transparent = False):
+	def __init__(self, texture_manager, name = "unknown", block_face_textures = {"all": "cobblestone"}, model = models.cube, transparent = False, break_time = 1.0, requires_tool = False):
 		self.name = name
+		self.break_time = break_time
+		self.requires_tool = requires_tool
 
 		# create members based on model attributes
 

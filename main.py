@@ -20,6 +20,9 @@ import hit
 
 import noise
 
+import gui
+import item_drop
+
 class Window(pyglet.window.Window):
 	def __init__(self, **args):
 		super().__init__(**args)
@@ -27,6 +30,7 @@ class Window(pyglet.window.Window):
 		# create world
 
 		self.world = world.World()
+		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		
 		# create shader
 
@@ -45,6 +49,19 @@ class Window(pyglet.window.Window):
 
 		self.camera = camera.Camera(self.shader, self.width, self.height)
 
+		# other stuff
+		self.sprinting = False
+		self.flying = False
+
+		# Block Breaking Progress & Animation Tracking
+		self.left_mouse_down = False
+		self.breaking_block = None
+		self.break_progress = 0.0
+
+		# Inventory & Hotbar GUI System
+		self.gui = gui.InventoryGUI(self)
+		self.holding = self.gui.get_current_block_id()
+
 		# F3 Debug Overlay & Key Tracking stuff
 		self.show_debug = False
 		self.fps = 60.0
@@ -59,12 +76,6 @@ class Window(pyglet.window.Window):
 
 		# Crosshair stuff
 		self.create_crosshair()
-
-		# other stuff
-
-		self.holding = 7
-		self.sprinting = False
-		self.flying = False
 
 	def create_crosshair(self):
 		cx = self.width // 2
@@ -84,42 +95,16 @@ class Window(pyglet.window.Window):
 		self.time_of_day = 0.0  # Represents time of day, 0.0 to 1.0 where 0.0 is midnight and 0.5 is noon
 		self.cycle_speed = 0.01  # Speed of the day-night cycle
 
-        # Define sky colors for different times of the day
-		self.sky_colors = {
-            'midnight': (15/255, 15/255, 45/255, 1.0),
-            'dawn': (135/255, 206/255, 250/255, 1.0),
-            'noon': (135/255, 206/255, 250/255, 1.0),
-            'dusk': (250/255, 128/255, 114/255, 1.0),
-            'night': (25/255, 25/255, 112/255, 1.0)
-        }
-
-	def interpolate_color(self, color1, color2, factor):
-		return tuple(c1 + (c2 - c1) * factor for c1, c2 in zip(color1, color2))
-
 	def update_sky_color(self):
-		if self.time_of_day < 0.25:
-            # Dawn
-			factor = self.time_of_day / 0.25
-			color = self.interpolate_color(self.sky_colors['midnight'], self.sky_colors['dawn'], factor)
-		elif self.time_of_day < 0.5:
-            # Noon
-			factor = (self.time_of_day - 0.25) / 0.25
-			color = self.interpolate_color(self.sky_colors['dawn'], self.sky_colors['noon'], factor)
-		elif self.time_of_day < 0.75:
-            # Dusk
-			factor = (self.time_of_day - 0.5) / 0.25
-			color = self.interpolate_color(self.sky_colors['noon'], self.sky_colors['dusk'], factor)
+		if self.time_of_day < 0.25 or self.time_of_day > 0.75:
+			# Night
+			gl.glClearColor(0.05, 0.05, 0.1, 1.0)
+		elif 0.25 <= self.time_of_day < 0.30 or 0.70 <= self.time_of_day <= 0.75:
+			# Sunrise/Sunset
+			gl.glClearColor(0.8, 0.4, 0.2, 1.0)
 		else:
-            # Night to Midnight
-			factor = (self.time_of_day - 0.75) / 0.25
-			color = self.interpolate_color(self.sky_colors['dusk'], self.sky_colors['night'], factor)
-
-            # Additional blending for smoother transition from night to midnight
-			if self.time_of_day > 0.99:
-				additional_factor = (self.time_of_day - 0.99) / 0.01
-				color = self.interpolate_color(color, self.sky_colors['midnight'], additional_factor)
-
-		gl.glClearColor(*color)
+			# Day
+			gl.glClearColor(0.5, 0.8, 1.0, 1.0)
 	
 	def update(self, delta_time):
 		if delta_time > 0:
@@ -127,6 +112,62 @@ class Window(pyglet.window.Window):
 
 		# Clamp delta_time so player movement and physics remain smooth even during background tasks
 		delta_time = min(delta_time, 1.0 / 30.0)
+
+		# Continuous Block Breaking Physics & Progress Accumulation
+		if self.left_mouse_down and self.mouse_captured and not self.gui.inventory_open:
+			target_block = None
+			
+			def find_target(current_block, next_block):
+				nonlocal target_block
+				target_block = next_block
+				return True
+
+			hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
+			while hit_ray.distance < hit.HIT_RANGE:
+				if hit_ray.step(find_target):
+					break
+
+			if target_block:
+				b_num = self.world.get_block_number(target_block)
+				if 0 < b_num < len(self.world.block_types) and b_num not in (9, 19, 15, 20, 14):
+					b_type = self.world.block_types[b_num]
+					
+					if self.flying:
+						self.break_progress = 1.0
+					else:
+						if self.breaking_block == target_block:
+							b_time = getattr(b_type, "break_time", 0.4)
+							b_time = min(b_time, 0.6)  # Responsive breaking speed
+							self.break_progress += delta_time / max(0.05, b_time)
+						else:
+							self.breaking_block = target_block
+							self.break_progress = 0.2  # Fast initial progress on first click
+
+					if self.break_progress >= 1.0:
+						# Spawn 3D dropped item entity in the overworld when breaking blocks!
+						if not self.flying:
+							drop_b = b_num
+							if b_num == 2:
+								drop_b = 4  # Grass Block drops Dirt
+							elif b_num == 5:
+								drop_b = 1  # Stone drops Cobblestone
+							self.item_drop_manager.spawn_drop(
+								drop_b, 1,
+								[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+							)
+
+						self.world.set_block(target_block, 0)
+						self.breaking_block = None
+						self.break_progress = 0.0
+				else:
+					self.breaking_block = None
+					self.break_progress = 0.0
+			else:
+				self.breaking_block = None
+				self.break_progress = 0.0
+		else:
+			self.breaking_block = None
+			self.break_progress = 0.0
 
 		# Continuously sync horizontal movement vector from physical key states
 		dx = 0
@@ -142,6 +183,7 @@ class Window(pyglet.window.Window):
 			self.camera.input = [0, 0, 0]
 
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
+		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position)
 		self.world.tick_liquids()
@@ -167,6 +209,12 @@ class Window(pyglet.window.Window):
 		gl.glEnable(gl.GL_CULL_FACE)
 		self.clear()
 		self.world.draw(self.camera.position)
+
+		# Render 3D overworld dropped items & 2D item sprites
+		self.item_drop_manager.draw(self.shader, self.gui)
+
+		# Render 3D block breaking crack overlay
+		self.draw_breaking_overlay()
 
 		# 2. Render 2D F3 Debug Text Overlay over the 3D World
 		if self.show_debug:
@@ -239,10 +287,39 @@ class Window(pyglet.window.Window):
 			gl.glEnable(gl.GL_CULL_FACE)
 			self.shader.use()
 
+		# 4. Render 2D Hotbar & Inventory GUI Overlay
+		self.gui.draw()
+
 		# Pyglet's non-vsync window needs commands submitted explicitly here.
 		gl.glFlush()
 
-	
+	def draw_breaking_overlay(self):
+		if not self.breaking_block or self.break_progress <= 0:
+			return
+
+		cx = self.width // 2
+		cy = self.height // 2 - 22
+
+		w = 52
+		h = 8
+		pad = 1
+
+		# Render sleek Mining Progress Bar right below crosshair
+		gl.glDisable(gl.GL_DEPTH_TEST)
+		gl.glDisable(gl.GL_CULL_FACE)
+		gl.glEnable(gl.GL_BLEND)
+		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+		gui.draw_bordered_box(cx - w // 2, cy, w, h, pad, (10, 10, 15, 230), (200, 200, 220, 255))
+
+		fill_w = max(1, int((w - 2 * pad) * min(1.0, self.break_progress)))
+		fill_bar = pyglet.shapes.Rectangle(cx - w // 2 + pad, cy + pad, fill_w, h - 2 * pad, color=(255, 180, 0, 240))
+		fill_bar.draw()
+
+		gl.glEnable(gl.GL_DEPTH_TEST)
+		gl.glEnable(gl.GL_CULL_FACE)
+		self.shader.use()
+
 	# input functions
 
 	def on_resize(self, width, height):
@@ -251,36 +328,66 @@ class Window(pyglet.window.Window):
 		self.camera.width = width
 		self.camera.height = height
 		self.create_crosshair()
+
+	def on_mouse_scroll(self, x, y, scroll_x, scroll_y):
+		self.gui.on_mouse_scroll(scroll_y)
 	
 	def on_mouse_press(self, x, y, button, modifiers):
+		self.gui.mouse_x = x
+		self.gui.mouse_y = y
+
+		if self.gui.inventory_open:
+			if self.gui.on_mouse_press(x, y, button, modifiers):
+				return
+
 		if not self.mouse_captured:
 			self.mouse_captured = True
 			self.set_exclusive_mouse(True)
-
 			return
+
+		if button == pyglet.window.mouse.LEFT:
+			self.left_mouse_down = True
+
+		self.holding = self.gui.get_current_block_id()
 
 		def hit_callback(current_block, next_block):
 			if self.world.get_block_number(current_block) != 14 and 0 <= current_block[1] < 256:
 				if button == pyglet.window.mouse.RIGHT:
-					# Do not allow placing blocks inside the player's body bounding box
-					if not self.camera.intersects_player(current_block):
+					# Can only place block if player holds a valid block (1 <= block_id < 100)
+					if 0 < self.holding < 100 and not self.camera.intersects_player(current_block):
 						self.world.set_block(current_block, self.holding)
-				elif button == pyglet.window.mouse.LEFT:
-					# Cannot break liquids (9, 19, 15, 20) or unbreakable Bedrock (14)
-					if self.world.get_block_number(next_block) not in (9, 19, 15, 20, 14):
-						self.world.set_block(next_block, 0)
+						# Consume 1 block from active slot in Survival Mode
+						self.gui.consume_active_item()
+						self.holding = self.gui.get_current_block_id()
 				elif button == pyglet.window.mouse.MIDDLE:
 					target_b = self.world.get_block_number(next_block)
 					if target_b not in (9, 19, 15, 20):
-						self.holding = target_b
+						if self.flying:
+							self.gui.hotbar_slots[self.gui.selected_slot] = [target_b, 64]
+						else:
+							# Search hotbar for target_b slot
+							for i, slot in enumerate(self.gui.hotbar_slots):
+								if slot[0] == target_b and slot[1] > 0:
+									self.gui.set_selected_slot(i)
+									break
+						self.holding = self.gui.get_current_block_id()
 		
 		hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
 
 		while hit_ray.distance < hit.HIT_RANGE:
 			if hit_ray.step(hit_callback):
 				break
+
+	def on_mouse_release(self, x, y, button, modifiers):
+		if button == pyglet.window.mouse.LEFT:
+			self.left_mouse_down = False
+			self.breaking_block = None
+			self.break_progress = 0.0
 	
 	def on_mouse_motion(self, x, y, delta_x, delta_y):
+		self.gui.mouse_x = x
+		self.gui.mouse_y = y
+
 		if self.mouse_captured:
 			sensitivity = 0.004
 
@@ -299,6 +406,55 @@ class Window(pyglet.window.Window):
 			self.show_debug = not self.show_debug
 			return
 
+		# Number Keys 1 to 9 (top row or numpad)
+		if pyglet.window.key._1 <= key <= pyglet.window.key._9:
+			slot_idx = key - pyglet.window.key._1
+			self.gui.set_selected_slot(slot_idx)
+			return
+		elif pyglet.window.key.NUM_1 <= key <= pyglet.window.key.NUM_9:
+			slot_idx = key - pyglet.window.key.NUM_1
+			self.gui.set_selected_slot(slot_idx)
+			return
+
+		# E Key toggles Inventory overlay
+		if key == pyglet.window.key.E:
+			self.gui.toggle_inventory()
+			return
+
+		# Key Q drops 1 item from active hotbar slot; Ctrl + Q drops entire slot stack!
+		if key == pyglet.window.key.Q and not self.gui.inventory_open:
+			slot = self.gui.hotbar_slots[self.gui.selected_slot]
+			if slot[0] != 0 and slot[1] > 0:
+				px, py, pz = self.camera.position
+				rad_x = self.camera.rotation[0]
+				rad_y = self.camera.rotation[1]
+				vx = math.sin(rad_x) * math.cos(rad_y) * 4.0
+				vy = math.sin(rad_y) * 4.0 + 1.5
+				vz = -math.cos(rad_x) * math.cos(rad_y) * 4.0
+
+				is_ctrl = bool(modifiers & pyglet.window.key.MOD_CTRL) or self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False)
+				drop_cnt = slot[1] if is_ctrl else 1
+
+				self.item_drop_manager.spawn_drop(
+					slot[0], drop_cnt,
+					[px, py - 0.4, pz], velocity=[vx, vy, vz]
+				)
+
+				slot[1] -= drop_cnt
+				if slot[1] <= 0:
+					slot[0] = 0
+				self.holding = self.gui.get_current_block_id()
+			return
+
+		# ESC Key closes Inventory if open
+		if key == pyglet.window.key.ESCAPE:
+			if self.gui.inventory_open:
+				self.gui.toggle_inventory()
+			else:
+				self.mouse_captured = False
+				self.set_exclusive_mouse(False)
+			return
+
 		if not self.mouse_captured:
 			return
 
@@ -308,9 +464,6 @@ class Window(pyglet.window.Window):
 			self.camera.position = [0, 80, 0]
 		elif key == pyglet.window.key.F: 
 			self.flying = not self.flying
-		elif key == pyglet.window.key.ESCAPE:
-			self.mouse_captured = False
-			self.set_exclusive_mouse(False)
 
 	def on_key_release(self, key, modifiers):
 		self.keys_down[key] = False

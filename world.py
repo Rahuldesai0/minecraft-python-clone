@@ -22,6 +22,19 @@ import models.cactus
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 
+MAX_RENDER_DISTANCE = 32
+
+def _generate_ring_offsets(max_rd):
+	offsets = []
+	for dx in range(-max_rd, max_rd + 1):
+		for dz in range(-max_rd, max_rd + 1):
+			dist_sq = dx * dx + dz * dz
+			offsets.append((dist_sq, dx, dz))
+	offsets.sort(key=lambda item: item[0])
+	return [(dx, dz) for _, dx, dz in offsets]
+
+RING_OFFSETS = _generate_ring_offsets(MAX_RENDER_DISTANCE)
+
 
 def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, cave_scale, cave_threshold, save_dir):
 	"""Independent worker function for ProcessPoolExecutor.
@@ -309,26 +322,47 @@ class World:
 		self.texture_manager = texture_manager.Texture_manager(16, 16, 256)
 		self.block_types = [None]
 
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone", block_face_textures = {"all": "cobblestone"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="grass", block_face_textures = {"top": "grass", "bottom": "dirt", "sides": "grass_side"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="grass_block", block_face_textures = {"all": "grass"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="dirt", block_face_textures = {"all": "dirt"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone", block_face_textures = {"all": "stone"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="sand", block_face_textures = {"all": "sand"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="planks", block_face_textures = {"all": "planks"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="log", block_face_textures = {"top": "log_top", "bottom": "log_top", "sides": "log_side"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="water", block_face_textures = {"all": "water"},  model = models.liquid, transparent=True))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="rose", block_face_textures = {"all": "rose"},  model = models.plant))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="cactus", block_face_textures = {"top": "cactus_top", "bottom": "cactus_bottom", "sides": "cactus_side"},  model = models.cactus))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="dead_bush", block_face_textures = {"all": "dead_bush"},  model = models.plant))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="leaves", block_face_textures = {"all": "leaves"},  model = models.leaves))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="bedrock", block_face_textures = {"all": "bedrock"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="lava", block_face_textures = {"all": "lava"},  model = models.liquid, transparent=True))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="coal_ore", block_face_textures = {"all": "coal_ore"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_ore", block_face_textures = {"all": "iron_ore"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="diamond_ore", block_face_textures = {"all": "diamond_ore"}))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_water", block_face_textures = {"all": "water"}, model = models.liquid, transparent=True))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_lava", block_face_textures = {"all": "lava"}, model = models.liquid, transparent=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone", block_face_textures = {"all": "cobblestone"}, break_time = 1.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="grass", block_face_textures = {"top": "grass", "bottom": "dirt", "sides": "grass_side"}, break_time = 0.4, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="grass_block", block_face_textures = {"all": "grass"}, break_time = 0.4, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dirt", block_face_textures = {"all": "dirt"}, break_time = 0.4, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone", block_face_textures = {"all": "stone"}, break_time = 1.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="sand", block_face_textures = {"all": "sand"}, break_time = 0.4, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="planks", block_face_textures = {"all": "planks"}, break_time = 0.9, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="log", block_face_textures = {"top": "log_top", "bottom": "log_top", "sides": "log_side"}, break_time = 0.9, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="water", block_face_textures = {"all": "water"},  model = models.liquid, transparent=True, break_time = float('inf'), requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="rose", block_face_textures = {"all": "rose"},  model = models.plant, break_time = 0.15, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cactus", block_face_textures = {"top": "cactus_top", "bottom": "cactus_bottom", "sides": "cactus_side"},  model = models.cactus, break_time = 0.4, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dead_bush", block_face_textures = {"all": "dead_bush"},  model = models.plant, break_time = 0.15, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="leaves", block_face_textures = {"all": "leaves"},  model = models.leaves, break_time = 0.2, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="bedrock", block_face_textures = {"all": "bedrock"}, break_time = float('inf'), requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="lava", block_face_textures = {"all": "lava"},  model = models.liquid, transparent=True, break_time = float('inf'), requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="coal_ore", block_face_textures = {"all": "coal_ore"}, break_time = 2.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_ore", block_face_textures = {"all": "iron_ore"}, break_time = 2.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="diamond_ore", block_face_textures = {"all": "diamond_ore"}, break_time = 2.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_water", block_face_textures = {"all": "water"}, model = models.liquid, transparent=True, break_time = float('inf'), requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_lava", block_face_textures = {"all": "lava"}, model = models.liquid, transparent=True, break_time = float('inf'), requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="glass", block_face_textures = {"all": "glass"}, transparent=True, break_time = 0.3, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="bricks", block_face_textures = {"all": "bricks"}, break_time = 1.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="bookshelf", block_face_textures = {"top": "planks", "bottom": "planks", "sides": "bookshelf"}, break_time = 0.9, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="obsidian", block_face_textures = {"all": "obsidian"}, break_time = 5.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="tnt", block_face_textures = {"top": "tnt_top", "bottom": "tnt_bottom", "sides": "tnt_side"}, break_time = 0.5, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="crafting_table", block_face_textures = {"top": "crafting_table_top", "bottom": "planks", "sides": "crafting_table_x"}, break_time = 0.9, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="furnace", block_face_textures = {"top": "furnace_y", "bottom": "stone", "sides": "furnace_side", "front": "furnace_front"}, break_time = 1.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="gold_block", block_face_textures = {"all": "gold_block"}, break_time = 2.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_block", block_face_textures = {"all": "iron_block"}, break_time = 2.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="diamond_block", block_face_textures = {"all": "diamond_block"}, break_time = 2.5, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="snow", block_face_textures = {"all": "snow"}, break_time = 0.3, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="ice", block_face_textures = {"all": "ice"}, transparent=True, break_time = 0.5, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="yellow_flower", block_face_textures = {"all": "yellow_flower"}, model = models.plant, break_time = 0.15, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="sponge", block_face_textures = {"all": "sponge"}, break_time = 0.6, requires_tool = False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="gold_ore", block_face_textures = {"all": "gold_ore"}, break_time = 2.0, requires_tool = True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="redstone_ore", block_face_textures = {"all": "redstone_ore"}, break_time = 2.0, requires_tool = True))
+
+		# Register non-block item textures (Sticks, Pickaxes, Axes, Shovels, Swords) into texture_manager
+		import gui
+		for item_id, item_name, tex_name in gui.TOOL_ITEMS:
+			self.texture_manager.add_texture(tex_name)
 
 		self.texture_manager.generate_mipmaps()
 
@@ -343,7 +377,7 @@ class World:
 		self.cave_threshold = 0.1 # Threshold for cave generation
 
 		self.render_distance = 6
-		self.unload_distance = self.render_distance + 1
+		self.unload_distance = self.render_distance + 3  # Hysteresis buffer zone (3 extra chunks) prevents load/unload thrashing
 		self.dirty_chunks = set()  # chunks modified by player (need saving)
 		self._last_player_chunk = None  # cache to avoid redundant work
 		self._load_queue = []  # pre-sorted list of chunk positions to generate
@@ -355,8 +389,12 @@ class World:
 		self.chunk_generation_executor = ProcessPoolExecutor(max_workers=2)
 		self.chunk_generation_futures = {}  # {chunk_position: future}
 
-		# Meshes are built off-thread and uploaded from process_load_queue on the
-		# OpenGL thread.
+		# Background ThreadPoolExecutors for async mesh building and async gzip chunk saving
+		self.mesh_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="MeshBuilder")
+		self._save_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ChunkSaver")
+		self.free_chunk_pool = []  # Sodium OpenGL VAO/VBO handle reuse pool (eliminates glDeleteBuffers pipeline flushes)
+		self.load_queue_ring = 0
+
 		self.chunk_load_queue = {}
 		self.active_loading_chunks = []
 		self.active_threads = 0
@@ -390,37 +428,45 @@ class World:
 		return current_chunk
 
 	def add_chunk_to_load_queue(self, chunk_position):
-		def chunk_load_function(chunk): # in separate thread
-			chunk.update_subchunk_meshes()
-			chunk.update_mesh()
+		chunk_obj = self.chunks[chunk_position]
+		self.chunk_load_queue[chunk_position] = {"chunk": chunk_obj, "future": None, "running": False}
 
-		chunk = self.chunks[chunk_position]
+	def process_load_queue(self, player_position = (0, 0, 0)):
+		start_time = time.perf_counter()
+		budget_seconds = 0.0015  # 1.5 ms max budget per frame for main thread GPU uploads
 
-		thread = threading.Thread(target = chunk_load_function, args = (chunk,))
-		thread.daemon = True
+		player_cx = math.floor(player_position[0] / chunk.CHUNK_WIDTH)
+		player_cz = math.floor(player_position[2] / chunk.CHUNK_LENGTH)
 
-		self.chunk_load_queue[chunk_position] = {"chunk": chunk, "thread": thread, "running": False}
-
-	def process_load_queue(self, propagation_position = (0, 0, 0)):
-		# Upload ONE completed mesh to GPU per frame (glBufferData is expensive)
+		# 1. Upload AT MOST ONE completed mesh buffer to GPU per frame to guarantee 0 upload spikes
 		for chunk_position in list(self.chunk_load_queue.keys()):
 			queue_object = self.chunk_load_queue[chunk_position]
-			if queue_object["running"] and not queue_object["thread"].is_alive():
+			if queue_object["running"] and queue_object["future"] is not None and queue_object["future"].done():
+				# Obsolete check: if player moved too far away, discard without uploading
+				if max(abs(chunk_position[0] - player_cx), abs(chunk_position[2] - player_cz)) > self.unload_distance:
+					del self.chunk_load_queue[chunk_position]
+					if chunk_position in self.active_loading_chunks:
+						self.active_loading_chunks.remove(chunk_position)
+					continue
+
 				queue_object["chunk"].send_mesh_data_to_gpu()
 				del self.chunk_load_queue[chunk_position]
-				self.active_loading_chunks.remove(chunk_position)
-				self.active_threads -= 1
-				break  # only one upload per frame
+				if chunk_position in self.active_loading_chunks:
+					self.active_loading_chunks.remove(chunk_position)
+				break  # Strictly 1 GPU mesh upload per frame cap
 
-		# Start 1 mesh-building thread at a time (keeps GIL contention minimal so player FPS remains smooth)
-		if self.active_threads < 1:
-			for chunk_position, queue_object in self.chunk_load_queue.items():
-				if not queue_object["running"]:
-					queue_object["thread"].start()
-					queue_object["running"] = True
+		# 2. Submit pending mesh generation tasks to background ThreadPoolExecutor (1 task max per frame tick)
+		for chunk_position, queue_object in list(self.chunk_load_queue.items()):
+			if not queue_object["running"]:
+				target_chunk = queue_object["chunk"]
+				def build_mesh(c=target_chunk):
+					c.update_subchunk_meshes()
+					c.update_mesh()
+				queue_object["future"] = self.mesh_executor.submit(build_mesh)
+				queue_object["running"] = True
+				if chunk_position not in self.active_loading_chunks:
 					self.active_loading_chunks.append(chunk_position)
-					self.active_threads += 1
-					break
+				break  # Drip-feed 1 mesh submission per frame tick
 
 	def get_chunk_position(self, position):
 		x, y, z = position
@@ -819,7 +865,7 @@ class World:
 			return self.generate_chunk(chunk_position[0], chunk_position[2])
 
 	def _save_chunk_to_file(self, chunk_position):
-		"""Save chunk block data to a gzip-compressed binary file."""
+		"""Save chunk block data asynchronously without blocking main thread."""
 		if chunk_position not in self.chunks:
 			return
 		
@@ -834,9 +880,15 @@ class World:
 				for z_pos in range(chunk.CHUNK_LENGTH):
 					data[idx] = current_chunk.blocks[x_pos][y_pos][z_pos]
 					idx += 1
-		
-		with gzip.open(save_path, 'wb', compresslevel=1) as f:
-			f.write(data)
+
+		def async_write(path, content):
+			try:
+				with gzip.open(path, 'wb', compresslevel=1) as f:
+					f.write(content)
+			except Exception as e:
+				print(f"Async chunk save failed: {e}")
+
+		self._save_executor.submit(async_write, save_path, data)
 
 	def _collect_generated_chunks(self, player_cx, player_cz):
 		"""Materialize at most 1 completed generation per frame.
@@ -859,24 +911,29 @@ class World:
 			if max(abs(chunk_position[0] - player_cx), abs(chunk_position[2] - player_cz)) > self.unload_distance:
 				return
 
-			current_chunk = chunk.Chunk(self, chunk_position)
-			current_chunk.blocks = blocks
+			current_chunk = chunk.Chunk(self, chunk_position, blocks=blocks)
 			self.chunks[chunk_position] = current_chunk
 			self.add_chunk_to_load_queue(chunk_position)
 			return  # 1 per frame max for constant O(1) main-thread time
 
 	def _rebuild_load_queue(self, player_cx, player_cz):
-		"""Pre-compute sorted list of chunks to load. Only called when
-		the player moves to a new chunk — NOT every frame."""
-		self._load_queue = []
+		"""Rebuild complete load queue for render distance, sorted by proximity to player.
+		Guarantees 100% complete chunk coverage around player with zero missing holes."""
+		queue = []
 		for dist in range(self.render_distance + 1):
 			for cx in range(player_cx - dist, player_cx + dist + 1):
 				for cz in range(player_cz - dist, player_cz + dist + 1):
 					if max(abs(cx - player_cx), abs(cz - player_cz)) != dist:
 						continue
 					chunk_pos = (cx, 0, cz)
-					if chunk_pos not in self.chunks:
-						self._load_queue.append(chunk_pos)
+					if (chunk_pos not in self.chunks and
+						chunk_pos not in self.chunk_generation_futures and
+						chunk_pos not in self.chunk_load_queue and
+						chunk_pos not in queue):
+						queue.append(chunk_pos)
+
+		queue.sort(key=lambda pos: (pos[0] - player_cx)**2 + (pos[2] - player_cz)**2)
+		self._load_queue = queue
 
 	def _submit_generations(self):
 		"""Submit generation jobs from the pre-computed queue.
@@ -910,19 +967,19 @@ class World:
 		# 2. Submit at most 1 background generation job
 		self._submit_generations()
 
-		# 3. Handle chunk boundary crossing
+		# 3. Handle chunk boundary crossing & load queue replenishment
 		current_chunk_pos = (player_cx, player_cz)
-		if current_chunk_pos != self._last_player_chunk:
+		if current_chunk_pos != self._last_player_chunk or not self._load_queue:
 			self._last_player_chunk = current_chunk_pos
 			self._rebuild_load_queue(player_cx, player_cz)
 
-		# 4. Unload at most 1 distant chunk per frame to eliminate unloading frame drops
-		for chunk_pos in list(self.chunks.keys()):
+		# 4. Unload at most 1 distant chunk per frame without temporary list allocations
+		for chunk_pos in self.chunks:
 			dx = abs(chunk_pos[0] - player_cx)
 			dz = abs(chunk_pos[2] - player_cz)
 			if max(dx, dz) > self.unload_distance:
 				self.unload_chunk(chunk_pos)
-				break  # 1 per frame max
+				break  # 1 per frame max for O(1) constant time
 
 	def unload_chunk(self, chunk_position):
 		"""Unload a chunk, saving it to disk if it was modified."""
@@ -961,35 +1018,15 @@ class World:
 		# Pass 1: Opaque pass
 		gl.glDisable(gl.GL_BLEND)
 		gl.glDepthMask(gl.GL_TRUE)
-
-		if player_position is not None:
-			max_dist = (self.render_distance + 1) * chunk.CHUNK_WIDTH
-			px, pz = player_position[0], player_position[2]
-			for chunk_position, current_chunk in self.chunks.items():
-				cx = chunk_position[0] * chunk.CHUNK_WIDTH + chunk.CHUNK_WIDTH // 2
-				cz = chunk_position[2] * chunk.CHUNK_LENGTH + chunk.CHUNK_LENGTH // 2
-				if abs(cx - px) <= max_dist and abs(cz - pz) <= max_dist:
-					current_chunk.draw_opaque()
-		else:
-			for current_chunk in self.chunks.values():
-				current_chunk.draw_opaque()
+		for current_chunk in self.chunks.values():
+			current_chunk.draw_opaque()
 
 		# Pass 2: Translucent pass (water)
 		gl.glEnable(gl.GL_BLEND)
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 		gl.glDepthMask(gl.GL_FALSE)
-
-		if player_position is not None:
-			max_dist = (self.render_distance + 1) * chunk.CHUNK_WIDTH
-			px, pz = player_position[0], player_position[2]
-			for chunk_position, current_chunk in self.chunks.items():
-				cx = chunk_position[0] * chunk.CHUNK_WIDTH + chunk.CHUNK_WIDTH // 2
-				cz = chunk_position[2] * chunk.CHUNK_LENGTH + chunk.CHUNK_LENGTH // 2
-				if abs(cx - px) <= max_dist and abs(cz - pz) <= max_dist:
-					current_chunk.draw_translucent()
-		else:
-			for current_chunk in self.chunks.values():
-				current_chunk.draw_translucent()
+		for current_chunk in self.chunks.values():
+			current_chunk.draw_translucent()
 
 		gl.glDepthMask(gl.GL_TRUE)
 		gl.glDisable(gl.GL_BLEND)

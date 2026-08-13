@@ -134,6 +134,27 @@ class Subchunk:
 				self.opaque_mesh_tex_coords.extend(block_type.tex_coords[face])
 				self.opaque_mesh_shading_values.extend(block_type.shading_values[face])
 
+		cx, _, cz = self.parent.chunk_position
+		east_chunk = self.world.chunks.get((cx + 1, 0, cz))
+		west_chunk = self.world.chunks.get((cx - 1, 0, cz))
+		south_chunk = self.world.chunks.get((cx, 0, cz + 1))
+		north_chunk = self.world.chunks.get((cx, 0, cz - 1))
+
+		def get_neighbor_block_num(plx, ply, plz, wx, wy, wz):
+			if 0 <= plx < 16 and 0 <= ply < 256 and 0 <= plz < 16:
+				return self.parent.blocks[plx][ply][plz]
+			if ply < 0 or ply >= 256:
+				return 0
+			if plx >= 16:
+				return east_chunk.blocks[0][ply][plz] if east_chunk is not None else 0
+			if plx < 0:
+				return west_chunk.blocks[15][ply][plz] if west_chunk is not None else 0
+			if plz >= 16:
+				return south_chunk.blocks[plx][ply][0] if south_chunk is not None else 0
+			if plz < 0:
+				return north_chunk.blocks[plx][ply][15] if north_chunk is not None else 0
+			return 0
+
 		for local_x in range(SUBCHUNK_WIDTH):
 			for local_y in range(SUBCHUNK_HEIGHT):
 				for local_z in range(SUBCHUNK_LENGTH):
@@ -158,42 +179,44 @@ class Subchunk:
 						if block_type.is_cube:
 							for face_idx, (dx, dy, dz) in enumerate(neighbor_offsets):
 								nx, ny, nz = x + dx, y + dy, z + dz
+								n_plx, n_ply, n_plz = parent_lx + dx, parent_ly + dy, parent_lz + dz
+								neighbor_num = get_neighbor_block_num(n_plx, n_ply, n_plz, nx, ny, nz)
+
 								if is_water or is_lava:
-									n_chunk_pos = self.world.get_chunk_position((nx, ny, nz))
-									if n_chunk_pos not in self.world.chunks:
-										if ny <= 60:
-											continue
-									neighbor_num = self.world.get_block_number((nx, ny, nz))
 									if neighbor_num == 0:
 										add_face(face_idx, is_translucent)
 									elif neighbor_num in (9, 19, 15, 20):
 										if face_idx != 3:  # Not bottom face
 											if is_water:
 												n_level = self.world.get_water_level((nx, ny, nz))
-												above_n = self.world.get_block_number((nx, ny + 1, nz)) in (9, 19, 15, 20)
+												above_n = get_neighbor_block_num(n_plx, n_ply + 1, n_plz, nx, ny + 1, nz) in (9, 19, 15, 20)
 												n_h = 1.0 if (above_n or n_level in (0, 8)) else (15.0 - 1.8 * n_level) / 16.0
 												
 												c_level = self.world.get_water_level((x, y, z))
-												above_c = self.world.get_block_number((x, y + 1, z)) in (9, 19, 15, 20)
+												above_c = get_neighbor_block_num(parent_lx, parent_ly + 1, parent_lz, x, y + 1, z) in (9, 19, 15, 20)
 												c_h = 1.0 if (above_c or c_level in (0, 8)) else (15.0 - 1.8 * c_level) / 16.0
 											else:
 												n_level = self.world.get_lava_level((nx, ny, nz))
-												above_n = self.world.get_block_number((nx, ny + 1, nz)) in (9, 19, 15, 20)
+												above_n = get_neighbor_block_num(n_plx, n_ply + 1, n_plz, nx, ny + 1, nz) in (9, 19, 15, 20)
 												n_h = 1.0 if (above_n or n_level in (0, 4)) else (15.0 - 3.8 * n_level) / 16.0
 												
 												c_level = self.world.get_lava_level((x, y, z))
-												above_c = self.world.get_block_number((x, y + 1, z)) in (9, 19, 15, 20)
+												above_c = get_neighbor_block_num(parent_lx, parent_ly + 1, parent_lz, x, y + 1, z) in (9, 19, 15, 20)
 												c_h = 1.0 if (above_c or c_level in (0, 4)) else (15.0 - 3.8 * c_level) / 16.0
 
 											if n_h < c_h - 0.01:
 												add_face(face_idx, is_translucent)
 									else:
 										neighbor_type = self.world.block_types[neighbor_num]
-										if not neighbor_type or getattr(neighbor_type, "translucent", False) or not self.world.is_opaque_block((nx, ny, nz)):
+										if not neighbor_type or getattr(neighbor_type, "translucent", False):
 											add_face(face_idx, is_translucent)
 								else:
-									if not self.world.is_opaque_block((nx, ny, nz)):
+									if neighbor_num == 0:
 										add_face(face_idx, is_translucent)
+									else:
+										neighbor_type = self.world.block_types[neighbor_num]
+										if not neighbor_type or getattr(neighbor_type, "translucent", False):
+											add_face(face_idx, is_translucent)
 
 						else:
 							for i in range(len(block_type.vertex_positions)):
