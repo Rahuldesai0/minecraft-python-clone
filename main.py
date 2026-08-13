@@ -260,7 +260,7 @@ class Window(pyglet.window.Window):
 			color=(255, 255, 255, 255), batch=self.crosshair_batch
 		)
 
-		self.time_of_day = 0.0  # Represents time of day, 0.0 to 1.0 where 0.0 is midnight and 0.5 is noon
+		self.time_of_day = 0.25  # World starts at Sunrise (0.25)
 		self.cycle_speed = 1.0 / 1200.0  # Exactly 20-minute full day/night cycle (1200 seconds)
 
 	def update_sky_color(self):
@@ -480,9 +480,6 @@ class Window(pyglet.window.Window):
 		# Render 3D overworld dropped items & 2D item sprites
 		self.item_drop_manager.draw(self.shader, self.gui)
 
-		# Render 3D block breaking crack overlay
-		self.draw_breaking_overlay()
-
 	def draw_celestial_bodies(self):
 		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
 			self.celestial_vao = gl.GLuint(0)
@@ -524,7 +521,7 @@ class Window(pyglet.window.Window):
 		idx_data = []
 		v_idx = 0
 
-		def build_celestial_quad(dx, dy, dz, layer, size=45.0):
+		def build_celestial_quad(dx, dy, dz, layer, size=45.0, shading_val=1.0):
 			nonlocal v_idx
 			cx = cam_x + dx * R
 			cy = cam_y + dy * R
@@ -548,7 +545,7 @@ class Window(pyglet.window.Window):
 				0.0, 1.0, layer
 			])
 
-			shading_data.extend([1.0, 1.0, 1.0, 1.0])
+			shading_data.extend([shading_val, shading_val, shading_val, shading_val])
 
 			idx_data.extend([
 				v_idx, v_idx + 1, v_idx + 2,
@@ -558,6 +555,34 @@ class Window(pyglet.window.Window):
 
 		build_celestial_quad(sun_dx, sun_dy, sun_dz, sun_layer, size=45.0)
 		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=40.0)
+
+		# Stars are ONLY drawn during Night (tod < 0.20 or tod >= 0.80)
+		# They are completely undrawn (0 geometry) during daytime and sunrise!
+		if tod < 0.20 or tod >= 0.80:
+			if not hasattr(self, "star_base_dirs"):
+				import random
+				rng = random.Random(12345)
+				self.star_base_dirs = []
+				for _ in range(250):
+					u = rng.uniform(-1.0, 1.0)
+					phi = rng.uniform(0.0, math.tau)
+					r_xy = math.sqrt(max(0.0, 1.0 - u * u))
+					bx = r_xy * math.cos(phi)
+					by = u
+					bz = r_xy * math.sin(phi)
+					if by < 0.05:
+						by = abs(by) + 0.1
+					self.star_base_dirs.append((bx, by, bz))
+
+			cos_t = math.cos(theta)
+			sin_t = math.sin(theta)
+
+			for bx, by, bz in self.star_base_dirs:
+				rx_dir = bx * cos_t - by * sin_t
+				ry_dir = bx * sin_t + by * cos_t
+				rz_dir = bz
+				if ry_dir > 0.05:
+					build_celestial_quad(rx_dir, ry_dir, rz_dir, sun_layer, size=1.8, shading_val=1.0)
 
 		gl.glBindVertexArray(self.celestial_vao)
 
@@ -660,11 +685,11 @@ class Window(pyglet.window.Window):
 
 			self.crosshair_batch.draw()
 
-			# Restore standard alpha blending, 3D states & 3D shader
+			# Restore standard alpha blending
 			gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
-			gl.glEnable(gl.GL_DEPTH_TEST)
-			gl.glEnable(gl.GL_CULL_FACE)
-			self.shader.use()
+
+		# 4. Render sleek Mining Progress Bar overlay right below crosshair
+		self.draw_breaking_overlay()
 
 		# 4. Render 2D Hotbar & Inventory GUI Overlay
 		self.gui.draw()

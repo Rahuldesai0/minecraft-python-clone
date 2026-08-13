@@ -42,7 +42,7 @@ class DroppedItem:
 				self.velocity[0] *= 0.3
 				self.velocity[2] *= 0.3
 				self.grounded = True
-				self.position[1] = by + 1.15
+				self.position[1] = by + 1.35
 			else:
 				self.position[0] = nx
 				self.position[1] = ny
@@ -251,21 +251,30 @@ class ItemDropManager:
 				shd_data.extend(self.flat_shading)
 
 		if pos_data:
+			gl.glDisable(gl.GL_CULL_FACE)
 			gl.glBindVertexArray(self.vao)
 
 			c_pos = (gl.GLfloat * len(pos_data))(*pos_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_pos), c_pos, gl.GL_DYNAMIC_DRAW)
+			gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(0)
 
 			c_tex = (gl.GLfloat * len(tex_data))(*tex_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_tex)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_tex), c_tex, gl.GL_DYNAMIC_DRAW)
+			gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(1)
 
 			c_shd = (gl.GLfloat * len(shd_data))(*shd_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shading)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_DYNAMIC_DRAW)
+			gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(2)
 
 			num_vertices = len(pos_data) // 3
 			gl.glDrawArrays(gl.GL_QUADS, 0, num_vertices)
 
 			gl.glBindVertexArray(0)
+			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, 0)
+			gl.glEnable(gl.GL_CULL_FACE)
