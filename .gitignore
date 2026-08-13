@@ -3,3 +3,7 @@
 tempCodeRunnerFile.py
 /.vscode
 *.rar
+mc.py
+/saves/*
+/save/*
+saves/*
