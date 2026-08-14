@@ -169,6 +169,9 @@ class Window(pyglet.window.Window):
 		self.camera.rotation = p_data.get('rotation', [0.0, 0.0])
 		self.camera.velocity_y = p_data.get('velocity_y', 0.0)
 		self.camera.health = p_data.get('health', 20)
+		self.camera.hunger = p_data.get('hunger', 20)
+		self.camera.saturation = p_data.get('saturation', 5.0)
+		self.camera.exhaustion = p_data.get('exhaustion', 0.0)
 		self.flying = p_data.get('flying', False)
 		self.sprinting = p_data.get('sprinting', False)
 
@@ -245,6 +248,9 @@ class Window(pyglet.window.Window):
 				'rotation': list(self.camera.rotation),
 				'velocity_y': self.camera.velocity_y,
 				'health': self.camera.health,
+				'hunger': getattr(self.camera, 'hunger', 20),
+				'saturation': getattr(self.camera, 'saturation', 5.0),
+				'exhaustion': getattr(self.camera, 'exhaustion', 0.0),
 				'flying': self.flying,
 				'sprinting': self.sprinting
 			}
@@ -468,6 +474,7 @@ class Window(pyglet.window.Window):
 							)
 
 						self.world.set_block(target_block, 0)
+						self.camera.add_exhaustion(0.005)
 						self.breaking_block = None
 						self.break_progress = 0.0
 				else:
@@ -480,6 +487,10 @@ class Window(pyglet.window.Window):
 			self.breaking_block = None
 			self.break_progress = 0.0
 
+		# Disable sprinting if hunger <= 6 points (3 drumsticks)
+		if not self.flying and self.camera.hunger <= 6:
+			self.sprinting = False
+
 		# Continuously sync horizontal movement vector from physical key states
 		dx = 0
 		dz = 0
@@ -490,6 +501,8 @@ class Window(pyglet.window.Window):
 
 		if self.mouse_captured:
 			self.camera.input = [dx, 0, dz]
+			if self.sprinting and (dx != 0 or dz != 0) and not self.flying:
+				self.camera.add_exhaustion(0.1 * delta_time)
 		else:
 			self.camera.input = [0, 0, 0]
 
@@ -861,6 +874,12 @@ class Window(pyglet.window.Window):
 		self.gui.on_mouse_scroll(scroll_y)
 	
 	def on_text(self, text):
+		if self.flying and self.gui.inventory_open:
+			if len(self.gui.creative_search_text) < 20 and (text.isalnum() or text in " -_()"):
+				self.gui.creative_search_text += text
+				self.gui.creative_scroll_row = 0
+			return
+
 		if self.game_state == "CREATE_WORLD":
 			if self.create_active_field == "name":
 				if len(self.create_name_text) < 24 and (text.isalnum() or text in " -_()"):
@@ -1071,7 +1090,13 @@ class Window(pyglet.window.Window):
 				return
 		elif button == pyglet.window.mouse.RIGHT:
 			held_id = self.gui.get_current_block_id()
-			if held_id in gui.ARMOR_SLOT_TYPES:
+			if held_id in gui.FOOD_VALUES and self.camera.hunger < 20:
+				h_pts, s_pts = gui.FOOD_VALUES[held_id]
+				self.camera.eat_food(h_pts, s_pts)
+				self.gui.consume_active_item()
+				self.holding = self.gui.get_current_block_id()
+				return
+			elif held_id in gui.ARMOR_SLOT_TYPES:
 				slot_idx = gui.ARMOR_SLOT_TYPES[held_id]
 				equipped_slot = self.gui.armor_slots[slot_idx]
 				active_slot = self.gui.hotbar_slots[self.gui.selected_slot]
@@ -1231,6 +1256,12 @@ class Window(pyglet.window.Window):
 		if self.game_state == "LOADING":
 			return
 
+		if self.flying and self.gui.inventory_open:
+			if key == pyglet.window.key.BACKSPACE:
+				self.gui.creative_search_text = self.gui.creative_search_text[:-1]
+				self.gui.creative_scroll_row = 0
+				return
+
 		if key == pyglet.window.key.F3:
 			self.show_debug = not self.show_debug
 
@@ -1258,8 +1289,11 @@ class Window(pyglet.window.Window):
 			self.gui.set_selected_slot(slot_idx)
 			return
 
-		# E Key toggles Inventory
+		# E Key toggles Inventory (unless search bar is focused in Creative menu)
 		if key == pyglet.window.key.E:
+			if self.flying and self.gui.inventory_open and getattr(self.gui, 'creative_search_focused', False):
+				self.on_text('e')
+				return
 			self.gui.toggle_inventory()
 			return
 

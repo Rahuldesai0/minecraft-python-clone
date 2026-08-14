@@ -159,6 +159,14 @@ def get_item_attack_damage(item_id):
 	"""Returns the attack damage for a given item or weapon ID (default 1.0 for fist)."""
 	return ITEM_ATTACK_DAMAGE.get(item_id, 1.0)
 
+# Minecraft Food Values: item_id -> (hunger_restored, saturation_restored)
+FOOD_VALUES = {
+	125: (3, 1.8),    # Raw Porkchop (+3 Hunger, +1.8 Saturation)
+	128: (8, 12.8),   # Cooked Porkchop (+8 Hunger, +12.8 Saturation)
+	127: (3, 1.8),    # Raw Beef (+3 Hunger, +1.8 Saturation)
+	129: (8, 12.8),   # Steak / Cooked Beef (+8 Hunger, +12.8 Saturation)
+}
+
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
 SMELTING_RECIPES = {
 	17: (123, 1),   # Iron Ore -> Iron Ingot
@@ -167,6 +175,8 @@ SMELTING_RECIPES = {
 	8:  (121, 1),   # Oak Log -> Coal (Charcoal)
 	6:  (21, 1),    # Sand -> Glass
 	4:  (22, 1),    # Clay/Dirt -> Bricks
+	125: (128, 1),  # Raw Porkchop -> Cooked Porkchop
+	127: (129, 1),  # Raw Beef -> Steak (Cooked Beef)
 }
 
 # Fuel Durations (in seconds of burn time): item_id -> burn_time_seconds
@@ -306,6 +316,30 @@ def draw_vector_shield(x, y, is_full=True, is_half=False):
 		inner.draw()
 		tri.draw()
 
+def draw_vector_drumstick(x, y, is_full=True, is_half=False):
+	bg_col = (45, 30, 15, 230)
+	bone_outer = pyglet.shapes.Circle(x + 2, y + 2, 2.5, color=bg_col)
+	meat_outer = pyglet.shapes.Circle(x + 8, y + 8, 5.5, color=bg_col)
+	bone_outer.draw()
+	meat_outer.draw()
+
+	if not is_full and not is_half:
+		return
+
+	meat_col = (190, 95, 35, 255)
+	bone_col = (235, 225, 210, 255)
+
+	if is_full:
+		bone = pyglet.shapes.Circle(x + 2, y + 2, 1.5, color=bone_col)
+		meat = pyglet.shapes.Circle(x + 8, y + 8, 4.0, color=meat_col)
+		bone.draw()
+		meat.draw()
+	elif is_half:
+		bone = pyglet.shapes.Circle(x + 2, y + 2, 1.5, color=bone_col)
+		meat = pyglet.shapes.Sector(x + 8, y + 8, 4.0, angle=3.14159, start_angle=1.5708, color=meat_col)
+		bone.draw()
+		meat.draw()
+
 class InventoryGUI:
 	def __init__(self, window):
 		self.window = window
@@ -317,6 +351,9 @@ class InventoryGUI:
 
 		# Creative hotbar starts with full stacks of 64
 		self.creative_hotbar = [[2, 64], [4, 64], [5, 64], [1, 64], [7, 64], [8, 64], [6, 64], [21, 64], [9, 64]]
+		self.creative_search_text = ""
+		self.creative_scroll_row = 0
+		self.creative_search_focused = False
 		
 		# Survival hotbar, inventory, & 4 Armor Slots (Helmet, Chestplate, Leggings, Boots)
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
@@ -559,6 +596,7 @@ class InventoryGUI:
 		return {
 			'hotbar': [list(slot) for slot in self.survival_hotbar],
 			'inventory': [list(slot) for slot in self.survival_inventory],
+			'armor_slots': [list(slot) for slot in self.armor_slots],
 			'crafting_grid_2x2': [list(slot) for slot in self.crafting_grid_2x2],
 			'crafting_grid_3x3': [list(slot) for slot in self.crafting_grid_3x3],
 			'crafting_result': list(self.crafting_result),
@@ -572,6 +610,8 @@ class InventoryGUI:
 			self.survival_hotbar = [list(slot) for slot in data['hotbar']]
 		if 'inventory' in data:
 			self.survival_inventory = [list(slot) for slot in data['inventory']]
+		if 'armor_slots' in data:
+			self.armor_slots = [list(slot) for slot in data['armor_slots']]
 		if 'crafting_grid_2x2' in data:
 			self.crafting_grid_2x2 = [list(slot) for slot in data['crafting_grid_2x2']]
 		if 'crafting_grid_3x3' in data:
@@ -1145,10 +1185,12 @@ class InventoryGUI:
 		self.inventory_open = not self.inventory_open
 		if self.inventory_open:
 			self.crafting_mode = "creative" if self.window.flying else "2x2"
+			self.creative_search_focused = self.window.flying
 			self.window.mouse_captured = False
 			self.window.set_exclusive_mouse(False)
 			self.evaluate_crafting()
 		else:
+			self.creative_search_focused = False
 			# Return ingredients left in active crafting grids to inventory when closing
 			for grid in (self.crafting_grid_2x2, self.crafting_grid_3x3):
 				for slot in grid:
@@ -1182,6 +1224,7 @@ class InventoryGUI:
 		if not self.window.flying:
 			self._draw_health_bar()
 			self._draw_armor_bar()
+			self._draw_hunger_bar()
 
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
@@ -1259,6 +1302,27 @@ class InventoryGUI:
 				draw_vector_shield(ax, ay, is_full=False, is_half=True)
 			else:
 				draw_vector_shield(ax, ay, is_full=False, is_half=False)
+
+	def _draw_hunger_bar(self):
+		slot_size = 44
+		padding = 6
+		total_w = 9 * slot_size + 8 * padding
+		start_x = (self.window.width + total_w) // 2 - 180
+		start_y = 64
+
+		hunger = getattr(self.window.camera, "hunger", 20)
+
+		for i in range(10):
+			fx = start_x + (9 - i) * 18
+			fy = start_y
+
+			food_val = i * 2
+			if hunger >= food_val + 2:
+				draw_vector_drumstick(fx, fy, is_full=True, is_half=False)
+			elif hunger == food_val + 1:
+				draw_vector_drumstick(fx, fy, is_full=False, is_half=True)
+			else:
+				draw_vector_drumstick(fx, fy, is_full=False, is_half=False)
 
 	def _draw_hotbar(self, current_hover):
 		slot_size = 44
@@ -1357,33 +1421,80 @@ class InventoryGUI:
 		pad = 6
 
 		if self.window.flying:
-			# Creative Palette Grid (8 columns x 5 rows)
-			cols = 8
-			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
-			grid_y = win_y + win_h - 90
+			# Filter items by search text
+			if self.creative_search_text.strip():
+				query = self.creative_search_text.strip().lower()
+				filtered_items = [item for item in ALL_ITEMS if query in item[1].lower()]
+			else:
+				filtered_items = ALL_ITEMS
 
-			for idx, (b_id, b_name, tex_name) in enumerate(ALL_ITEMS):
-				r = idx // cols
+			cols = 8
+			visible_rows = 5
+			total_rows = math.ceil(len(filtered_items) / float(cols)) if filtered_items else 1
+			max_scroll = max(0, total_rows - visible_rows)
+			self.creative_scroll_row = max(0, min(self.creative_scroll_row, max_scroll))
+
+			# Render Search Box at Top of Creative Menu
+			search_x = win_x + 24
+			search_y = win_y + win_h - 78
+			search_w = 260
+			search_h = 24
+			is_foc = getattr(self, "creative_search_focused", False)
+			border_c = (255, 215, 0, 255) if is_foc else (100, 140, 180, 255)
+			draw_bordered_box(search_x, search_y, search_w, search_h, 2 if is_foc else 1, (20, 20, 30, 230), border_c)
+
+			stext = f"Search: {self.creative_search_text}_" if self.creative_search_text else ("Search: (focused)_" if is_foc else "Search: (type to filter)_")
+			scol = (255, 255, 255, 255) if self.creative_search_text or is_foc else (150, 150, 170, 200)
+			s_lbl = pyglet.text.Label(stext, font_name="Arial", font_size=9, x=search_x + 6, y=search_y + search_h // 2, anchor_x="left", anchor_y="center", color=scol)
+			s_lbl.draw()
+
+			cnt_str = f"Items: {len(filtered_items)}"
+			c_lbl = pyglet.text.Label(cnt_str, font_name="Arial", font_size=9, x=search_x + search_w + 15, y=search_y + search_h // 2, anchor_x="left", anchor_y="center", color=(180, 180, 200, 255))
+			c_lbl.draw()
+
+			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			grid_y = win_y + win_h - 115
+
+			for idx, (b_id, b_name, tex_name) in enumerate(filtered_items):
+				row_idx = idx // cols
+				r = row_idx - self.creative_scroll_row
 				c = idx % cols
 
-				sx = grid_x + c * (slot_s + pad)
-				sy = grid_y - r * (slot_s + pad)
+				if 0 <= r < visible_rows:
+					sx = grid_x + c * (slot_s + pad)
+					sy = grid_y - r * (slot_s + pad)
 
-				is_hover = (sx <= self.mouse_x <= sx + slot_s and sy <= self.mouse_y <= sy + slot_s)
-				bg_c = (55, 60, 75, 230) if is_hover else (35, 38, 48, 200)
-				border_c = (255, 215, 0, 255) if is_hover else (70, 75, 90, 200)
+					is_hover = (sx <= self.mouse_x <= sx + slot_s and sy <= self.mouse_y <= sy + slot_s)
+					bg_c = (55, 60, 75, 230) if is_hover else (35, 38, 48, 200)
+					border_c = (255, 215, 0, 255) if is_hover else (70, 75, 90, 200)
 
-				draw_bordered_box(sx, sy, slot_s, slot_s, 2 if is_hover else 1, bg_c, border_c)
+					draw_bordered_box(sx, sy, slot_s, slot_s, 2 if is_hover else 1, bg_c, border_c)
 
-				if b_id in self.icon_textures:
-					img = self.icon_textures[b_id]
-					spr = pyglet.sprite.Sprite(img, x=sx + 4, y=sy + 4)
-					spr.scale_x = 32.0 / img.width
-					spr.scale_y = 32.0 / img.height
-					spr.draw()
+					if b_id in self.icon_textures:
+						img = self.icon_textures[b_id]
+						spr = pyglet.sprite.Sprite(img, x=sx + 4, y=sy + 4)
+						spr.scale_x = 32.0 / img.width
+						spr.scale_y = 32.0 / img.height
+						spr.draw()
 
-				if is_hover:
-					current_hover = b_name
+					if is_hover:
+						current_hover = b_name
+
+			# Draw Vertical Scrollbar
+			if max_scroll > 0:
+				sb_x = grid_x + cols * (slot_s + pad) + 4
+				sb_y = grid_y - (visible_rows - 1) * (slot_s + pad)
+				sb_h = visible_rows * slot_s + (visible_rows - 1) * pad
+				sb_w = 8
+
+				# Track background
+				pyglet.shapes.Rectangle(sb_x, sb_y, sb_w, sb_h, color=(30, 30, 40, 200)).draw()
+
+				# Thumb
+				thumb_h = max(20, int(sb_h * (visible_rows / float(total_rows))))
+				scroll_ratio = self.creative_scroll_row / float(max_scroll)
+				thumb_y = sb_y + sb_h - thumb_h - int((sb_h - thumb_h) * scroll_ratio)
+				pyglet.shapes.Rectangle(sb_x, thumb_y, sb_w, thumb_h, color=(140, 150, 180, 255)).draw()
 		elif self.crafting_mode == "furnace" and self.active_furnace:
 			furn_lbl = pyglet.text.Label("Furnace Smelting:", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
 			furn_lbl.draw()
@@ -1701,16 +1812,26 @@ class InventoryGUI:
 		pad = 6
 
 		if self.window.flying:
+			if self.creative_search_text.strip():
+				query = self.creative_search_text.strip().lower()
+				filtered_items = [item for item in ALL_ITEMS if query in item[1].lower()]
+			else:
+				filtered_items = ALL_ITEMS
+
 			cols = 8
+			visible_rows = 5
 			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
-			grid_y = win_y + win_h - 90
-			for idx, (b_id, b_name, tex_name) in enumerate(ALL_ITEMS):
-				r = idx // cols
+			grid_y = win_y + win_h - 115
+
+			for idx, (b_id, b_name, tex_name) in enumerate(filtered_items):
+				row_idx = idx // cols
+				r = row_idx - self.creative_scroll_row
 				c = idx % cols
-				sx = grid_x + c * (slot_s + pad)
-				sy = grid_y - r * (slot_s + pad)
-				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
-					return ("creative", idx, [b_id, 64])
+				if 0 <= r < visible_rows:
+					sx = grid_x + c * (slot_s + pad)
+					sy = grid_y - r * (slot_s + pad)
+					if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+						return ("creative", idx, [b_id, 64])
 
 			hb_x = win_x + (win_w - (9 * slot_s + 8 * pad)) // 2
 			hb_y = win_y + 12
@@ -2151,6 +2272,22 @@ class InventoryGUI:
 			self.handle_shift_click(slot_info)
 			return True
 
+		# Update creative search focus based on click location
+		if self.window.flying:
+			win_w = 640
+			win_h = 460
+			win_x = (self.window.width - win_w) // 2
+			win_y = (self.window.height - win_h) // 2
+			search_x = win_x + 24
+			search_y = win_y + win_h - 78
+			search_w = 260
+			search_h = 24
+
+			if search_x <= x <= search_x + search_w and search_y <= y <= search_y + search_h:
+				self.creative_search_focused = True
+			else:
+				self.creative_search_focused = False
+
 		# 2. CREATIVE PALETTE & HOTBAR CLICKS
 		if self.window.flying:
 			if slot_info and slot_info[0] == "creative":
@@ -2323,6 +2460,24 @@ class InventoryGUI:
 				return old_target
 
 	def on_mouse_scroll(self, scroll_y):
+		if self.inventory_open and self.window.flying:
+			if self.creative_search_text.strip():
+				query = self.creative_search_text.strip().lower()
+				filtered_items = [item for item in ALL_ITEMS if query in item[1].lower()]
+			else:
+				filtered_items = ALL_ITEMS
+
+			cols = 8
+			visible_rows = 5
+			total_rows = math.ceil(len(filtered_items) / float(cols)) if filtered_items else 1
+			max_scroll = max(0, total_rows - visible_rows)
+
+			if scroll_y < 0:
+				self.creative_scroll_row = min(max_scroll, self.creative_scroll_row + 1)
+			elif scroll_y > 0:
+				self.creative_scroll_row = max(0, self.creative_scroll_row - 1)
+			return
+
 		if scroll_y > 0:
 			new_slot = (self.selected_slot - 1) % 9
 		elif scroll_y < 0:

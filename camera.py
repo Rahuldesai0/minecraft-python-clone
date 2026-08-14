@@ -25,7 +25,28 @@ class Camera:
 		self.fall_start_y = None
 		self.hurt_time = 0.0
 		self.last_damage_time = 0.0
+
+		# Survival Mode Hunger (20 points = 10 Drumsticks), Saturation & Exhaustion Tracking
+		self.hunger = 20
+		self.max_hunger = 20
+		self.saturation = 5.0
+		self.exhaustion = 0.0
 		self.gui = None
+
+	def eat_food(self, hunger_points, saturation_points):
+		"""Restores hunger and saturation (saturation is capped at current hunger level)."""
+		self.hunger = min(self.max_hunger, self.hunger + hunger_points)
+		self.saturation = min(float(self.hunger), self.saturation + saturation_points)
+
+	def add_exhaustion(self, amount):
+		"""Adds exhaustion and processes hunger/saturation depletion when reaching 4.0."""
+		self.exhaustion += amount
+		while self.exhaustion >= 4.0:
+			self.exhaustion -= 4.0
+			if self.saturation > 0:
+				self.saturation = max(0.0, self.saturation - 1.0)
+			else:
+				self.hunger = max(0, self.hunger - 1)
 
 	def take_damage(self, damage, flying=False, gui=None):
 		import time
@@ -48,6 +69,9 @@ class Camera:
 
 	def respawn(self):
 		self.health = self.max_health
+		self.hunger = self.max_hunger
+		self.saturation = 5.0
+		self.exhaustion = 0.0
 		self.position = [0, 85, 0]
 		self.velocity_y = 0.0
 		self.fall_start_y = None
@@ -73,11 +97,12 @@ class Camera:
 		if self.hurt_time > 0:
 			self.hurt_time = max(0.0, self.hurt_time - delta_time)
 
-		# Passive Health Regeneration in Survival Mode
-		if not flying and 0 < self.health < self.max_health:
+		# Passive Health Regeneration in Survival Mode (Requires Hunger >= 18 points / 9 drumsticks)
+		if not flying and self.hunger >= 18 and 0 < self.health < self.max_health:
 			if (time.time() - self.last_damage_time) >= 4.0:
 				self.health = min(self.max_health, self.health + 1)
 				self.last_damage_time = time.time()
+				self.add_exhaustion(6.0)
 
 		in_liquid = self.is_in_liquid(world)
 
@@ -163,6 +188,7 @@ class Camera:
 					# Jump impulse: v0 = 8.5 m/s yields an exact 1.25-block jump height with g = 28.5 m/s^2
 					self.velocity_y = 8.5
 					self.on_ground = False
+					self.add_exhaustion(0.2 if sprinting else 0.05)
 				else:
 					self.velocity_y = 0.0
 			else:
