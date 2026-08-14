@@ -127,12 +127,13 @@ class ItemDropManager:
 			j = i + 1
 			while j < len(self.drops):
 				d2 = self.drops[j]
-				if d1.block_id == d2.block_id and d1.count < 64:
+				max_stack = gui_module.get_max_stack_size(d1.block_id)
+				if d1.block_id == d2.block_id and d1.count < max_stack:
 					dx = d1.position[0] - d2.position[0]
 					dy = d1.position[1] - d2.position[1]
 					dz = d1.position[2] - d2.position[2]
 					if dx * dx + dy * dy + dz * dz < 2.25:
-						addable = min(d2.count, 64 - d1.count)
+						addable = min(d2.count, max_stack - d1.count)
 						d1.count += addable
 						d2.count -= addable
 						if d2.count <= 0:
@@ -142,8 +143,6 @@ class ItemDropManager:
 			i += 1
 
 	def update(self, dt, player_pos, gui):
-		self.merge_nearby_drops()
-
 		px, py, pz = player_pos
 
 		i = 0
@@ -250,9 +249,10 @@ class ItemDropManager:
 			shader.use()
 			gl.glActiveTexture(gl.GL_TEXTURE0)
 			gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
-			sampler_loc = shader.find_uniform(b"texture_array_sampler")
-			if sampler_loc != -1:
-				gl.glUniform1i(sampler_loc, 0)
+			if not hasattr(self, 'sampler_loc'):
+				self.sampler_loc = shader.find_uniform(b"texture_array_sampler")
+			if self.sampler_loc != -1:
+				gl.glUniform1i(self.sampler_loc, 0)
 
 			if self.vao is None:
 				self.vao = gl.GLuint(0)
@@ -269,25 +269,20 @@ class ItemDropManager:
 
 			gl.glBindVertexArray(self.vao)
 
-			# Position VBO (location 0)
-			c_pos = (gl.GLfloat * len(pos_data))()
-			c_pos[:] = pos_data
+			# Fast direct Ctypes Buffer conversion
+			c_pos = (gl.GLfloat * len(pos_data))(*pos_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_pos), c_pos, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(0)
 
-			# TexCoord VBO (location 1)
-			c_tex = (gl.GLfloat * len(tex_data))()
-			c_tex[:] = tex_data
+			c_tex = (gl.GLfloat * len(tex_data))(*tex_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_tex)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_tex), c_tex, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(1)
 
-			# Shading VBO (location 2)
-			c_shd = (gl.GLfloat * len(shd_data))()
-			c_shd[:] = shd_data
+			c_shd = (gl.GLfloat * len(shd_data))(*shd_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shd)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)

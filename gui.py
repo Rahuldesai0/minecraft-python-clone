@@ -73,6 +73,12 @@ TOOL_ITEMS = [
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
 BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
 
+def get_max_stack_size(item_id):
+	"""Returns the maximum stack size for an item ID. Tools & weapons (101-120) do not stack (max stack = 1)."""
+	if 101 <= item_id <= 120:
+		return 1
+	return 64
+
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
 SMELTING_RECIPES = {
 	17: (123, 1),   # Iron Ore -> Iron Ingot
@@ -323,29 +329,32 @@ class InventoryGUI:
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
 			return True
 
-		# 1. Stack into existing hotbar matching slots
-		for slot in self.survival_hotbar:
-			if slot[0] == block_id and slot[1] < 64:
-				addable = min(count, 64 - slot[1])
-				slot[1] += addable
-				count -= addable
-				if count == 0:
-					return True
+		max_stack = get_max_stack_size(block_id)
 
-		# 2. Stack into existing inventory matching slots
-		for slot in self.survival_inventory:
-			if slot[0] == block_id and slot[1] < 64:
-				addable = min(count, 64 - slot[1])
-				slot[1] += addable
-				count -= addable
-				if count == 0:
-					return True
+		if max_stack > 1:
+			# 1. Stack into existing hotbar matching slots
+			for slot in self.survival_hotbar:
+				if slot[0] == block_id and slot[1] < max_stack:
+					addable = min(count, max_stack - slot[1])
+					slot[1] += addable
+					count -= addable
+					if count == 0:
+						return True
+
+			# 2. Stack into existing inventory matching slots
+			for slot in self.survival_inventory:
+				if slot[0] == block_id and slot[1] < max_stack:
+					addable = min(count, max_stack - slot[1])
+					slot[1] += addable
+					count -= addable
+					if count == 0:
+						return True
 
 		# 3. Place into first empty hotbar slot
 		for slot in self.survival_hotbar:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
-				slot[1] = min(count, 64)
+				slot[1] = min(count, max_stack)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -354,7 +363,7 @@ class InventoryGUI:
 		for slot in self.survival_inventory:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
-				slot[1] = min(count, 64)
+				slot[1] = min(count, max_stack)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -1653,28 +1662,31 @@ class InventoryGUI:
 		if b_id == 0 or cnt <= 0:
 			return
 
+		max_stack = get_max_stack_size(b_id)
+
 		if self.crafting_mode in ("single_chest", "double_chest") and stype in ("inv", "hotbar"):
 			chests = [self.active_chest1]
 			if self.crafting_mode == "double_chest" and self.active_chest2:
 				chests.append(self.active_chest2)
 
-			for ch in chests:
-				for slot in ch.slots:
-					if slot[0] == b_id and slot[1] < 64:
-						addable = min(cnt, 64 - slot[1])
-						slot[1] += addable
-						cnt -= addable
-						if cnt == 0: break
-				if cnt == 0: break
+			if max_stack > 1:
+				for ch in chests:
+					for slot in ch.slots:
+						if slot[0] == b_id and slot[1] < max_stack:
+							addable = min(cnt, max_stack - slot[1])
+							slot[1] += addable
+							cnt -= addable
+							if cnt == 0: break
+					if cnt == 0: break
 
 			if cnt > 0:
 				for ch in chests:
 					for slot in ch.slots:
 						if slot[0] == 0 or slot[1] == 0:
 							slot[0] = b_id
-							slot[1] = cnt
-							cnt = 0
-							break
+							slot[1] = min(cnt, max_stack)
+							cnt -= slot[1]
+							if cnt == 0: break
 					if cnt == 0: break
 
 			target_slot[1] = cnt
@@ -1684,7 +1696,8 @@ class InventoryGUI:
 		if self.crafting_mode == "furnace" and self.active_furnace and stype in ("inv", "hotbar"):
 			if b_id in FUEL_BURN_TIMES:
 				f_slot = self.active_furnace.fuel_slot
-				if f_slot[0] == 0 or (f_slot[0] == b_id and f_slot[1] + cnt <= 64):
+				f_max = get_max_stack_size(b_id)
+				if f_slot[0] == 0 or (f_slot[0] == b_id and f_slot[1] + cnt <= f_max):
 					f_slot[0] = b_id
 					f_slot[1] += cnt
 					target_slot[0] = 0
@@ -1692,7 +1705,8 @@ class InventoryGUI:
 					return
 			if b_id in SMELTING_RECIPES:
 				i_slot = self.active_furnace.input_slot
-				if i_slot[0] == 0 or (i_slot[0] == b_id and i_slot[1] + cnt <= 64):
+				i_max = get_max_stack_size(b_id)
+				if i_slot[0] == 0 or (i_slot[0] == b_id and i_slot[1] + cnt <= i_max):
 					i_slot[0] = b_id
 					i_slot[1] += cnt
 					target_slot[0] = 0
@@ -1706,36 +1720,38 @@ class InventoryGUI:
 				self.evaluate_crafting()
 		elif stype == "inv":
 			# Move from storage inventory into hotbar
-			for slot in self.survival_hotbar:
-				if slot[0] == b_id and slot[1] < 64:
-					addable = min(cnt, 64 - slot[1])
-					slot[1] += addable
-					cnt -= addable
-					if cnt == 0: break
+			if max_stack > 1:
+				for slot in self.survival_hotbar:
+					if slot[0] == b_id and slot[1] < max_stack:
+						addable = min(cnt, max_stack - slot[1])
+						slot[1] += addable
+						cnt -= addable
+						if cnt == 0: break
 			if cnt > 0:
 				for slot in self.survival_hotbar:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
-						slot[1] = cnt
-						cnt = 0
-						break
+						slot[1] = min(cnt, max_stack)
+						cnt -= slot[1]
+						if cnt == 0: break
 			target_slot[1] = cnt
 			if cnt == 0: target_slot[0] = 0
 		elif stype == "hotbar":
 			# Move from hotbar into storage inventory
-			for slot in self.survival_inventory:
-				if slot[0] == b_id and slot[1] < 64:
-					addable = min(cnt, 64 - slot[1])
-					slot[1] += addable
-					cnt -= addable
-					if cnt == 0: break
+			if max_stack > 1:
+				for slot in self.survival_inventory:
+					if slot[0] == b_id and slot[1] < max_stack:
+						addable = min(cnt, max_stack - slot[1])
+						slot[1] += addable
+						cnt -= addable
+						if cnt == 0: break
 			if cnt > 0:
 				for slot in self.survival_inventory:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
-						slot[1] = cnt
-						cnt = 0
-						break
+						slot[1] = min(cnt, max_stack)
+						cnt -= slot[1]
+						if cnt == 0: break
 			target_slot[1] = cnt
 			if cnt == 0: target_slot[0] = 0
 
@@ -1773,8 +1789,11 @@ class InventoryGUI:
 		self.evaluate_crafting()
 
 	def gather_matching_items(self):
-		"""Gathers all matching items scattered across inventory/hotbar/crafting into held_stack up to 64."""
-		if not self.held_stack or self.held_stack[0] == 0 or self.held_stack[1] >= 64:
+		"""Gathers all matching items scattered across inventory/hotbar/crafting into held_stack up to max_stack."""
+		if not self.held_stack or self.held_stack[0] == 0:
+			return
+		max_stack = get_max_stack_size(self.held_stack[0])
+		if self.held_stack[1] >= max_stack or max_stack == 1:
 			return
 
 		target_id = self.held_stack[0]
@@ -1783,13 +1802,13 @@ class InventoryGUI:
 		grid = self.active_crafting_grid
 		for slot in grid:
 			if slot[0] == target_id and slot[1] > 0:
-				needed = 64 - self.held_stack[1]
+				needed = max_stack - self.held_stack[1]
 				take = min(needed, slot[1])
 				self.held_stack[1] += take
 				slot[1] -= take
 				if slot[1] <= 0:
 					slot[0] = 0
-				if self.held_stack[1] >= 64:
+				if self.held_stack[1] >= max_stack:
 					self.evaluate_crafting()
 					return
 
@@ -1798,25 +1817,25 @@ class InventoryGUI:
 		# 2. Gather from storage inventory (27 slots)
 		for slot in self.survival_inventory:
 			if slot[0] == target_id and slot[1] > 0:
-				needed = 64 - self.held_stack[1]
+				needed = max_stack - self.held_stack[1]
 				take = min(needed, slot[1])
 				self.held_stack[1] += take
 				slot[1] -= take
 				if slot[1] <= 0:
 					slot[0] = 0
-				if self.held_stack[1] >= 64:
+				if self.held_stack[1] >= max_stack:
 					return
 
 		# 3. Gather from hotbar (9 slots)
 		for slot in self.survival_hotbar:
 			if slot[0] == target_id and slot[1] > 0:
-				needed = 64 - self.held_stack[1]
+				needed = max_stack - self.held_stack[1]
 				take = min(needed, slot[1])
 				self.held_stack[1] += take
 				slot[1] -= take
 				if slot[1] <= 0:
 					slot[0] = 0
-				if self.held_stack[1] >= 64:
+				if self.held_stack[1] >= max_stack:
 					return
 
 	def handle_slot_click(self, target_slot, is_right_click):
@@ -1847,13 +1866,14 @@ class InventoryGUI:
 			else:
 				# Right click when HOLDING an item: Place 1 item into target slot!
 				b_id = held[0]
+				max_stack = get_max_stack_size(b_id)
 				if target_slot[0] == 0 or target_slot[1] == 0:
 					target_slot[0] = b_id
 					target_slot[1] = 1
 					held[1] -= 1
 					if held[1] <= 0:
 						self.held_stack = None
-				elif target_slot[0] == b_id and target_slot[1] < 64:
+				elif target_slot[0] == b_id and target_slot[1] < max_stack:
 					target_slot[1] += 1
 					held[1] -= 1
 					if held[1] <= 0:
@@ -2042,7 +2062,8 @@ class InventoryGUI:
 				target_slot[1] = held[1]
 				return None
 			elif target_slot[0] == held[0]:
-				space = 64 - target_slot[1]
+				max_stack = get_max_stack_size(target_slot[0])
+				space = max_stack - target_slot[1]
 				addable = min(space, held[1])
 				target_slot[1] += addable
 				held[1] -= addable

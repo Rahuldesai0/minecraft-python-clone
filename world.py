@@ -625,8 +625,8 @@ class World:
 
 		os.makedirs(self.save_dir, exist_ok=True)
 
-		# Single Bounded ProcessPoolExecutor (2 Workers) for both Terrain Generation & Section Meshing
-		self.process_executor = ProcessPoolExecutor(max_workers=2)
+		# Multithreaded Executor (4 Workers) for in-memory Terrain Generation & Section Meshing without IPC pickling overhead
+		self.process_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ChunkWorker")
 		self.chunk_generation_futures = {}
 		self.section_mesh_futures = {}
 
@@ -804,8 +804,8 @@ class World:
 
 			uploaded_bytes += max(1024, sec_bytes)
 
-		# 3. Submit pending section meshing tasks (max 2 active workers)
-		if len(self.section_mesh_futures) < 2 and self.section_mesh_queue:
+		# 3. Submit pending section meshing tasks (max 4 active workers)
+		if len(self.section_mesh_futures) < 4 and self.section_mesh_queue:
 			info = self.get_block_types_info()
 			w_lvls = dict(self.water_levels) if self.water_levels else None
 			l_lvls = dict(self.liquid_levels) if self.liquid_levels else None
@@ -823,7 +823,7 @@ class World:
 			pending_list.sort(key=mesh_priority)
 
 			for item in pending_list:
-				if len(self.section_mesh_futures) >= 2:
+				if len(self.section_mesh_futures) >= 4:
 					break
 				cx, cz, sy = item
 				self.section_mesh_queue.remove(item)
@@ -1111,15 +1111,16 @@ class World:
 			# Enqueue active liquid boundary blocks in newly loaded chunk so fluid flow activates
 			cx, _, cz = chunk_position
 			b_data = chk.blocks
-			for x_pos in range(16):
-				for z_pos in range(16):
-					base_xz = x_pos * 4096 + z_pos
-					for y_pos in range(1, 128):
-						b_id = b_data[base_xz + y_pos * 16]
-						if b_id in (9, 19, 15, 20):
-							wx = cx * 16 + x_pos
-							wz = cz * 16 + z_pos
-							self.liquid_tick_queue.add((wx, y_pos, wz))
+			if 9 in b_data or 19 in b_data or 15 in b_data or 20 in b_data:
+				for x_pos in range(16):
+					for z_pos in range(16):
+						base_xz = x_pos * 4096 + z_pos
+						for y_pos in range(1, 128):
+							b_id = b_data[base_xz + y_pos * 16]
+							if b_id in (9, 19, 15, 20):
+								wx = cx * 16 + x_pos
+								wz = cz * 16 + z_pos
+								self.liquid_tick_queue.add((wx, y_pos, wz))
 
 			# Also trigger border section re-meshing for adjacent loaded neighbors
 			for nx, nz in [(cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)]:
@@ -1202,16 +1203,18 @@ class World:
 						continue
 				visible_chunks.append(current_chunk)
 
+		bound_vao = None
 		gl.glDisable(gl.GL_BLEND)
 		gl.glDepthMask(gl.GL_TRUE)
 		for current_chunk in visible_chunks:
-			current_chunk.draw_opaque()
+			bound_vao = current_chunk.draw_opaque(bound_vao)
 
 		gl.glEnable(gl.GL_BLEND)
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 		gl.glDepthMask(gl.GL_FALSE)
 		for current_chunk in visible_chunks:
-			current_chunk.draw_translucent()
+			bound_vao = current_chunk.draw_translucent(bound_vao)
 
 		gl.glDepthMask(gl.GL_TRUE)
 		gl.glDisable(gl.GL_BLEND)
+		gl.glBindVertexArray(0)

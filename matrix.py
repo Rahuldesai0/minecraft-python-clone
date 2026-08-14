@@ -4,7 +4,7 @@ import ctypes
 import math
 
 def copy_matrix(matrix):
-	return copy.deepcopy(matrix) # we need to use deepcopy since we're dealing with 2D arrays
+	return [row[:] for row in matrix]
 
 clean_matrix = [[0.0 for x in range(4)] for x in range(4)]
 identity_matrix = copy_matrix(clean_matrix)

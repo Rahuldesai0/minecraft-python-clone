@@ -44,9 +44,8 @@ class Window(pyglet.window.Window):
 
 		# pyglet stuff
 
-		# Drive streaming at a normal game-update rate.  Scheduling this at 10,000
-		# Hz wastes the event loop and does not make chunk generation finish faster.
-		pyglet.clock.schedule_interval(self.update, 1.0 / 120)
+		# Drive game updates at a clean 60 Hz target rate.
+		pyglet.clock.schedule_interval(self.update, 1.0 / 60.0)
 		self.mouse_captured = False
 
 		# camera stuff
@@ -722,10 +721,18 @@ class Window(pyglet.window.Window):
 			wx, wy, wz = int(round(x)), int(round(y)), int(round(z))
 			cx, cz = math.floor(x / 16.0), math.floor(z / 16.0)
 
-			cont = noise.pnoise2(wx / 350.0, wz / 350.0, octaves=3)
-			erosion = noise.pnoise2((wx + 1000.0) / 300.0, (wz + 1000.0) / 300.0, octaves=3)
-			peaks = noise.pnoise2((wx + 1000.0) / 120.0, (wz + 1000.0) / 120.0, octaves=4)
-			river = abs(noise.pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
+			# Cache debug noise calls once per block position update
+			if not hasattr(self, '_last_debug_pos') or self._last_debug_pos != (wx, wz):
+				self._last_debug_pos = (wx, wz)
+				self._cached_cont = noise.pnoise2(wx / 350.0, wz / 350.0, octaves=3)
+				self._cached_erosion = noise.pnoise2((wx + 1000.0) / 300.0, (wz + 1000.0) / 300.0, octaves=3)
+				self._cached_peaks = noise.pnoise2((wx + 1000.0) / 120.0, (wz + 1000.0) / 120.0, octaves=4)
+				self._cached_river = abs(noise.pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
+
+			cont = self._cached_cont
+			erosion = self._cached_erosion
+			peaks = self._cached_peaks
+			river = self._cached_river
 
 			if wy > 110:
 				biome = "Snow-Capped Cone Mountain Peak (Y>110)"

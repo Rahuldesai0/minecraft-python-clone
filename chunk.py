@@ -76,17 +76,23 @@ class ChunkSection:
 		self.opaque_indices_length = len(op_idx) // 4
 		self.translucent_indices_length = len(tr_idx) // 4
 
-	def draw_opaque(self):
+	def draw_opaque(self, bound_vao=None):
 		if not self.opaque_indices_length or self.vao is None:
-			return
-		gl.glBindVertexArray(self.vao)
+			return bound_vao
+		if bound_vao != self.vao.value:
+			gl.glBindVertexArray(self.vao)
+			bound_vao = self.vao.value
 		gl.glDrawElements(gl.GL_TRIANGLES, self.opaque_indices_length, gl.GL_UNSIGNED_INT, None)
+		return bound_vao
 
-	def draw_translucent(self):
+	def draw_translucent(self, bound_vao=None):
 		if not self.translucent_indices_length or self.vao is None:
-			return
-		gl.glBindVertexArray(self.vao)
+			return bound_vao
+		if bound_vao != self.vao.value:
+			gl.glBindVertexArray(self.vao)
+			bound_vao = self.vao.value
 		gl.glDrawElements(gl.GL_TRIANGLES, self.translucent_indices_length, gl.GL_UNSIGNED_INT, ctypes.c_void_p(self.opaque_indices_length * 4))
+		return bound_vao
 
 	def delete(self):
 		if self.vao is not None:
@@ -143,6 +149,8 @@ class Chunk:
 			self.blocks = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
 
 		self.sections = {}
+		self.active_opaque_sections = []
+		self.active_translucent_sections = []
 		self.had_missing_neighbors = False
 
 	def get_block_number(self, x, y, z):
@@ -154,6 +162,10 @@ class Chunk:
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
 			self.blocks[x * 4096 + y * 16 + z] = val
 
+	def _update_active_sections(self):
+		self.active_opaque_sections = [sec for sec in self.sections.values() if sec.opaque_indices_length > 0]
+		self.active_translucent_sections = [sec for sec in self.sections.values() if sec.translucent_indices_length > 0]
+
 	def send_section_mesh_to_gpu(self, section_y, op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx):
 		if section_y not in self.sections:
 			self.sections[section_y] = ChunkSection(self, section_y)
@@ -161,18 +173,22 @@ class Chunk:
 		sec.upload_mesh_bytes(op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx)
 		if not sec.opaque_indices_length and not sec.translucent_indices_length:
 			del self.sections[section_y]
+		self._update_active_sections()
 
-	def draw_opaque(self):
-		for sec in self.sections.values():
-			sec.draw_opaque()
+	def draw_opaque(self, bound_vao=None):
+		for sec in self.active_opaque_sections:
+			bound_vao = sec.draw_opaque(bound_vao)
+		return bound_vao
 
-	def draw_translucent(self):
-		for sec in self.sections.values():
-			sec.draw_translucent()
+	def draw_translucent(self, bound_vao=None):
+		for sec in self.active_translucent_sections:
+			bound_vao = sec.draw_translucent(bound_vao)
+		return bound_vao
 
-	def draw(self):
-		self.draw_opaque()
-		self.draw_translucent()
+	def draw(self, bound_vao=None):
+		bound_vao = self.draw_opaque(bound_vao)
+		bound_vao = self.draw_translucent(bound_vao)
+		return bound_vao
 
 	def delete(self):
 		for sec in list(self.sections.values()):
