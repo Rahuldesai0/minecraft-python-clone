@@ -39,6 +39,7 @@ PALETTE_ITEMS = [
 	(11, "Cactus", "cactus_side"),
 	(12, "Dead Bush", "dead_bush"),
 	(34, "Sponge", "sponge"),
+	(37, "Chest", "chest_front"),
 ]
 
 TOOL_ITEMS = [
@@ -63,10 +64,106 @@ TOOL_ITEMS = [
 	(118, "Gold Axe", "items/gold_axe"),
 	(119, "Gold Shovel", "items/gold_shovel"),
 	(120, "Gold Sword", "items/gold_sword"),
+	(121, "Coal", "items/coal"),
+	(122, "Diamond", "items/diamond"),
+	(123, "Iron Ingot", "items/iron_ingot"),
+	(124, "Gold Ingot", "items/gold_ingot"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
 BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
+
+# Smelting Recipes: input_item_id -> (result_item_id, result_count)
+SMELTING_RECIPES = {
+	17: (123, 1),   # Iron Ore -> Iron Ingot
+	35: (124, 1),   # Gold Ore -> Gold Ingot
+	1:  (5, 1),     # Cobblestone -> Stone
+	8:  (121, 1),   # Oak Log -> Coal (Charcoal)
+	6:  (21, 1),    # Sand -> Glass
+	4:  (22, 1),    # Clay/Dirt -> Bricks
+}
+
+# Fuel Durations (in seconds of burn time): item_id -> burn_time_seconds
+# 1 item smelt takes 10.0 seconds
+FUEL_BURN_TIMES = {
+	121: 80.0,  # Coal item -> 80s (8 smelts)
+	16:  80.0,  # Coal Ore -> 80s (8 smelts)
+	8:   15.0,  # Oak Log -> 15s (1.5 smelts)
+	7:   15.0,  # Oak Planks -> 15s (1.5 smelts)
+	26:  15.0,  # Crafting Table -> 15s
+	23:  15.0,  # Bookshelf -> 15s
+	101: 10.0,  # Wooden Pickaxe -> 10s
+	105: 10.0,  # Wooden Axe -> 10s
+	109: 10.0,  # Wooden Shovel -> 10s
+	113: 10.0,  # Wooden Sword -> 10s
+	100: 5.0,   # Stick -> 5s (0.5 smelts)
+}
+
+# Tool Properties: item_id -> (category, tier, speed_multiplier)
+# Category: "pickaxe", "axe", "shovel", "sword"
+# Tiers: 1=Wood, 2=Stone, 3=Iron, 4=Diamond, 5=Gold
+TOOL_PROPERTIES = {
+	101: ("pickaxe", 1, 2.0),   # Wood Pickaxe
+	102: ("pickaxe", 2, 4.0),   # Stone Pickaxe
+	103: ("pickaxe", 3, 6.0),   # Iron Pickaxe
+	104: ("pickaxe", 4, 8.0),   # Diamond Pickaxe
+	117: ("pickaxe", 5, 12.0),  # Gold Pickaxe
+
+	105: ("axe", 1, 2.0),       # Wood Axe
+	106: ("axe", 2, 4.0),       # Stone Axe
+	107: ("axe", 3, 6.0),       # Iron Axe
+	108: ("axe", 4, 8.0),       # Diamond Axe
+	118: ("axe", 5, 12.0),      # Gold Axe
+
+	109: ("shovel", 1, 2.0),    # Wood Shovel
+	110: ("shovel", 2, 4.0),    # Stone Shovel
+	111: ("shovel", 3, 6.0),    # Iron Shovel
+	112: ("shovel", 4, 8.0),    # Diamond Shovel
+	119: ("shovel", 5, 12.0),   # Gold Shovel
+
+	113: ("sword", 1, 1.5),     # Wood Sword
+	114: ("sword", 2, 2.0),     # Stone Sword
+	115: ("sword", 3, 2.5),     # Iron Sword
+	116: ("sword", 4, 3.0),     # Diamond Sword
+	120: ("sword", 5, 4.0),     # Gold Sword
+}
+
+# Block Mining Specifications: b_num -> (preferred_tool_category, min_required_tier, base_break_seconds, drop_item_id)
+# min_required_tier: 0 = Hand/Any Tool can harvest, 1 = Wood+, 2 = Stone+, 3 = Iron+, 4 = Diamond+, 99 = No drop (Glass)
+BLOCK_MINING_PROPERTIES = {
+	1:  ("pickaxe", 1, 1.8, 1),    # Cobblestone (Requires Wood Pickaxe+)
+	2:  ("shovel", 0, 0.6, 4),     # Grass Block (Drops Dirt)
+	3:  ("shovel", 0, 0.6, 4),     # Grass
+	4:  ("shovel", 0, 0.6, 4),     # Dirt
+	5:  ("pickaxe", 1, 1.8, 1),    # Stone (Requires Wood Pickaxe+, drops Cobblestone)
+	6:  ("shovel", 0, 0.5, 6),     # Sand
+	7:  ("axe", 0, 1.2, 7),        # Planks
+	8:  ("axe", 0, 1.5, 8),        # Log
+	10: (None, 0, 0.1, 10),        # Rose
+	11: (None, 0, 0.4, 11),        # Cactus
+	12: (None, 0, 0.1, 12),        # Dead Bush
+	13: ("sword", 0, 0.2, 13),     # Leaves
+	16: ("pickaxe", 1, 2.2, 121),  # Coal Ore -> drops Coal item (121)
+	17: ("pickaxe", 2, 2.5, 17),   # Iron Ore -> drops Iron Ore block (17)
+	18: ("pickaxe", 3, 3.0, 122),  # Diamond Ore -> drops Diamond item (122)
+	21: (None, 99, 0.3, None),     # Glass (Breaks with no drop)
+	22: ("pickaxe", 1, 1.8, 22),   # Bricks (Requires Wood Pickaxe+)
+	23: ("axe", 0, 1.2, 23),       # Bookshelf
+	24: ("pickaxe", 4, 9.0, 24),   # Obsidian (Requires Diamond Pickaxe!)
+	25: (None, 0, 0.4, 25),        # TNT
+	26: ("axe", 0, 1.5, 26),       # Crafting Table
+	27: ("pickaxe", 1, 2.2, 27),   # Furnace (Requires Wood Pickaxe+)
+	28: ("pickaxe", 3, 2.5, 28),   # Gold Block (Requires Iron Pickaxe+)
+	29: ("pickaxe", 2, 2.5, 29),   # Iron Block (Requires Stone Pickaxe+)
+	30: ("pickaxe", 3, 3.0, 30),   # Diamond Block (Requires Iron Pickaxe+)
+	31: ("shovel", 0, 0.3, 31),    # Snow
+	32: ("pickaxe", 0, 0.5, 32),    # Ice
+	33: (None, 0, 0.1, 33),        # Yellow Flower
+	34: (None, 0, 0.5, 34),        # Sponge
+	35: ("pickaxe", 3, 2.5, 35),   # Gold Ore -> drops Gold Ore block (35)
+	36: ("pickaxe", 3, 2.5, 36),   # Redstone Ore (Requires Iron Pickaxe+)
+	37: ("axe", 0, 1.5, 37),       # Chest
+}
 
 def draw_bordered_box(x, y, width, height, border, bg_color, border_color):
 	outer = pyglet.shapes.Rectangle(x, y, width, height, color=border_color)
@@ -105,6 +202,10 @@ class InventoryGUI:
 	def __init__(self, window):
 		self.window = window
 		self.inventory_open = False
+		self.crafting_mode = "2x2"  # "2x2", "3x3", "creative", "furnace", "single_chest", or "double_chest"
+		self.active_furnace = None
+		self.active_chest1 = None
+		self.active_chest2 = None
 
 		# Creative hotbar starts with full stacks of 64
 		self.creative_hotbar = [[2, 64], [4, 64], [5, 64], [1, 64], [7, 64], [8, 64], [6, 64], [21, 64], [9, 64]]
@@ -113,12 +214,23 @@ class InventoryGUI:
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
 		self.survival_inventory = [[0, 0] for _ in range(27)]
 
-		# Crafting System Grid (3x3) & Result Slot
-		self.crafting_grid = [[0, 0] for _ in range(9)]
+		# Crafting System Grid (2x2 & 3x3) & Result Slot
+		self.crafting_grid_2x2 = [[0, 0] for _ in range(4)]
+		self.crafting_grid_3x3 = [[0, 0] for _ in range(9)]
 		self.crafting_result = [0, 0]
 
 		self.selected_slot = 0  # 0 to 8
 		self.held_stack = None  # [block_id, count] or None
+
+		# Drag Tracking State (Minecraft-style drag & drop)
+		self.is_dragging = False
+		self.drag_button = None
+		self.drag_visited_keys = []
+		self.drag_initial_held = None
+		self.drag_slot_snapshots = {}
+
+		# Double Click Tracking State
+		self.last_left_click_time = 0.0
 
 		self.mouse_x = 0
 		self.mouse_y = 0
@@ -135,11 +247,49 @@ class InventoryGUI:
 	def reset_inventory(self):
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
 		self.survival_inventory = [[0, 0] for _ in range(27)]
-		self.crafting_grid = [[0, 0] for _ in range(9)]
+		self.crafting_grid_2x2 = [[0, 0] for _ in range(4)]
+		self.crafting_grid_3x3 = [[0, 0] for _ in range(9)]
 		self.crafting_result = [0, 0]
+		self.crafting_mode = "2x2"
+		self.active_furnace = None
+		self.active_chest1 = None
+		self.active_chest2 = None
 		self.selected_slot = 0
 		self.held_stack = None
+		self.is_dragging = False
+		self.drag_button = None
+		self.drag_visited_keys.clear()
+		self.drag_initial_held = None
+		self.drag_slot_snapshots.clear()
+		self.last_left_click_time = 0.0
 		self.inventory_open = False
+
+	@property
+	def active_crafting_grid(self):
+		return self.crafting_grid_3x3 if self.crafting_mode == "3x3" else self.crafting_grid_2x2
+
+	def open_crafting_table(self):
+		self.crafting_mode = "3x3"
+		self.inventory_open = True
+		self.window.mouse_captured = False
+		self.window.set_exclusive_mouse(False)
+		self.evaluate_crafting()
+
+	def open_furnace(self, furnace_data):
+		self.active_furnace = furnace_data
+		self.crafting_mode = "furnace"
+		self.inventory_open = True
+		self.window.mouse_captured = False
+		self.window.set_exclusive_mouse(False)
+
+	def open_chest(self, pos, world):
+		is_double, chest1, chest2 = world.get_chest_info(pos)
+		self.active_chest1 = chest1
+		self.active_chest2 = chest2
+		self.crafting_mode = "double_chest" if is_double else "single_chest"
+		self.inventory_open = True
+		self.window.mouse_captured = False
+		self.window.set_exclusive_mouse(False)
 
 	def _load_icons(self):
 		for b_id, name, tex_name in ALL_ITEMS:
@@ -289,7 +439,8 @@ class InventoryGUI:
 		return {
 			'hotbar': [list(slot) for slot in self.survival_hotbar],
 			'inventory': [list(slot) for slot in self.survival_inventory],
-			'crafting_grid': [list(slot) for slot in self.crafting_grid],
+			'crafting_grid_2x2': [list(slot) for slot in self.crafting_grid_2x2],
+			'crafting_grid_3x3': [list(slot) for slot in self.crafting_grid_3x3],
 			'crafting_result': list(self.crafting_result),
 			'selected_slot': self.selected_slot
 		}
@@ -301,8 +452,12 @@ class InventoryGUI:
 			self.survival_hotbar = [list(slot) for slot in data['hotbar']]
 		if 'inventory' in data:
 			self.survival_inventory = [list(slot) for slot in data['inventory']]
-		if 'crafting_grid' in data:
-			self.crafting_grid = [list(slot) for slot in data['crafting_grid']]
+		if 'crafting_grid_2x2' in data:
+			self.crafting_grid_2x2 = [list(slot) for slot in data['crafting_grid_2x2']]
+		if 'crafting_grid_3x3' in data:
+			self.crafting_grid_3x3 = [list(slot) for slot in data['crafting_grid_3x3']]
+		elif 'crafting_grid' in data and len(data['crafting_grid']) == 9:
+			self.crafting_grid_3x3 = [list(slot) for slot in data['crafting_grid']]
 		if 'crafting_result' in data:
 			self.crafting_result = list(data['crafting_result'])
 		if 'selected_slot' in data:
@@ -714,14 +869,17 @@ class InventoryGUI:
 		done_lbl.draw()
 
 	def evaluate_crafting(self):
-		"""Evaluate 3x3 crafting grid and set self.crafting_result."""
-		grid_ids = [slot[0] for slot in self.crafting_grid]
+		"""Evaluate active crafting grid (2x2 or 3x3) and set self.crafting_result."""
+		grid = self.active_crafting_grid
+		grid_dim = 3 if self.crafting_mode == "3x3" else 2
+
+		grid_ids = [slot[0] for slot in grid]
 		
 		rows = []
 		cols = []
-		for r in range(3):
-			for c in range(3):
-				if grid_ids[r * 3 + c] != 0:
+		for r in range(grid_dim):
+			for c in range(grid_dim):
+				if grid_ids[r * grid_dim + c] != 0:
 					rows.append(r)
 					cols.append(c)
 
@@ -736,7 +894,7 @@ class InventoryGUI:
 		for r in range(min_r, max_r + 1):
 			row = []
 			for c in range(min_c, max_c + 1):
-				row.append(grid_ids[r * 3 + c])
+				row.append(grid_ids[r * grid_dim + c])
 			matrix.append(row)
 
 		h = len(matrix)
@@ -757,48 +915,68 @@ class InventoryGUI:
 			self.crafting_result = [26, 1]
 			return
 
-		# Recipe 4: Pickaxes (3 top items + 2 vertical sticks)
+		# Recipe 4: Pickaxes (3 top items + 2 vertical sticks) - Requires 3x3 Crafting Table
 		if h == 3 and w == 3:
 			top = matrix[0]
 			center_col = [matrix[0][1], matrix[1][1], matrix[2][1]]
 			if center_col[1] == 100 and center_col[2] == 100 and matrix[1][0] == 0 and matrix[1][2] == 0 and matrix[2][0] == 0 and matrix[2][2] == 0:
 				mat = top[0]
 				if top == [mat, mat, mat]:
-					if mat == 7: self.crafting_result = [101, 1]; return   # Wood Pickaxe
-					if mat == 1: self.crafting_result = [102, 1]; return   # Stone Pickaxe
-					if mat == 17: self.crafting_result = [103, 1]; return  # Iron Pickaxe
-					if mat == 18: self.crafting_result = [104, 1]; return  # Diamond Pickaxe
-					if mat == 35: self.crafting_result = [117, 1]; return  # Gold Pickaxe
+					if mat in (7,): self.crafting_result = [101, 1]; return          # Wood Pickaxe (Planks)
+					if mat in (1, 5): self.crafting_result = [102, 1]; return        # Stone Pickaxe (Cobblestone / Stone)
+					if mat in (123, 17, 29): self.crafting_result = [103, 1]; return # Iron Pickaxe (Iron Ingot / Ore / Block)
+					if mat in (122, 18, 30): self.crafting_result = [104, 1]; return # Diamond Pickaxe (Diamond / Ore / Block)
+					if mat in (124, 35, 28): self.crafting_result = [117, 1]; return # Gold Pickaxe (Gold Ingot / Ore / Block)
 
-		# Recipe 5: Axes (2x3 shape)
+		# Recipe 5: Axes (2x3 shape: 3 head items + 2 sticks) - Left or Right Facing
 		if h == 3 and w == 2:
+			# Left-facing Axe
 			mat = matrix[0][0]
 			if matrix[0][1] == mat and matrix[1][0] == mat and matrix[1][1] == 100 and matrix[2][1] == 100 and matrix[2][0] == 0:
-				if mat == 7: self.crafting_result = [105, 1]; return   # Wood Axe
-				if mat == 1: self.crafting_result = [106, 1]; return   # Stone Axe
-				if mat == 17: self.crafting_result = [107, 1]; return  # Iron Axe
-				if mat == 18: self.crafting_result = [108, 1]; return  # Diamond Axe
-				if mat == 35: self.crafting_result = [118, 1]; return  # Gold Axe
+				if mat in (7,): self.crafting_result = [105, 1]; return          # Wood Axe
+				if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
+				if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
+				if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
+				if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
+			# Right-facing Axe
+			mat = matrix[0][1]
+			if matrix[0][0] == mat and matrix[1][1] == mat and matrix[1][0] == 100 and matrix[2][0] == 100 and matrix[2][1] == 0:
+				if mat in (7,): self.crafting_result = [105, 1]; return          # Wood Axe
+				if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
+				if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
+				if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
+				if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
 
-		# Recipe 6: Shovels (1x3 shape: 1 head item + 2 sticks)
+		# Recipe 6: Shovels (1x3 shape: 1 head item + 2 sticks) - Requires 3x3 Crafting Table
 		if h == 3 and w == 1:
 			mat = matrix[0][0]
 			if matrix[1][0] == 100 and matrix[2][0] == 100:
-				if mat == 7: self.crafting_result = [109, 1]; return   # Wood Shovel
-				if mat == 1: self.crafting_result = [110, 1]; return   # Stone Shovel
-				if mat == 17: self.crafting_result = [111, 1]; return  # Iron Shovel
-				if mat == 18: self.crafting_result = [112, 1]; return  # Diamond Shovel
-				if mat == 35: self.crafting_result = [119, 1]; return  # Gold Shovel
+				if mat in (7,): self.crafting_result = [109, 1]; return          # Wood Shovel
+				if mat in (1, 5): self.crafting_result = [110, 1]; return        # Stone Shovel
+				if mat in (123, 17, 29): self.crafting_result = [111, 1]; return # Iron Shovel
+				if mat in (122, 18, 30): self.crafting_result = [112, 1]; return # Diamond Shovel
+				if mat in (124, 35, 28): self.crafting_result = [119, 1]; return # Gold Shovel
 
-		# Recipe 7: Swords (1x3 shape: 2 blade items + 1 stick)
+		# Recipe 7: Swords (1x3 shape: 2 blade items + 1 stick) - Requires 3x3 Crafting Table
 		if h == 3 and w == 1:
 			mat = matrix[0][0]
 			if matrix[1][0] == mat and matrix[2][0] == 100:
-				if mat == 7: self.crafting_result = [113, 1]; return   # Wood Sword
-				if mat == 1: self.crafting_result = [114, 1]; return   # Stone Sword
-				if mat == 17: self.crafting_result = [115, 1]; return  # Iron Sword
-				if mat == 18: self.crafting_result = [116, 1]; return  # Diamond Sword
-				if mat == 35: self.crafting_result = [120, 1]; return  # Gold Sword
+				if mat in (7,): self.crafting_result = [113, 1]; return          # Wood Sword
+				if mat in (1, 5): self.crafting_result = [114, 1]; return        # Stone Sword
+				if mat in (123, 17, 29): self.crafting_result = [115, 1]; return # Iron Sword
+				if mat in (122, 18, 30): self.crafting_result = [116, 1]; return # Diamond Sword
+				if mat in (124, 35, 28): self.crafting_result = [120, 1]; return # Gold Sword
+
+		# Recipe 8: Furnace (8 Cobblestone 3x3 hollow ring) & Chest (8 Planks 3x3 hollow ring)
+		if h == 3 and w == 3:
+			if matrix[1][1] == 0:
+				ring = [matrix[0][0], matrix[0][1], matrix[0][2],
+				        matrix[1][0],               matrix[1][2],
+				        matrix[2][0], matrix[2][1], matrix[2][2]]
+				mat = ring[0]
+				if mat != 0 and all(x == mat for x in ring):
+					if mat == 1: self.crafting_result = [27, 1]; return   # Furnace (27)
+					if mat == 7: self.crafting_result = [37, 1]; return   # Chest (37)
 
 		self.crafting_result = [0, 0]
 
@@ -810,17 +988,22 @@ class InventoryGUI:
 	def toggle_inventory(self):
 		self.inventory_open = not self.inventory_open
 		if self.inventory_open:
+			self.crafting_mode = "creative" if self.window.flying else "2x2"
 			self.window.mouse_captured = False
 			self.window.set_exclusive_mouse(False)
+			self.evaluate_crafting()
 		else:
-			# Return ingredients left in crafting grid to inventory when closing
-			for slot in self.crafting_grid:
-				if slot[0] != 0 and slot[1] > 0:
-					self.add_item(slot[0], slot[1])
-					slot[0] = 0
-					slot[1] = 0
+			# Return ingredients left in active crafting grids to inventory when closing
+			for grid in (self.crafting_grid_2x2, self.crafting_grid_3x3):
+				for slot in grid:
+					if slot[0] != 0 and slot[1] > 0:
+						self.add_item(slot[0], slot[1])
+						slot[0] = 0
+						slot[1] = 0
 			self.crafting_result = [0, 0]
 			self.held_stack = None
+			self.active_chest1 = None
+			self.active_chest2 = None
 			self.window.mouse_captured = True
 			self.window.set_exclusive_mouse(True)
 
@@ -940,22 +1123,53 @@ class InventoryGUI:
 
 		return current_hover
 
+	def _draw_item_in_slot(self, slot, sx, sy, slot_s):
+		if not slot:
+			return
+		b_id, cnt = slot[0], slot[1]
+		if b_id in self.icon_textures and cnt > 0:
+			img = self.icon_textures[b_id]
+			spr = pyglet.sprite.Sprite(img, x=sx + 4, y=sy + 4)
+			spr.scale_x = 32.0 / img.width
+			spr.scale_y = 32.0 / img.height
+			spr.draw()
+
+			cnt_lbl = pyglet.text.Label(str(cnt), font_name="Arial", font_size=9, x=sx + slot_s - 3, y=sy + 2, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
+			cnt_lbl.draw()
+
 	def _draw_inventory_overlay(self, current_hover):
 		veil = pyglet.shapes.Rectangle(0, 0, self.window.width, self.window.height, color=(0, 0, 0, 160))
 		veil.draw()
 
 		win_w = 640
-		win_h = 460
+		win_h = 540 if self.crafting_mode == "double_chest" else 460
 		win_x = (self.window.width - win_w) // 2
 		win_y = (self.window.height - win_h) // 2
 
 		draw_bordered_box(win_x, win_y, win_w, win_h, 2, (20, 22, 28, 240), (180, 180, 200, 255))
 
-		mode_str = "Creative Item Palette" if self.window.flying else "Survival Inventory & Crafting"
-		title = pyglet.text.Label(f"Inventory ({mode_str})", font_name="Arial", font_size=15, x=win_x + 20, y=win_y + win_h - 24, color=(255, 255, 255, 255))
+		if self.window.flying:
+			mode_title = "Inventory (Creative Item Palette)"
+			sub_text = "Click an item to get a stack of 64."
+		elif self.crafting_mode == "single_chest":
+			mode_title = "Chest Storage (27 Slots)"
+			sub_text = "Click or Shift-Click items to transfer between inventory and chest."
+		elif self.crafting_mode == "double_chest":
+			mode_title = "Large Chest Storage (54 Slots)"
+			sub_text = "Click or Shift-Click items to transfer between inventory and chest."
+		elif self.crafting_mode == "furnace":
+			mode_title = "Furnace Smelting"
+			sub_text = "Place ingredients and fuel to smelt items in real-time."
+		elif self.crafting_mode == "3x3":
+			mode_title = "Crafting Table (3x3 Grid)"
+			sub_text = "Crafting Table: Place items in 3x3 Grid -> Click Result Slot to claim!"
+		else:
+			mode_title = "Inventory (Survival 2x2 Crafting)"
+			sub_text = "Crafting (2x2 Grid): Place items in 2x2 Grid -> Click Result Slot to claim!"
+
+		title = pyglet.text.Label(mode_title, font_name="Arial", font_size=15, x=win_x + 20, y=win_y + win_h - 24, color=(255, 255, 255, 255))
 		title.draw()
 
-		sub_text = "Click an item to get a stack of 64." if self.window.flying else "Crafting: Place items in 3x3 Grid -> Click Result Slot to claim!"
 		sub = pyglet.text.Label(sub_text, font_name="Arial", font_size=9, x=win_x + 20, y=win_y + win_h - 44, color=(170, 170, 190, 255))
 		sub.draw()
 
@@ -990,19 +1204,139 @@ class InventoryGUI:
 
 				if is_hover:
 					current_hover = b_name
+		elif self.crafting_mode == "furnace" and self.active_furnace:
+			furn_lbl = pyglet.text.Label("Furnace Smelting:", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+			furn_lbl.draw()
+
+			f_x = win_x + 80
+			f_y = win_y + win_h - 180
+
+			# Slot Labels
+			in_lbl = pyglet.text.Label("Ingredient", font_name="Arial", font_size=9, x=f_x, y=f_y + 105, color=(180, 180, 200, 255))
+			in_lbl.draw()
+			fuel_lbl = pyglet.text.Label("Fuel", font_name="Arial", font_size=9, x=f_x, y=f_y - 15, color=(180, 180, 200, 255))
+			fuel_lbl.draw()
+
+			# 1. Input Slot
+			is_h_in = (f_x <= self.mouse_x <= f_x + slot_s and f_y + 60 <= self.mouse_y <= f_y + 60 + slot_s)
+			draw_bordered_box(f_x, f_y + 60, slot_s, slot_s, 2 if is_h_in else 1, (55, 60, 75, 230) if is_h_in else (35, 38, 48, 200), (255, 215, 0, 255) if is_h_in else (70, 75, 90, 200))
+			self._draw_item_in_slot(self.active_furnace.input_slot, f_x, f_y + 60, slot_s)
+
+			# 2. Fuel Slot
+			is_h_fuel = (f_x <= self.mouse_x <= f_x + slot_s and f_y <= self.mouse_y <= f_y + slot_s)
+			draw_bordered_box(f_x, f_y, slot_s, slot_s, 2 if is_h_fuel else 1, (55, 60, 75, 230) if is_h_fuel else (35, 38, 48, 200), (255, 215, 0, 255) if is_h_fuel else (70, 75, 90, 200))
+			self._draw_item_in_slot(self.active_furnace.fuel_slot, f_x, f_y, slot_s)
+
+			# 3. Flame Burn Meter (between input & fuel)
+			flame_bg = pyglet.shapes.Rectangle(f_x + 12, f_y + 43, 16, 14, color=(40, 40, 50, 255))
+			flame_bg.draw()
+			if self.active_furnace.burn_time_remaining > 0 and self.active_furnace.max_burn_time > 0:
+				ratio = min(1.0, self.active_furnace.burn_time_remaining / self.active_furnace.max_burn_time)
+				fh = int(14 * ratio)
+				flame_fg = pyglet.shapes.Rectangle(f_x + 12, f_y + 43, 16, fh, color=(255, 140, 0, 255))
+				flame_fg.draw()
+
+			# 4. Progress Arrow (between slots and output)
+			arr_bg = pyglet.shapes.Rectangle(f_x + 55, f_y + 32, 55, 16, color=(40, 40, 50, 255))
+			arr_bg.draw()
+			if self.active_furnace.smelt_progress > 0:
+				ratio = min(1.0, self.active_furnace.smelt_progress / 10.0)
+				pw = int(55 * ratio)
+				arr_fg = pyglet.shapes.Rectangle(f_x + 55, f_y + 32, pw, 16, color=(50, 205, 50, 255))
+				arr_fg.draw()
+			arr_lbl = pyglet.text.Label("==>", font_name="Arial", font_size=10, x=f_x + 68, y=f_y + 33, color=(255, 255, 255, 220))
+			arr_lbl.draw()
+
+			# 5. Output Result Slot
+			res_x = f_x + 130
+			res_y = f_y + 22
+			is_h_out = (res_x <= self.mouse_x <= res_x + slot_s + 8 and res_y <= self.mouse_y <= res_y + slot_s + 8)
+			draw_bordered_box(res_x, res_y, slot_s + 8, slot_s + 8, 2, (75, 80, 100, 240) if is_h_out else (45, 50, 65, 220), (255, 215, 0, 255) if is_h_out else (120, 140, 180, 255))
+			self._draw_item_in_slot(self.active_furnace.output_slot, res_x + 4, res_y + 4, slot_s)
+
+			if is_h_in:
+				b_id, cnt = self.active_furnace.input_slot[0], self.active_furnace.input_slot[1]
+				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Ingredient Slot"
+				current_hover = f"Ingredient: {b_name} ({cnt})" if cnt > 0 else "Furnace Ingredient Slot (Empty)"
+			elif is_h_fuel:
+				b_id, cnt = self.active_furnace.fuel_slot[0], self.active_furnace.fuel_slot[1]
+				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Fuel Slot"
+				current_hover = f"Fuel: {b_name} ({cnt})" if cnt > 0 else "Furnace Fuel Slot (Empty)"
+			elif is_h_out:
+				b_id, cnt = self.active_furnace.output_slot[0], self.active_furnace.output_slot[1]
+				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Output Slot"
+				current_hover = f"Smelt Output: {b_name} ({cnt})" if cnt > 0 else "Furnace Output Slot (Empty)"
+		elif self.crafting_mode == "single_chest" and self.active_chest1:
+			c_lbl = pyglet.text.Label("Chest Storage (27 Slots):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+			c_lbl.draw()
+
+			cols = 9
+			c_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			c_y = win_y + win_h - 90
+
+			for idx in range(27):
+				r = idx // cols
+				c = idx % cols
+				sx = c_x + c * (slot_s + pad)
+				sy = c_y - r * (slot_s + pad)
+
+				is_h = (sx <= self.mouse_x <= sx + slot_s and sy <= self.mouse_y <= sy + slot_s)
+				bg_c = (55, 60, 75, 230) if is_h else (35, 38, 48, 200)
+				border_c = (255, 215, 0, 255) if is_h else (70, 75, 90, 200)
+
+				draw_bordered_box(sx, sy, slot_s, slot_s, 2 if is_h else 1, bg_c, border_c)
+
+				slot = self.active_chest1.slots[idx]
+				self._draw_item_in_slot(slot, sx, sy, slot_s)
+
+				if is_h:
+					b_id, cnt = slot[0], slot[1]
+					b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty Chest Slot"
+					current_hover = f"Chest Slot {idx + 1}: {b_name} ({cnt})" if cnt > 0 else "Empty Chest Slot"
+
+		elif self.crafting_mode == "double_chest" and self.active_chest1 and self.active_chest2:
+			c_lbl = pyglet.text.Label("Large Chest Storage (54 Slots):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+			c_lbl.draw()
+
+			cols = 9
+			c_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			c_y = win_y + win_h - 75
+
+			for idx in range(54):
+				r = idx // cols
+				c = idx % cols
+				sx = c_x + c * (slot_s + pad)
+				sy = c_y - r * (slot_s + pad)
+
+				is_h = (sx <= self.mouse_x <= sx + slot_s and sy <= self.mouse_y <= sy + slot_s)
+				bg_c = (55, 60, 75, 230) if is_h else (35, 38, 48, 200)
+				border_c = (255, 215, 0, 255) if is_h else (70, 75, 90, 200)
+
+				draw_bordered_box(sx, sy, slot_s, slot_s, 2 if is_h else 1, bg_c, border_c)
+
+				slot = self.active_chest1.slots[idx] if idx < 27 else self.active_chest2.slots[idx - 27]
+				self._draw_item_in_slot(slot, sx, sy, slot_s)
+
+				if is_h:
+					b_id, cnt = slot[0], slot[1]
+					b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty Chest Slot"
+					current_hover = f"Large Chest Slot {idx + 1}: {b_name} ({cnt})" if cnt > 0 else "Empty Chest Slot"
 		else:
-			# Survival 3x3 Crafting Grid & Output Slot (Top Half)
-			craft_lbl = pyglet.text.Label("Crafting Table Grid (3x3):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+			grid_dim = 3 if self.crafting_mode == "3x3" else 2
+			grid = self.active_crafting_grid
+
+			grid_title_text = "Crafting Table Grid (3x3):" if self.crafting_mode == "3x3" else "Crafting Grid (2x2):"
+			craft_lbl = pyglet.text.Label(grid_title_text, font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
 			craft_lbl.draw()
 
 			cg_x = win_x + 24
-			cg_y = win_y + win_h - 180
+			cg_y = win_y + win_h - 180 if self.crafting_mode == "3x3" else win_y + win_h - 160
 
-			for r in range(3):
-				for c in range(3):
-					idx = r * 3 + c
+			for r in range(grid_dim):
+				for c in range(grid_dim):
+					idx = r * grid_dim + c
 					sx = cg_x + c * (slot_s + pad)
-					sy = cg_y + (2 - r) * (slot_s + pad)
+					sy = cg_y + (grid_dim - 1 - r) * (slot_s + pad)
 
 					is_h = (sx <= self.mouse_x <= sx + slot_s and sy <= self.mouse_y <= sy + slot_s)
 					bg_c = (55, 60, 75, 230) if is_h else (35, 38, 48, 200)
@@ -1010,7 +1344,7 @@ class InventoryGUI:
 
 					draw_bordered_box(sx, sy, slot_s, slot_s, 2 if is_h else 1, bg_c, border_c)
 
-					slot = self.crafting_grid[idx]
+					slot = grid[idx]
 					b_id, cnt = slot[0], slot[1]
 
 					if b_id in self.icon_textures and cnt > 0:
@@ -1028,11 +1362,13 @@ class InventoryGUI:
 						current_hover = f"{b_name} ({cnt})" if cnt > 0 else "Empty Crafting Slot"
 
 			# Arrow -> Result Slot
-			arr_lbl = pyglet.text.Label("==>", font_name="Arial", font_size=16, x=cg_x + 3 * (slot_s + pad) + 10, y=cg_y + slot_s + 4, color=(255, 215, 0, 255))
+			arr_x = cg_x + grid_dim * (slot_s + pad) + 10
+			arr_y = cg_y + (grid_dim * (slot_s + pad)) // 2 - 10
+			arr_lbl = pyglet.text.Label("==>", font_name="Arial", font_size=16, x=arr_x, y=arr_y, color=(255, 215, 0, 255))
 			arr_lbl.draw()
 
-			res_x = cg_x + 3 * (slot_s + pad) + 60
-			res_y = cg_y + slot_s
+			res_x = arr_x + 50
+			res_y = arr_y - 12
 
 			is_res_h = (res_x <= self.mouse_x <= res_x + slot_s + 8 and res_y <= self.mouse_y <= res_y + slot_s + 8)
 			res_bg = (75, 80, 100, 240) if is_res_h else (45, 50, 65, 220)
@@ -1055,6 +1391,7 @@ class InventoryGUI:
 				b_name = BLOCK_INFO.get(rb_id, ("Result", ""))[0] if rcnt > 0 else "Result Slot"
 				current_hover = f"Craft Result: {b_name} x{rcnt}" if rcnt > 0 else "Result Slot (Empty)"
 
+		if not self.window.flying:
 			# Survival 27-slot Storage Grid (9 columns x 3 rows - Bottom Half)
 			inv_lbl = pyglet.text.Label("Inventory Storage (27 Slots):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + 195, color=(220, 220, 240, 255))
 			inv_lbl.draw()
@@ -1134,6 +1471,345 @@ class InventoryGUI:
 
 		return current_hover
 
+	def get_slot_at_pos(self, x, y):
+		if not self.inventory_open:
+			return None
+
+		win_w = 640
+		win_h = 540 if self.crafting_mode == "double_chest" else 460
+		win_x = (self.window.width - win_w) // 2
+		win_y = (self.window.height - win_h) // 2
+		slot_s = 40
+		pad = 6
+
+		if self.window.flying:
+			cols = 8
+			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			grid_y = win_y + win_h - 90
+			for idx, (b_id, b_name, tex_name) in enumerate(ALL_ITEMS):
+				r = idx // cols
+				c = idx % cols
+				sx = grid_x + c * (slot_s + pad)
+				sy = grid_y - r * (slot_s + pad)
+				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+					return ("creative", idx, [b_id, 64])
+			return None
+
+		if self.crafting_mode == "single_chest" and self.active_chest1:
+			cols = 9
+			c_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			c_y = win_y + win_h - 90
+			for idx in range(27):
+				r = idx // cols
+				c = idx % cols
+				sx = c_x + c * (slot_s + pad)
+				sy = c_y - r * (slot_s + pad)
+				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+					return ("chest", idx, self.active_chest1.slots[idx])
+		elif self.crafting_mode == "double_chest" and self.active_chest1 and self.active_chest2:
+			cols = 9
+			c_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+			c_y = win_y + win_h - 75
+			for idx in range(54):
+				r = idx // cols
+				c = idx % cols
+				sx = c_x + c * (slot_s + pad)
+				sy = c_y - r * (slot_s + pad)
+				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+					slot_ref = self.active_chest1.slots[idx] if idx < 27 else self.active_chest2.slots[idx - 27]
+					return ("chest", idx, slot_ref)
+		elif self.crafting_mode == "furnace" and self.active_furnace:
+			f_x = win_x + 80
+			f_y = win_y + win_h - 180
+
+			# 1. Input Slot
+			if f_x <= x <= f_x + slot_s and f_y + 60 <= y <= f_y + 60 + slot_s:
+				return ("furnace_input", 0, self.active_furnace.input_slot)
+
+			# 2. Fuel Slot
+			if f_x <= x <= f_x + slot_s and f_y <= y <= f_y + slot_s:
+				return ("furnace_fuel", 0, self.active_furnace.fuel_slot)
+
+			# 3. Output Slot
+			res_x = f_x + 130
+			res_y = f_y + 22
+			if res_x <= x <= res_x + slot_s + 8 and res_y <= y <= res_y + slot_s + 8:
+				return ("furnace_output", 0, self.active_furnace.output_slot)
+		else:
+			grid_dim = 3 if self.crafting_mode == "3x3" else 2
+			grid = self.active_crafting_grid
+			cg_x = win_x + 24
+			cg_y = win_y + win_h - 180 if self.crafting_mode == "3x3" else win_y + win_h - 160
+
+			# Crafting Grid Slots
+			for r in range(grid_dim):
+				for c in range(grid_dim):
+					idx = r * grid_dim + c
+					sx = cg_x + c * (slot_s + pad)
+					sy = cg_y + (grid_dim - 1 - r) * (slot_s + pad)
+					if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+						return ("craft", idx, grid[idx])
+
+			# Crafting Result Slot
+			arr_x = cg_x + grid_dim * (slot_s + pad) + 10
+			arr_y = cg_y + (grid_dim * (slot_s + pad)) // 2 - 10
+			res_x = arr_x + 50
+			res_y = arr_y - 12
+			if res_x <= x <= res_x + slot_s + 8 and res_y <= y <= res_y + slot_s + 8:
+				return ("result", 0, self.crafting_result)
+
+		# Storage Inventory (27 slots)
+		cols = 9
+		grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
+		grid_y = win_y + 145
+		for idx in range(27):
+			r = idx // cols
+			c = idx % cols
+			sx = grid_x + c * (slot_s + pad)
+			sy = grid_y - r * (slot_s + pad)
+			if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+				return ("inv", idx, self.survival_inventory[idx])
+
+		# Hotbar (9 slots)
+		hb_x = win_x + (win_w - (9 * slot_s + 8 * pad)) // 2
+		hb_y = win_y + 12
+		for i in range(9):
+			sx = hb_x + i * (slot_s + pad)
+			sy = hb_y
+			if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+				return ("hotbar", i, self.survival_hotbar[i])
+
+		return None
+
+	def _get_slot_ref_by_key(self, key):
+		stype, sidx = key
+		if stype == "craft":
+			return self.active_crafting_grid[sidx]
+		elif stype == "inv":
+			return self.survival_inventory[sidx]
+		elif stype == "hotbar":
+			return self.survival_hotbar[sidx]
+		elif stype == "result":
+			return self.crafting_result
+		elif stype == "furnace_input":
+			return self.active_furnace.input_slot if self.active_furnace else None
+		elif stype == "furnace_fuel":
+			return self.active_furnace.fuel_slot if self.active_furnace else None
+		elif stype == "furnace_output":
+			return self.active_furnace.output_slot if self.active_furnace else None
+		elif stype == "chest":
+			if sidx < 27:
+				return self.active_chest1.slots[sidx] if self.active_chest1 else None
+			else:
+				return self.active_chest2.slots[sidx - 27] if self.active_chest2 else None
+		return None
+
+	def handle_shift_click(self, slot_info):
+		if not slot_info:
+			return
+		stype, sidx, target_slot = slot_info
+
+		if stype == "result":
+			# Shift-click result slot: craft as many items as possible directly into inventory!
+			while self.crafting_result[0] != 0 and self.crafting_result[1] > 0:
+				rb_id, rcnt = self.crafting_result[0], self.crafting_result[1]
+				if not self.add_item(rb_id, rcnt):
+					break
+				grid = self.active_crafting_grid
+				for slot in grid:
+					if slot[0] != 0 and slot[1] > 0:
+						slot[1] -= 1
+						if slot[1] == 0:
+							slot[0] = 0
+				self.evaluate_crafting()
+			return
+
+		if stype in ("furnace_output", "furnace_input", "furnace_fuel"):
+			b_id, cnt = target_slot[0], target_slot[1]
+			if b_id != 0 and cnt > 0:
+				if self.add_item(b_id, cnt):
+					target_slot[0] = 0
+					target_slot[1] = 0
+			return
+
+		if stype == "chest":
+			b_id, cnt = target_slot[0], target_slot[1]
+			if b_id != 0 and cnt > 0:
+				if self.add_item(b_id, cnt):
+					target_slot[0] = 0
+					target_slot[1] = 0
+			return
+
+		b_id, cnt = target_slot[0], target_slot[1]
+		if b_id == 0 or cnt <= 0:
+			return
+
+		if self.crafting_mode in ("single_chest", "double_chest") and stype in ("inv", "hotbar"):
+			chests = [self.active_chest1]
+			if self.crafting_mode == "double_chest" and self.active_chest2:
+				chests.append(self.active_chest2)
+
+			for ch in chests:
+				for slot in ch.slots:
+					if slot[0] == b_id and slot[1] < 64:
+						addable = min(cnt, 64 - slot[1])
+						slot[1] += addable
+						cnt -= addable
+						if cnt == 0: break
+				if cnt == 0: break
+
+			if cnt > 0:
+				for ch in chests:
+					for slot in ch.slots:
+						if slot[0] == 0 or slot[1] == 0:
+							slot[0] = b_id
+							slot[1] = cnt
+							cnt = 0
+							break
+					if cnt == 0: break
+
+			target_slot[1] = cnt
+			if cnt == 0: target_slot[0] = 0
+			return
+
+		if self.crafting_mode == "furnace" and self.active_furnace and stype in ("inv", "hotbar"):
+			if b_id in FUEL_BURN_TIMES:
+				f_slot = self.active_furnace.fuel_slot
+				if f_slot[0] == 0 or (f_slot[0] == b_id and f_slot[1] + cnt <= 64):
+					f_slot[0] = b_id
+					f_slot[1] += cnt
+					target_slot[0] = 0
+					target_slot[1] = 0
+					return
+			if b_id in SMELTING_RECIPES:
+				i_slot = self.active_furnace.input_slot
+				if i_slot[0] == 0 or (i_slot[0] == b_id and i_slot[1] + cnt <= 64):
+					i_slot[0] = b_id
+					i_slot[1] += cnt
+					target_slot[0] = 0
+					target_slot[1] = 0
+					return
+
+		if stype == "craft":
+			if self.add_item(b_id, cnt):
+				target_slot[0] = 0
+				target_slot[1] = 0
+				self.evaluate_crafting()
+		elif stype == "inv":
+			# Move from storage inventory into hotbar
+			for slot in self.survival_hotbar:
+				if slot[0] == b_id and slot[1] < 64:
+					addable = min(cnt, 64 - slot[1])
+					slot[1] += addable
+					cnt -= addable
+					if cnt == 0: break
+			if cnt > 0:
+				for slot in self.survival_hotbar:
+					if slot[0] == 0 or slot[1] == 0:
+						slot[0] = b_id
+						slot[1] = cnt
+						cnt = 0
+						break
+			target_slot[1] = cnt
+			if cnt == 0: target_slot[0] = 0
+		elif stype == "hotbar":
+			# Move from hotbar into storage inventory
+			for slot in self.survival_inventory:
+				if slot[0] == b_id and slot[1] < 64:
+					addable = min(cnt, 64 - slot[1])
+					slot[1] += addable
+					cnt -= addable
+					if cnt == 0: break
+			if cnt > 0:
+				for slot in self.survival_inventory:
+					if slot[0] == 0 or slot[1] == 0:
+						slot[0] = b_id
+						slot[1] = cnt
+						cnt = 0
+						break
+			target_slot[1] = cnt
+			if cnt == 0: target_slot[0] = 0
+
+	def _update_left_drag(self):
+		if not self.drag_visited_keys or not self.drag_initial_held:
+			return
+
+		b_id, total_cnt = self.drag_initial_held
+		n_slots = len(self.drag_visited_keys)
+		per_slot = total_cnt // n_slots
+		remainder = total_cnt % n_slots
+
+		# Reset all visited slots to baseline snapshot first
+		for key in self.drag_visited_keys:
+			slot_ref = self._get_slot_ref_by_key(key)
+			if slot_ref:
+				orig_b, orig_c = self.drag_slot_snapshots[key]
+				slot_ref[0] = orig_b
+				slot_ref[1] = orig_c
+
+		if per_slot > 0:
+			for key in self.drag_visited_keys:
+				slot_ref = self._get_slot_ref_by_key(key)
+				if slot_ref:
+					orig_b, orig_c = self.drag_slot_snapshots[key]
+					if orig_b == 0 or orig_c == 0:
+						slot_ref[0] = b_id
+						slot_ref[1] = min(64, per_slot)
+					elif orig_b == b_id:
+						slot_ref[1] = min(64, orig_c + per_slot)
+		else:
+			remainder = total_cnt
+
+		self.held_stack = [b_id, remainder] if remainder > 0 else None
+		self.evaluate_crafting()
+
+	def gather_matching_items(self):
+		"""Gathers all matching items scattered across inventory/hotbar/crafting into held_stack up to 64."""
+		if not self.held_stack or self.held_stack[0] == 0 or self.held_stack[1] >= 64:
+			return
+
+		target_id = self.held_stack[0]
+
+		# 1. Gather from active crafting grid
+		grid = self.active_crafting_grid
+		for slot in grid:
+			if slot[0] == target_id and slot[1] > 0:
+				needed = 64 - self.held_stack[1]
+				take = min(needed, slot[1])
+				self.held_stack[1] += take
+				slot[1] -= take
+				if slot[1] <= 0:
+					slot[0] = 0
+				if self.held_stack[1] >= 64:
+					self.evaluate_crafting()
+					return
+
+		self.evaluate_crafting()
+
+		# 2. Gather from storage inventory (27 slots)
+		for slot in self.survival_inventory:
+			if slot[0] == target_id and slot[1] > 0:
+				needed = 64 - self.held_stack[1]
+				take = min(needed, slot[1])
+				self.held_stack[1] += take
+				slot[1] -= take
+				if slot[1] <= 0:
+					slot[0] = 0
+				if self.held_stack[1] >= 64:
+					return
+
+		# 3. Gather from hotbar (9 slots)
+		for slot in self.survival_hotbar:
+			if slot[0] == target_id and slot[1] > 0:
+				needed = 64 - self.held_stack[1]
+				take = min(needed, slot[1])
+				self.held_stack[1] += take
+				slot[1] -= take
+				if slot[1] <= 0:
+					slot[0] = 0
+				if self.held_stack[1] >= 64:
+					return
+
 	def handle_slot_click(self, target_slot, is_right_click):
 		"""
 		Handles slot clicks for inventory, hotbar, and crafting grid slots.
@@ -1182,50 +1858,48 @@ class InventoryGUI:
 		if not self.inventory_open:
 			return False
 
+		import time
+		curr_time = time.time()
+		is_double_left = (button == pyglet.window.mouse.LEFT) and (curr_time - self.last_left_click_time < 0.35)
+		if button == pyglet.window.mouse.LEFT:
+			self.last_left_click_time = 0.0 if is_double_left else curr_time
+
+		# 0. DOUBLE LEFT-CLICK GATHERING
+		if is_double_left and self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] < 64 and not self.window.flying:
+			self.gather_matching_items()
+			return True
+
+		slot_info = self.get_slot_at_pos(x, y)
+		is_shift = bool(modifiers & pyglet.window.key.MOD_SHIFT)
 		is_right = (button == pyglet.window.mouse.RIGHT)
 
-		slot_s = 40
-		pad = 6
-		win_w = 640
-		win_h = 460
-		win_x = (self.window.width - win_w) // 2
-		win_y = (self.window.height - win_h) // 2
+		# 1. SHIFT-CLICK HANDLING
+		if is_shift and slot_info and not self.window.flying:
+			self.handle_shift_click(slot_info)
+			return True
 
+		# 2. CREATIVE PALETTE CLICKS
 		if self.window.flying:
-			cols = 8
-			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
-			grid_y = win_y + win_h - 90
+			if slot_info and slot_info[0] == "creative":
+				b_id = slot_info[2][0]
+				self.held_stack = [b_id, 64 if not is_right else 1]
+				return True
+			elif slot_info and slot_info[0] == "hotbar":
+				idx = slot_info[1]
+				if self.held_stack:
+					self.hotbar_slots[idx] = [self.held_stack[0], 64]
+					self.set_selected_slot(idx)
+					self.held_stack = None
+				else:
+					self.set_selected_slot(idx)
+				return True
 
-			for idx, (b_id, b_name, tex_name) in enumerate(ALL_ITEMS):
-				r = idx // cols
-				c = idx % cols
-				sx = grid_x + c * (slot_s + pad)
-				sy = grid_y - r * (slot_s + pad)
+		# 3. SURVIVAL CLICK & START DRAG
+		if slot_info:
+			stype, sidx, target_slot = slot_info
 
-				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
-					self.held_stack = [b_id, 64 if not is_right else 1]
-					return True
-		else:
-			# Survival Crafting 3x3 Grid Clicks
-			cg_x = win_x + 24
-			cg_y = win_y + win_h - 180
-
-			for r in range(3):
-				for c in range(3):
-					idx = r * 3 + c
-					sx = cg_x + c * (slot_s + pad)
-					sy = cg_y + (2 - r) * (slot_s + pad)
-
-					if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
-						self.handle_slot_click(self.crafting_grid[idx], is_right)
-						self.evaluate_crafting()
-						return True
-
-			# Survival Crafting Result Slot Click
-			res_x = cg_x + 3 * (slot_s + pad) + 60
-			res_y = cg_y + slot_s
-
-			if res_x <= x <= res_x + slot_s + 8 and res_y <= y <= res_y + slot_s + 8:
+			if stype == "result":
+				# Crafting result slot click
 				rb_id, rcnt = self.crafting_result[0], self.crafting_result[1]
 				if rb_id != 0 and rcnt > 0:
 					if self.held_stack is None:
@@ -1235,52 +1909,42 @@ class InventoryGUI:
 					else:
 						return True
 
-					for slot in self.crafting_grid:
+					grid = self.active_crafting_grid
+					for slot in grid:
 						if slot[0] != 0 and slot[1] > 0:
 							slot[1] -= 1
 							if slot[1] == 0:
 								slot[0] = 0
-
 					self.evaluate_crafting()
-					return True
+				return True
+			elif stype == "furnace_output":
+				out_id, out_cnt = target_slot[0], target_slot[1]
+				if out_id != 0 and out_cnt > 0:
+					if self.held_stack is None:
+						self.held_stack = [out_id, out_cnt]
+						target_slot[0] = 0
+						target_slot[1] = 0
+					elif self.held_stack[0] == out_id and self.held_stack[1] + out_cnt <= 64:
+						self.held_stack[1] += out_cnt
+						target_slot[0] = 0
+						target_slot[1] = 0
+				return True
+			else:
+				# Regular slot click (crafting, inventory, or hotbar)
+				self.handle_slot_click(target_slot, is_right)
+				if stype == "craft":
+					self.evaluate_crafting()
 
-			# Survival 27-slot Storage Grid Clicks
-			cols = 9
-			grid_x = win_x + (win_w - (cols * slot_s + (cols - 1) * pad)) // 2
-			grid_y = win_y + 145
-
-			for idx in range(27):
-				r = idx // cols
-				c = idx % cols
-				sx = grid_x + c * (slot_s + pad)
-				sy = grid_y - r * (slot_s + pad)
-
-				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
-					self.handle_slot_click(self.survival_inventory[idx], is_right)
-					return True
-
-		# Hotbar row clicks inside Inventory Window
-		hb_x = win_x + (win_w - (9 * slot_s + 8 * pad)) // 2
-		hb_y = win_y + 12
-
-		for i in range(9):
-			sx = hb_x + i * (slot_s + pad)
-			sy = hb_y
-
-			if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
-				if self.window.flying:
-					if self.held_stack:
-						self.hotbar_slots[i] = [self.held_stack[0], 64]
-						self.set_selected_slot(i)
-						self.held_stack = None
-					else:
-						self.set_selected_slot(i)
-				else:
-					self.handle_slot_click(self.survival_hotbar[i], is_right)
-					self.set_selected_slot(i)
+				# Start drag tracking if holding an item stack
+				if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
+					self.is_dragging = True
+					self.drag_button = button
+					self.drag_initial_held = list(self.held_stack)
+					self.drag_visited_keys = [(stype, sidx)]
+					self.drag_slot_snapshots = {(stype, sidx): list(target_slot)}
 				return True
 
-		# Clicked outside inventory window -> Drop held items into overworld!
+		# Clicked outside window -> Drop item into world
 		if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
 			if hasattr(self.window, "item_drop_manager"):
 				px, py, pz = self.window.camera.position
@@ -1301,6 +1965,50 @@ class InventoryGUI:
 			else:
 				self.held_stack = None
 		return True
+
+	def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
+		if not self.inventory_open or not self.is_dragging or not self.held_stack:
+			return
+
+		slot_info = self.get_slot_at_pos(x, y)
+		if not slot_info or slot_info[0] == "result" or slot_info[0] == "creative":
+			return
+
+		stype, sidx, target_slot = slot_info
+		key = (stype, sidx)
+
+		b_id = self.held_stack[0]
+		if target_slot[0] != 0 and target_slot[0] != b_id:
+			return
+
+		if self.drag_button == pyglet.window.mouse.RIGHT:
+			if key not in self.drag_visited_keys:
+				self.drag_visited_keys.append(key)
+				if target_slot[0] == 0 or target_slot[1] == 0:
+					target_slot[0] = b_id
+					target_slot[1] = 1
+					self.held_stack[1] -= 1
+				elif target_slot[0] == b_id and target_slot[1] < 64:
+					target_slot[1] += 1
+					self.held_stack[1] -= 1
+
+				if self.held_stack[1] <= 0:
+					self.held_stack = None
+					self.is_dragging = False
+
+				if stype == "craft":
+					self.evaluate_crafting()
+		elif self.drag_button == pyglet.window.mouse.LEFT:
+			if key not in self.drag_visited_keys:
+				self.drag_visited_keys.append(key)
+				self.drag_slot_snapshots[key] = list(target_slot)
+				self._update_left_drag()
+
+	def on_mouse_release(self, x, y, button, modifiers):
+		self.is_dragging = False
+		self.drag_button = None
+		self.drag_visited_keys.clear()
+		self.drag_slot_snapshots.clear()
 
 	def _swap_slot(self, target_slot, held):
 		if held is None or held[0] == 0:

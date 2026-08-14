@@ -152,6 +152,7 @@ class Window(pyglet.window.Window):
 
 		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd)
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
+		self.world.item_drop_manager = self.item_drop_manager
 
 		# Restore player attributes & flying state
 		p_data = w_data.get('player', {})
@@ -347,6 +348,9 @@ class Window(pyglet.window.Window):
 		# Clamp delta_time so player movement and physics remain smooth even during background tasks
 		delta_time = min(delta_time, 1.0 / 30.0)
 
+		# Update active world mechanics (liquids, furnaces)
+		self.world.update(delta_time)
+
 		# Continuous Block Breaking Physics & Progress Accumulation
 		if self.left_mouse_down and self.mouse_captured and not self.gui.inventory_open:
 			target_block = None
@@ -364,29 +368,42 @@ class Window(pyglet.window.Window):
 			if target_block:
 				b_num = self.world.get_block_number(target_block)
 				if 0 < b_num < len(self.world.block_types) and b_num not in (9, 19, 15, 20, 14):
-					b_type = self.world.block_types[b_num]
-					
 					if self.flying:
 						self.break_progress = 1.0
+						tool_cat, tool_tier, can_harvest, drop_id = None, 0, False, None
 					else:
+						# 1. Fetch active tool properties from hotbar
+						held_id = self.holding
+						tool_info = gui.TOOL_PROPERTIES.get(held_id)
+						if tool_info:
+							tool_cat, tool_tier, speed_mult = tool_info
+						else:
+							tool_cat, tool_tier, speed_mult = None, 0, 1.0
+
+						# 2. Fetch block mining specifications
+						mining_spec = gui.BLOCK_MINING_PROPERTIES.get(b_num, (None, 0, 0.8, b_num))
+						pref_cat, req_tier, base_time, drop_id = mining_spec
+
+						# 3. Calculate effective mining speed & break time
+						if tool_cat and tool_cat == pref_cat:
+							eff_speed = speed_mult
+						else:
+							eff_speed = 1.0  # Hand or improper tool
+
+						actual_time = base_time / eff_speed
+						can_harvest = (req_tier == 0) or (tool_cat == pref_cat and tool_tier >= req_tier)
+
 						if self.breaking_block == target_block:
-							b_time = getattr(b_type, "break_time", 0.4)
-							b_time = min(b_time, 0.6)  # Responsive breaking speed
-							self.break_progress += delta_time / max(0.05, b_time)
+							self.break_progress += delta_time / max(0.08, actual_time)
 						else:
 							self.breaking_block = target_block
-							self.break_progress = 0.2  # Fast initial progress on first click
+							self.break_progress = delta_time / max(0.08, actual_time)
 
 					if self.break_progress >= 1.0:
-						# Spawn 3D dropped item entity in the overworld when breaking blocks!
-						if not self.flying:
-							drop_b = b_num
-							if b_num == 2:
-								drop_b = 4  # Grass Block drops Dirt
-							elif b_num == 5:
-								drop_b = 1  # Stone drops Cobblestone
+						# Spawn 3D dropped item entity ONLY if harvested with proper tool tier!
+						if not self.flying and can_harvest and drop_id is not None:
 							self.item_drop_manager.spawn_drop(
-								drop_b, 1,
+								drop_id, 1,
 								[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 							)
 
@@ -960,11 +977,32 @@ class Window(pyglet.window.Window):
 			self.left_mouse_down = True
 
 		self.holding = self.gui.get_current_block_id()
+		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
+		is_placeable = (0 < self.holding < 100)
+		INTERACTIVE_BLOCKS = (26, 27, 37)  # Crafting Table, Furnace, Chest, etc.
 
 		def hit_callback(current_block, next_block):
 			if self.world.get_block_number(current_block) != 14 and 0 <= current_block[1] < 256:
 				if button == pyglet.window.mouse.RIGHT:
-					if 0 < self.holding < 100 and not self.camera.intersects_player(current_block):
+					target_b = self.world.get_block_number(next_block)
+					if target_b in INTERACTIVE_BLOCKS:
+						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):
+							# Shift + Right Click while holding placeable block -> OVERRIDE GUI AND PLACE BLOCK!
+							self.world.set_block(current_block, self.holding)
+							self.gui.consume_active_item()
+							self.holding = self.gui.get_current_block_id()
+							return
+						else:
+							# Normal Right Click OR Shift-Right Click with non-placeable item -> Open GUI!
+							if target_b == 26:
+								self.gui.open_crafting_table()
+							elif target_b == 27:
+								self.gui.open_furnace(self.world.get_furnace(next_block))
+							elif target_b == 37:
+								self.gui.open_chest(next_block, self.world)
+							return
+
+					if is_placeable and not self.camera.intersects_player(current_block):
 						self.world.set_block(current_block, self.holding)
 						self.gui.consume_active_item()
 						self.holding = self.gui.get_current_block_id()
@@ -986,6 +1024,8 @@ class Window(pyglet.window.Window):
 				break
 
 	def on_mouse_release(self, x, y, button, modifiers):
+		if self.gui.inventory_open:
+			self.gui.on_mouse_release(x, y, button, modifiers)
 		if button == pyglet.window.mouse.LEFT:
 			self.left_mouse_down = False
 			self.breaking_block = None
@@ -1004,7 +1044,12 @@ class Window(pyglet.window.Window):
 			self.camera.rotation[1] = max(-math.tau / 4, min(math.tau / 4, self.camera.rotation[1]))
 	
 	def on_mouse_drag(self, x, y, delta_x, delta_y, buttons, modifiers):
-		self.on_mouse_motion(x, y, delta_x, delta_y)
+		self.gui.mouse_x = x
+		self.gui.mouse_y = y
+		if self.gui.inventory_open:
+			self.gui.on_mouse_drag(x, y, delta_x, delta_y, buttons, modifiers)
+		else:
+			self.on_mouse_motion(x, y, delta_x, delta_y)
 
 	def on_key_press(self, key, modifiers):
 		self.keys_down[key] = True

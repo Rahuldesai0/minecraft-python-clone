@@ -475,8 +475,76 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 	)
 
 
+class FurnaceData:
+	def __init__(self):
+		self.input_slot = [0, 0]    # [item_id, count]
+		self.fuel_slot = [0, 0]     # [item_id, count]
+		self.output_slot = [0, 0]   # [item_id, count]
+		self.burn_time_remaining = 0.0
+		self.max_burn_time = 0.0
+		self.smelt_progress = 0.0
+
+	def tick(self, dt):
+		import gui
+		input_id, input_cnt = self.input_slot[0], self.input_slot[1]
+		recipe = gui.SMELTING_RECIPES.get(input_id)
+
+		# Check if current input item is smeltable and output slot has room
+		can_smelt = False
+		if recipe and input_cnt > 0:
+			result_id, result_cnt = recipe
+			out_id, out_cnt = self.output_slot[0], self.output_slot[1]
+			if out_id == 0 or (out_id == result_id and out_cnt + result_cnt <= 64):
+				can_smelt = True
+
+		# 1. Fuel consumption: Consume fuel item if fire is out but we need to smelt
+		if can_smelt and self.burn_time_remaining <= 0:
+			fuel_id, fuel_cnt = self.fuel_slot[0], self.fuel_slot[1]
+			burn_sec = gui.FUEL_BURN_TIMES.get(fuel_id, 0.0)
+			if burn_sec > 0 and fuel_cnt > 0:
+				self.fuel_slot[1] -= 1
+				if self.fuel_slot[1] <= 0:
+					self.fuel_slot[0] = 0
+					self.fuel_slot[1] = 0
+				self.burn_time_remaining = burn_sec
+				self.max_burn_time = burn_sec
+
+		# 2. Burn active fire
+		if self.burn_time_remaining > 0:
+			self.burn_time_remaining = max(0.0, self.burn_time_remaining - dt)
+
+			if can_smelt:
+				self.smelt_progress += dt
+				if self.smelt_progress >= 10.0:  # 1 item takes 10 seconds to smelt!
+					self.smelt_progress = 0.0
+					result_id, result_cnt = recipe
+
+					if self.output_slot[0] == 0:
+						self.output_slot[0] = result_id
+						self.output_slot[1] = result_cnt
+					elif self.output_slot[0] == result_id:
+						self.output_slot[1] += result_cnt
+
+					self.input_slot[1] -= 1
+					if self.input_slot[1] <= 0:
+						self.input_slot[0] = 0
+						self.input_slot[1] = 0
+			else:
+				self.smelt_progress = max(0.0, self.smelt_progress - dt * 2.0)
+		else:
+			self.smelt_progress = max(0.0, self.smelt_progress - dt * 2.0)
+
+
+class ChestData:
+	def __init__(self):
+		self.slots = [[0, 0] for _ in range(27)]  # 27 slots per single chest
+
+
 class World:
 	def __init__(self, seed=None, save_folder=None, render_distance=6):
+		self.furnaces = {}  # (x, y, z) -> FurnaceData
+		self.chests = {}    # (x, y, z) -> ChestData
+		self.item_drop_manager = None
 		if seed is None or seed == "":
 			self.seed = Random().randint(100000, 999999999)
 		elif isinstance(seed, str):
@@ -531,6 +599,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="sponge", block_face_textures={"all": "sponge"}, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="gold_ore", block_face_textures={"all": "gold_ore"}, break_time=2.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="redstone_ore", block_face_textures={"all": "redstone_ore"}, break_time=2.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="chest", block_face_textures={"top": "chest_top", "bottom": "planks", "sides": "chest_side", "front": "chest_front"}, break_time=1.5, requires_tool=False))
 
 		import gui
 		for item_id, item_name, tex_name in gui.TOOL_ITEMS:
@@ -571,6 +640,40 @@ class World:
 		self.water_levels = {}
 		self.liquid_tick_queue = set()
 		self._block_info_cache = None
+
+	def get_single_chest(self, pos):
+		p_key = (int(pos[0]), int(pos[1]), int(pos[2]))
+		if p_key not in self.chests:
+			self.chests[p_key] = ChestData()
+		return self.chests[p_key]
+
+	def get_chest_info(self, pos):
+		px, py, pz = int(pos[0]), int(pos[1]), int(pos[2])
+		main_key = (px, py, pz)
+		main_chest = self.get_single_chest(main_key)
+
+		# Check 4 horizontal neighbors at same Y height for an adjacent chest block (37)
+		for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+			adj_key = (px + dx, py, pz + dz)
+			if self.get_block_number(adj_key) == 37:
+				adj_chest = self.get_single_chest(adj_key)
+				if main_key < adj_key:
+					return (True, main_chest, adj_chest)
+				else:
+					return (True, adj_chest, main_chest)
+
+		return (False, main_chest, None)
+
+	def get_furnace(self, pos):
+		p_key = (int(pos[0]), int(pos[1]), int(pos[2]))
+		if p_key not in self.furnaces:
+			self.furnaces[p_key] = FurnaceData()
+		return self.furnaces[p_key]
+
+	def update(self, dt):
+		self.tick_liquids(dt)
+		for furnace in list(self.furnaces.values()):
+			furnace.tick(dt)
 
 	def get_block_types_info(self):
 		if self._block_info_cache is None:
@@ -781,7 +884,7 @@ class World:
 		if b_num == 20: return self.liquid_levels.get(pos, 1)
 		return -1
 
-	def tick_liquids(self):
+	def tick_liquids(self, dt=0.0):
 		"""Official Minecraft Water & Lava Flow Solver."""
 		if not self.liquid_tick_queue:
 			return
@@ -925,6 +1028,19 @@ class World:
 				del self.liquid_levels[position]
 			if position in self.water_levels:
 				del self.water_levels[position]
+			p_key = (int(x), int(y), int(z))
+			if p_key in self.furnaces:
+				del self.furnaces[p_key]
+			if p_key in self.chests:
+				c_data = self.chests[p_key]
+				if self.item_drop_manager:
+					for slot in c_data.slots:
+						if slot[0] != 0 and slot[1] > 0:
+							self.item_drop_manager.spawn_drop(
+								slot[0], slot[1],
+								[x + 0.5, y + 0.5, z + 0.5]
+							)
+				del self.chests[p_key]
 
 		px, py, pz = position
 		for nx, ny, nz in [(px, py, pz), (px + 1, py, pz), (px - 1, py, pz), (px, py + 1, pz), (px, py - 1, pz), (px, py, pz + 1), (px, py, pz - 1)]:
