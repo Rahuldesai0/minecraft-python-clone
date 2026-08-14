@@ -25,6 +25,7 @@ import noise
 
 import gui
 import item_drop
+import mob_manager
 import world_save
 
 class Window(pyglet.window.Window):
@@ -35,6 +36,7 @@ class Window(pyglet.window.Window):
 
 		self.world = world.World()
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
+		self.mob_manager = mob_manager.MobManager(self.world)
 		
 		# create shader
 
@@ -124,9 +126,10 @@ class Window(pyglet.window.Window):
 		self.world_seed = seed_val
 		self.is_saved_load = False
 
-		# Initialize fresh World & ItemDropManager
+		# Initialize fresh World, ItemDropManager & MobManager
 		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
+		self.mob_manager = mob_manager.MobManager(self.world)
 
 		# Reset camera, player attributes & inventory for fresh world
 		self.camera.position = [0, 81.5, 0]
@@ -157,6 +160,7 @@ class Window(pyglet.window.Window):
 		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd)
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
+		self.mob_manager = mob_manager.MobManager(self.world)
 
 		# Restore player attributes & flying state
 		p_data = w_data.get('player', {})
@@ -490,6 +494,7 @@ class Window(pyglet.window.Window):
 
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
+		self.mob_manager.update(delta_time, self.camera.position, self.item_drop_manager)
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
 		self.world.tick_liquids()
@@ -542,6 +547,9 @@ class Window(pyglet.window.Window):
 
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
+
+		# Render 3D Pig and Cow Passive Mobs in overworld
+		self.mob_manager.draw(self.camera)
 
 		# If 3rd Person View (Back or Front), render Steve 3D Player Model!
 		if self.perspective != 0:
@@ -1050,6 +1058,16 @@ class Window(pyglet.window.Window):
 
 		if button == pyglet.window.mouse.LEFT:
 			self.left_mouse_down = True
+			held_id = self.gui.get_current_block_id()
+			damage = gui.get_item_attack_damage(held_id)
+
+			# Trigger 1st/3rd person player arm swing animation
+			if hasattr(self, "player_model"):
+				self.player_model.is_swinging = True
+				self.player_model.swing_time = 0.0
+
+			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage):
+				return
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)

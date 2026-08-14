@@ -68,6 +68,11 @@ TOOL_ITEMS = [
 	(122, "Diamond", "items/diamond"),
 	(123, "Iron Ingot", "items/iron_ingot"),
 	(124, "Gold Ingot", "items/gold_ingot"),
+	(125, "Raw Porkchop", "items/porkchop_raw"),
+	(126, "Leather", "items/leather"),
+	(127, "Raw Beef", "items/beef_raw"),
+	(128, "Cooked Porkchop", "items/porkchop_cooked"),
+	(129, "Steak", "items/beef_cooked"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -78,6 +83,46 @@ def get_max_stack_size(item_id):
 	if 101 <= item_id <= 120:
 		return 1
 	return 64
+
+# Minecraft Attack Damage values (in HP):
+# Fist = 1.0 (0.5 hearts)
+# Swords (highest per tier): Wood (4.0), Stone (5.0), Iron (6.0), Diamond (7.0), Gold (4.0)
+# Axes (second highest): Wood (3.0), Stone (4.0), Iron (5.0), Diamond (6.0), Gold (3.0)
+# Pickaxes: Wood (2.0), Stone (3.0), Iron (4.0), Diamond (5.0), Gold (2.0)
+# Shovels: Wood (1.5), Stone (2.5), Iron (3.5), Diamond (4.5), Gold (1.5)
+ITEM_ATTACK_DAMAGE = {
+	# Swords (Highest per tier)
+	113: 4.0,  # Wood Sword
+	114: 5.0,  # Stone Sword
+	115: 6.0,  # Iron Sword
+	116: 7.0,  # Diamond Sword
+	120: 4.0,  # Gold Sword
+
+	# Axes (Second highest per tier)
+	105: 3.0,  # Wood Axe
+	106: 4.0,  # Stone Axe
+	107: 5.0,  # Iron Axe
+	108: 6.0,  # Diamond Axe
+	118: 3.0,  # Gold Axe
+
+	# Pickaxes
+	101: 2.0,  # Wood Pickaxe
+	102: 3.0,  # Stone Pickaxe
+	103: 4.0,  # Iron Pickaxe
+	104: 5.0,  # Diamond Pickaxe
+	117: 2.0,  # Gold Pickaxe
+
+	# Shovels
+	109: 1.5,  # Wood Shovel
+	110: 2.5,  # Stone Shovel
+	111: 3.5,  # Iron Shovel
+	112: 4.5,  # Diamond Shovel
+	119: 1.5,  # Gold Shovel
+}
+
+def get_item_attack_damage(item_id):
+	"""Returns the attack damage for a given item or weapon ID (default 1.0 for fist)."""
+	return ITEM_ATTACK_DAMAGE.get(item_id, 1.0)
 
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
 SMELTING_RECIPES = {
