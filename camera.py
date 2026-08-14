@@ -25,11 +25,19 @@ class Camera:
 		self.fall_start_y = None
 		self.hurt_time = 0.0
 		self.last_damage_time = 0.0
+		self.gui = None
 
-	def take_damage(self, damage, flying=False):
+	def take_damage(self, damage, flying=False, gui=None):
 		import time
 		if flying or damage <= 0 or self.health <= 0:
 			return
+
+		gui_ref = gui or self.gui
+		if gui_ref and hasattr(gui_ref, "get_total_armor_protection"):
+			defense = gui_ref.get_total_armor_protection()
+			if defense > 0:
+				reduction = min(0.80, defense * 0.04)
+				damage = max(1.0, damage * (1.0 - reduction))
 		
 		self.health = max(0, self.health - damage)
 		self.hurt_time = 0.4

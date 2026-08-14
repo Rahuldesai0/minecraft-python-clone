@@ -89,6 +89,7 @@ class Window(pyglet.window.Window):
 
 		# Inventory & Hotbar GUI System
 		self.gui = gui.InventoryGUI(self)
+		self.camera.gui = self.gui
 		self.holding = self.gui.get_current_block_id()
 
 		# F3 Debug Overlay & Key Tracking stuff
@@ -1067,6 +1068,27 @@ class Window(pyglet.window.Window):
 				self.player_model.swing_time = 0.0
 
 			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage):
+				return
+		elif button == pyglet.window.mouse.RIGHT:
+			held_id = self.gui.get_current_block_id()
+			if held_id in gui.ARMOR_SLOT_TYPES:
+				slot_idx = gui.ARMOR_SLOT_TYPES[held_id]
+				equipped_slot = self.gui.armor_slots[slot_idx]
+				active_slot = self.gui.hotbar_slots[self.gui.selected_slot]
+
+				old_armor_id = equipped_slot[0]
+				equipped_slot[0] = held_id
+				equipped_slot[1] = 1
+
+				if old_armor_id != 0:
+					active_slot[0] = old_armor_id
+					active_slot[1] = 1
+				else:
+					active_slot[1] -= 1
+					if active_slot[1] <= 0:
+						active_slot[0] = 0
+
+				self.holding = self.gui.get_current_block_id()
 				return
 
 		self.holding = self.gui.get_current_block_id()

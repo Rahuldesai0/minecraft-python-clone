@@ -73,14 +73,49 @@ TOOL_ITEMS = [
 	(127, "Raw Beef", "items/beef_raw"),
 	(128, "Cooked Porkchop", "items/porkchop_cooked"),
 	(129, "Steak", "items/beef_cooked"),
+	# Armor Pieces (130-145)
+	(130, "Leather Cap", "items/leather_helmet"),
+	(131, "Leather Tunic", "items/leather_chestplate"),
+	(132, "Leather Pants", "items/leather_leggings"),
+	(133, "Leather Boots", "items/leather_boots"),
+	(134, "Golden Helmet", "items/gold_helmet"),
+	(135, "Golden Chestplate", "items/gold_chestplate"),
+	(136, "Golden Leggings", "items/gold_leggings"),
+	(137, "Golden Boots", "items/gold_boots"),
+	(138, "Iron Helmet", "items/iron_helmet"),
+	(139, "Iron Chestplate", "items/iron_chestplate"),
+	(140, "Iron Leggings", "items/iron_leggings"),
+	(141, "Iron Boots", "items/iron_boots"),
+	(142, "Diamond Helmet", "items/diamond_helmet"),
+	(143, "Diamond Chestplate", "items/diamond_chestplate"),
+	(144, "Diamond Leggings", "items/diamond_leggings"),
+	(145, "Diamond Boots", "items/diamond_boots"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
 BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
 
+ARMOR_SLOT_TYPES = {
+	130: 0, 134: 0, 138: 0, 142: 0,  # Helmets -> Slot 0
+	131: 1, 135: 1, 139: 1, 143: 1,  # Chestplates -> Slot 1
+	132: 2, 136: 2, 140: 2, 144: 2,  # Leggings -> Slot 2
+	133: 3, 137: 3, 141: 3, 145: 3,  # Boots -> Slot 3
+}
+
+ARMOR_DEFENSE_POINTS = {
+	# Leather Set (+7 Total)
+	130: 1, 131: 3, 132: 2, 133: 1,
+	# Gold Set (+11 Total)
+	134: 2, 135: 5, 136: 3, 137: 1,
+	# Iron Set (+15 Total)
+	138: 2, 139: 6, 140: 5, 141: 2,
+	# Diamond Set (+20 Total)
+	142: 3, 143: 8, 144: 6, 145: 3,
+}
+
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools & weapons (101-120) do not stack (max stack = 1)."""
-	if 101 <= item_id <= 120:
+	"""Returns the maximum stack size for an item ID. Tools & Armor (101-120, 130-145) do not stack (max stack = 1)."""
+	if (101 <= item_id <= 120) or (130 <= item_id <= 145):
 		return 1
 	return 64
 
@@ -249,6 +284,28 @@ def draw_vector_heart(x, y, is_full=True, is_half=False):
 		c1.draw()
 		tri.draw()
 
+def draw_vector_shield(x, y, is_full=True, is_half=False):
+	bg_col = (40, 45, 55, 230)
+	shield_outer = pyglet.shapes.Rectangle(x + 2, y + 3, 11, 8, color=bg_col)
+	shield_tri = pyglet.shapes.Triangle(x + 2, y + 3, x + 13, y + 3, x + 7.5, y - 3, color=bg_col)
+	shield_outer.draw()
+	shield_tri.draw()
+
+	if not is_full and not is_half:
+		return
+
+	iron_col = (180, 200, 220, 255)
+	if is_full:
+		inner = pyglet.shapes.Rectangle(x + 4, y + 4, 7, 6, color=iron_col)
+		tri = pyglet.shapes.Triangle(x + 4, y + 4, x + 11, y + 4, x + 7.5, y - 1, color=iron_col)
+		inner.draw()
+		tri.draw()
+	elif is_half:
+		inner = pyglet.shapes.Rectangle(x + 4, y + 4, 3, 6, color=iron_col)
+		tri = pyglet.shapes.Triangle(x + 4, y + 4, x + 7.5, y + 4, x + 7.5, y - 1, color=iron_col)
+		inner.draw()
+		tri.draw()
+
 class InventoryGUI:
 	def __init__(self, window):
 		self.window = window
@@ -261,9 +318,10 @@ class InventoryGUI:
 		# Creative hotbar starts with full stacks of 64
 		self.creative_hotbar = [[2, 64], [4, 64], [5, 64], [1, 64], [7, 64], [8, 64], [6, 64], [21, 64], [9, 64]]
 		
-		# Survival hotbar & inventory start completely empty [0, 0]
+		# Survival hotbar, inventory, & 4 Armor Slots (Helmet, Chestplate, Leggings, Boots)
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
 		self.survival_inventory = [[0, 0] for _ in range(27)]
+		self.armor_slots = [[0, 0] for _ in range(4)]
 
 		# Crafting System Grid (2x2 & 3x3) & Result Slot
 		self.crafting_grid_2x2 = [[0, 0] for _ in range(4)]
@@ -294,6 +352,14 @@ class InventoryGUI:
 			x=0, y=0, anchor_x="center", anchor_y="bottom",
 			color=(255, 255, 255, 255)
 		)
+
+	def get_total_armor_protection(self):
+		"""Returns total defense points (0 to 20) provided by currently equipped armor pieces."""
+		total_defense = 0
+		for slot in self.armor_slots:
+			if slot[0] != 0 and slot[1] > 0:
+				total_defense += ARMOR_DEFENSE_POINTS.get(slot[0], 0)
+		return total_defense
 
 	def reset_inventory(self):
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
@@ -1032,6 +1098,42 @@ class InventoryGUI:
 					if mat == 1: self.crafting_result = [27, 1]; return   # Furnace (27)
 					if mat == 7: self.crafting_result = [37, 1]; return   # Chest (37)
 
+		# Recipe 9: Helmets (5 materials in 2x3 top arch: [[M, M, M], [M, 0, M]])
+		if h == 2 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] == matrix[1][0] == matrix[1][2] and matrix[1][1] == 0:
+				if m0 in (126,): self.crafting_result = [130, 1]; return  # Leather Cap
+				if m0 in (124, 35, 28): self.crafting_result = [134, 1]; return  # Golden Helmet
+				if m0 in (123, 17, 29): self.crafting_result = [138, 1]; return  # Iron Helmet
+				if m0 in (122, 18, 30): self.crafting_result = [142, 1]; return  # Diamond Helmet
+
+		# Recipe 10: Boots (4 materials in 2x3 bottom corners: [[M, 0, M], [M, 0, M]])
+		if h == 2 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and matrix[0][1] == 0 and m0 == matrix[0][2] == matrix[1][0] == matrix[1][2] and matrix[1][1] == 0:
+				if m0 in (126,): self.crafting_result = [133, 1]; return  # Leather Boots
+				if m0 in (124, 35, 28): self.crafting_result = [137, 1]; return  # Golden Boots
+				if m0 in (123, 17, 29): self.crafting_result = [141, 1]; return  # Iron Boots
+				if m0 in (122, 18, 30): self.crafting_result = [145, 1]; return  # Diamond Boots
+
+		# Recipe 11: Chestplates (8 materials in 3x3 hollow neck ring: [[M, 0, M], [M, M, M], [M, M, M]])
+		if h == 3 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and matrix[0][1] == 0 and m0 == matrix[0][2] == matrix[1][0] == matrix[1][1] == matrix[1][2] == matrix[2][0] == matrix[2][1] == matrix[2][2]:
+				if m0 in (126,): self.crafting_result = [131, 1]; return  # Leather Tunic
+				if m0 in (124, 35, 28): self.crafting_result = [135, 1]; return  # Golden Chestplate
+				if m0 in (123, 17, 29): self.crafting_result = [139, 1]; return  # Iron Chestplate
+				if m0 in (122, 18, 30): self.crafting_result = [143, 1]; return  # Diamond Chestplate
+
+		# Recipe 12: Leggings (7 materials in 3x3 upside-down U: [[M, M, M], [M, 0, M], [M, 0, M]])
+		if h == 3 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] == matrix[1][0] == matrix[1][2] == matrix[2][0] == matrix[2][2] and matrix[1][1] == 0 and matrix[2][1] == 0:
+				if m0 in (126,): self.crafting_result = [132, 1]; return  # Leather Pants
+				if m0 in (124, 35, 28): self.crafting_result = [136, 1]; return  # Golden Leggings
+				if m0 in (123, 17, 29): self.crafting_result = [140, 1]; return  # Iron Leggings
+				if m0 in (122, 18, 30): self.crafting_result = [144, 1]; return  # Diamond Leggings
+
 		self.crafting_result = [0, 0]
 
 	def set_selected_slot(self, slot_idx):
@@ -1079,6 +1181,7 @@ class InventoryGUI:
 
 		if not self.window.flying:
 			self._draw_health_bar()
+			self._draw_armor_bar()
 
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
@@ -1133,6 +1236,29 @@ class InventoryGUI:
 				draw_vector_heart(hx, hy, is_full=False, is_half=True)
 			else:
 				draw_vector_heart(hx, hy, is_full=False, is_half=False)
+
+	def _draw_armor_bar(self):
+		total_def = self.get_total_armor_protection()
+		if total_def <= 0:
+			return
+
+		slot_size = 44
+		padding = 6
+		total_w = 9 * slot_size + 8 * padding
+		start_x = (self.window.width - total_w) // 2
+		start_y = 82
+
+		for i in range(10):
+			ax = start_x + i * 18
+			ay = start_y
+
+			def_val = i * 2
+			if total_def >= def_val + 2:
+				draw_vector_shield(ax, ay, is_full=True, is_half=False)
+			elif total_def == def_val + 1:
+				draw_vector_shield(ax, ay, is_full=False, is_half=True)
+			else:
+				draw_vector_shield(ax, ay, is_full=False, is_half=False)
 
 	def _draw_hotbar(self, current_hover):
 		slot_size = 44
@@ -1379,11 +1505,49 @@ class InventoryGUI:
 			grid_dim = 3 if self.crafting_mode == "3x3" else 2
 			grid = self.active_crafting_grid
 
+			# Render 4 Armor Slots (Helmet, Chestplate, Leggings, Boots) in 2x2 mode
+			if self.crafting_mode == "2x2":
+				arm_title = pyglet.text.Label("Armor:", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+				arm_title.draw()
+
+				arm_x = win_x + 24
+				arm_y = win_y + win_h - 90
+				arm_names = ["Helmet", "Chestplate", "Leggings", "Boots"]
+				arm_outlines = ["HEAD", "CHEST", "LEGS", "FEET"]
+
+				for idx in range(4):
+					sy = arm_y - idx * (slot_s + pad)
+					is_h = (arm_x <= self.mouse_x <= arm_x + slot_s and sy <= self.mouse_y <= sy + slot_s)
+					bg_c = (55, 60, 75, 230) if is_h else (35, 38, 48, 200)
+					border_c = (255, 215, 0, 255) if is_h else (90, 90, 120, 200)
+
+					draw_bordered_box(arm_x, sy, slot_s, slot_s, 2 if is_h else 1, bg_c, border_c)
+
+					slot = self.armor_slots[idx]
+					b_id = slot[0]
+
+					if b_id in self.icon_textures and slot[1] > 0:
+						img = self.icon_textures[b_id]
+						spr = pyglet.sprite.Sprite(img, x=arm_x + 4, y=sy + 4)
+						spr.scale_x = 32.0 / img.width
+						spr.scale_y = 32.0 / img.height
+						spr.draw()
+					else:
+						p_lbl = pyglet.text.Label(arm_outlines[idx], font_name="Arial", font_size=7, x=arm_x + slot_s // 2, y=sy + slot_s // 2, anchor_x="center", anchor_y="center", color=(120, 120, 140, 180))
+						p_lbl.draw()
+
+					if is_h:
+						b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if slot[1] > 0 else f"{arm_names[idx]} Slot (Empty)"
+						def_pts = ARMOR_DEFENSE_POINTS.get(b_id, 0)
+						def_str = f" (+{def_pts} Defense)" if def_pts > 0 else ""
+						current_hover = f"{b_name}{def_str}"
+
 			grid_title_text = "Crafting Table Grid (3x3):" if self.crafting_mode == "3x3" else "Crafting Grid (2x2):"
-			craft_lbl = pyglet.text.Label(grid_title_text, font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
+			cg_title_x = win_x + 24 if self.crafting_mode == "3x3" else win_x + 140
+			craft_lbl = pyglet.text.Label(grid_title_text, font_name="Arial", font_size=10, x=cg_title_x, y=win_y + win_h - 68, color=(220, 220, 240, 255))
 			craft_lbl.draw()
 
-			cg_x = win_x + 24
+			cg_x = win_x + 24 if self.crafting_mode == "3x3" else win_x + 140
 			cg_y = win_y + win_h - 180 if self.crafting_mode == "3x3" else win_y + win_h - 160
 
 			for r in range(grid_dim):
@@ -1599,9 +1763,17 @@ class InventoryGUI:
 			if res_x <= x <= res_x + slot_s + 8 and res_y <= y <= res_y + slot_s + 8:
 				return ("furnace_output", 0, self.active_furnace.output_slot)
 		else:
+			if self.crafting_mode == "2x2":
+				arm_x = win_x + 24
+				arm_y = win_y + win_h - 90
+				for idx in range(4):
+					sy = arm_y - idx * (slot_s + pad)
+					if arm_x <= x <= arm_x + slot_s and sy <= y <= sy + slot_s:
+						return ("armor", idx, self.armor_slots[idx])
+
 			grid_dim = 3 if self.crafting_mode == "3x3" else 2
 			grid = self.active_crafting_grid
-			cg_x = win_x + 24
+			cg_x = win_x + 24 if self.crafting_mode == "3x3" else win_x + 140
 			cg_y = win_y + win_h - 180 if self.crafting_mode == "3x3" else win_y + win_h - 160
 
 			# Crafting Grid Slots
@@ -1646,7 +1818,9 @@ class InventoryGUI:
 
 	def _get_slot_ref_by_key(self, key):
 		stype, sidx = key
-		if stype == "craft":
+		if stype == "armor":
+			return self.armor_slots[sidx]
+		elif stype == "craft":
 			return self.active_crafting_grid[sidx]
 		elif stype == "inv":
 			return self.survival_inventory[sidx]
@@ -1703,9 +1877,29 @@ class InventoryGUI:
 					target_slot[1] = 0
 			return
 
+		if stype == "armor":
+			b_id, cnt = target_slot[0], target_slot[1]
+			if b_id != 0 and cnt > 0:
+				if self.add_item(b_id, cnt):
+					target_slot[0] = 0
+					target_slot[1] = 0
+			return
+
 		b_id, cnt = target_slot[0], target_slot[1]
 		if b_id == 0 or cnt <= 0:
 			return
+
+		# Auto-equip armor pieces when shift-clicked from inventory or hotbar
+		if stype in ("inv", "hotbar") and b_id in ARMOR_SLOT_TYPES:
+			arm_idx = ARMOR_SLOT_TYPES[b_id]
+			arm_slot = self.armor_slots[arm_idx]
+			if arm_slot[0] == 0:
+				arm_slot[0] = b_id
+				arm_slot[1] = 1
+				target_slot[1] -= 1
+				if target_slot[1] <= 0:
+					target_slot[0] = 0
+				return
 
 		max_stack = get_max_stack_size(b_id)
 
@@ -1883,15 +2077,20 @@ class InventoryGUI:
 				if self.held_stack[1] >= max_stack:
 					return
 
-	def handle_slot_click(self, target_slot, is_right_click):
+	def handle_slot_click(self, target_slot, is_right_click, slot_type=None, slot_idx=None):
 		"""
-		Handles slot clicks for inventory, hotbar, and crafting grid slots.
+		Handles slot clicks for inventory, hotbar, armor, and crafting grid slots.
 		Left Click: Pick up / place full stack, or swap stacks.
 		Right Click:
 		  - If holding NO item: Splits target slot items in half (takes math.ceil(count / 2) onto cursor).
 		  - If HOLDING an item: Places exactly ONE (1) item into target slot!
 		"""
 		held = self.held_stack
+
+		if slot_type == "armor" and slot_idx is not None and held and held[0] != 0:
+			b_id = held[0]
+			if ARMOR_SLOT_TYPES.get(b_id) != slot_idx:
+				return  # Reject invalid armor piece type for this slot!
 
 		if is_right_click:
 			if held is None or held[0] == 0 or held[1] <= 0:
@@ -1926,7 +2125,7 @@ class InventoryGUI:
 				return
 		else:
 			# Left click: Standard stack swap / transfer
-			self.held_stack = self._swap_slot(target_slot, held)
+			self.held_stack = self._swap_slot(target_slot, held, slot_type=slot_type, slot_idx=slot_idx)
 
 	def on_mouse_press(self, x, y, button, modifiers):
 		if not self.inventory_open:
@@ -2015,8 +2214,8 @@ class InventoryGUI:
 						target_slot[1] = 0
 				return True
 			else:
-				# Regular slot click (crafting, inventory, or hotbar)
-				self.handle_slot_click(target_slot, is_right)
+				# Regular slot click (crafting, armor, inventory, or hotbar)
+				self.handle_slot_click(target_slot, is_right, slot_type=stype, slot_idx=sidx)
 				if stype == "craft":
 					self.evaluate_crafting()
 
@@ -2095,7 +2294,11 @@ class InventoryGUI:
 		self.drag_visited_keys.clear()
 		self.drag_slot_snapshots.clear()
 
-	def _swap_slot(self, target_slot, held):
+	def _swap_slot(self, target_slot, held, slot_type=None, slot_idx=None):
+		if slot_type == "armor" and slot_idx is not None and held and held[0] != 0:
+			b_id = held[0]
+			if ARMOR_SLOT_TYPES.get(b_id) != slot_idx:
+				return held
 		if held is None or held[0] == 0:
 			new_held = list(target_slot)
 			target_slot[0] = 0
