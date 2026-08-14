@@ -270,21 +270,24 @@ class ItemDropManager:
 			gl.glBindVertexArray(self.vao)
 
 			# Position VBO (location 0)
-			c_pos = (gl.GLfloat * len(pos_data))(*pos_data)
+			c_pos = (gl.GLfloat * len(pos_data))()
+			c_pos[:] = pos_data
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_pos)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_pos), c_pos, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(0)
 
 			# TexCoord VBO (location 1)
-			c_tex = (gl.GLfloat * len(tex_data))(*tex_data)
+			c_tex = (gl.GLfloat * len(tex_data))()
+			c_tex[:] = tex_data
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_tex)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_tex), c_tex, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(1)
 
 			# Shading VBO (location 2)
-			c_shd = (gl.GLfloat * len(shd_data))(*shd_data)
+			c_shd = (gl.GLfloat * len(shd_data))()
+			c_shd[:] = shd_data
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shd)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_STREAM_DRAW)
 			gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)

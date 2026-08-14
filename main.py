@@ -317,12 +317,12 @@ class Window(pyglet.window.Window):
 					cx, cz = self.spawn_chunk_queue.pop(0)
 					cpos = (cx, 0, cz)
 					if cpos not in self.world.chunks:
-						chk = self.world.generate_chunk(cx, cz)
-						self.world.chunks[cpos] = chk
-						chk.update_subchunk_meshes()
-						chk.update_mesh()
-						chk.send_mesh_data_to_gpu()
+						chk_bytes = self.world.generate_chunk(cx, cz, blocks_only=True)
+						self.world.chunks[cpos] = chunk.Chunk(self.world, cpos, blocks=chk_bytes)
+						self.world.queue_chunk_sections_for_meshing(cx, cz)
 					self.loaded_spawn_chunks += 1
+
+			self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
 
 			self.loading_progress = self.loaded_spawn_chunks / self.total_spawn_chunks
 			self.loading_status = f"Building Terrain... ({self.loaded_spawn_chunks}/{self.total_spawn_chunks})"
@@ -419,7 +419,7 @@ class Window(pyglet.window.Window):
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
 		self.world.update_chunks(self.camera.position)
-		self.world.process_load_queue(self.camera.position)
+		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
 		self.world.tick_liquids()
 		self.invalid = True
 		
@@ -469,7 +469,7 @@ class Window(pyglet.window.Window):
 		self.clear()
 
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
-		self.world.draw(self.camera.position)
+		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
 
 		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
 		self.item_drop_manager.draw(self.shader, self.gui)
@@ -591,25 +591,29 @@ class Window(pyglet.window.Window):
 
 		gl.glBindVertexArray(self.celestial_vao)
 
-		pos_bytes = (gl.GLfloat * len(pos_data))(*pos_data)
+		pos_bytes = (gl.GLfloat * len(pos_data))()
+		pos_bytes[:] = pos_data
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_pos)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(pos_bytes), pos_bytes, gl.GL_STREAM_DRAW)
 		gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(0)
 
-		tex_bytes = (gl.GLfloat * len(tex_data))(*tex_data)
+		tex_bytes = (gl.GLfloat * len(tex_data))()
+		tex_bytes[:] = tex_data
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_tex)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(tex_bytes), tex_bytes, gl.GL_STREAM_DRAW)
 		gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(1)
 
-		shading_bytes = (gl.GLfloat * len(shading_data))(*shading_data)
+		shading_bytes = (gl.GLfloat * len(shading_data))()
+		shading_bytes[:] = shading_data
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_shading)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(shading_bytes), shading_bytes, gl.GL_STREAM_DRAW)
 		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(2)
 
-		idx_bytes = (gl.GLuint * len(idx_data))(*idx_data)
+		idx_bytes = (gl.GLuint * len(idx_data))()
+		idx_bytes[:] = idx_data
 		gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self.celestial_ibo)
 		gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, ctypes.sizeof(idx_bytes), idx_bytes, gl.GL_STREAM_DRAW)
 

@@ -140,19 +140,34 @@ class Subchunk:
 		south_chunk = self.world.chunks.get((cx, 0, cz + 1))
 		north_chunk = self.world.chunks.get((cx, 0, cz - 1))
 
+		if east_chunk is None or west_chunk is None or south_chunk is None or north_chunk is None:
+			self.parent.had_missing_neighbors = True
+
 		def get_neighbor_block_num(plx, ply, plz, wx, wy, wz):
 			if 0 <= plx < 16 and 0 <= ply < 256 and 0 <= plz < 16:
 				return self.parent.blocks[plx][ply][plz]
 			if ply < 0 or ply >= 256:
 				return 0
 			if plx >= 16:
-				return east_chunk.blocks[0][ply][plz] if east_chunk is not None else 0
+				if east_chunk is None:
+					self.parent.had_missing_neighbors = True
+					return 0
+				return east_chunk.blocks[0][ply][plz]
 			if plx < 0:
-				return west_chunk.blocks[15][ply][plz] if west_chunk is not None else 0
+				if west_chunk is None:
+					self.parent.had_missing_neighbors = True
+					return 0
+				return west_chunk.blocks[15][ply][plz]
 			if plz >= 16:
-				return south_chunk.blocks[plx][ply][0] if south_chunk is not None else 0
+				if south_chunk is None:
+					self.parent.had_missing_neighbors = True
+					return 0
+				return south_chunk.blocks[plx][ply][0]
 			if plz < 0:
-				return north_chunk.blocks[plx][ply][15] if north_chunk is not None else 0
+				if north_chunk is None:
+					self.parent.had_missing_neighbors = True
+					return 0
+				return north_chunk.blocks[plx][ply][15]
 			return 0
 
 		for local_x in range(SUBCHUNK_WIDTH):
