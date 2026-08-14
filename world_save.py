@@ -68,7 +68,7 @@ def list_saved_worlds():
 	worlds.sort(key=lambda w: w.get('last_played', 0), reverse=True)
 	return worlds
 
-def save_world(world_name, seed, player_data, world_data, inventory_data, drops_data=None):
+def save_world(world_name, seed, player_data, world_data, inventory_data, drops_data=None, chests_data=None, furnaces_data=None):
 	ensure_saves_dir()
 	folder_path = os.path.join(SAVES_DIR, world_name)
 	chunks_path = os.path.join(folder_path, 'chunks')
@@ -85,7 +85,9 @@ def save_world(world_name, seed, player_data, world_data, inventory_data, drops_
 		'player': player_data,
 		'world': world_data,
 		'inventory': inventory_data,
-		'drops': drops_data or []
+		'drops': drops_data or [],
+		'chests': chests_data or {},
+		'furnaces': furnaces_data or {}
 	}
 
 	level_dat_path = os.path.join(folder_path, 'level.dat')

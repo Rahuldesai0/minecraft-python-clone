@@ -1030,7 +1030,16 @@ class World:
 				del self.water_levels[position]
 			p_key = (int(x), int(y), int(z))
 			if p_key in self.furnaces:
+				f_data = self.furnaces[p_key]
+				if self.item_drop_manager:
+					for slot in (f_data.input_slot, f_data.fuel_slot, f_data.output_slot):
+						if slot[0] != 0 and slot[1] > 0:
+							self.item_drop_manager.spawn_drop(
+								slot[0], slot[1],
+								[x + 0.5, y + 0.5, z + 0.5]
+							)
 				del self.furnaces[p_key]
+
 			if p_key in self.chests:
 				c_data = self.chests[p_key]
 				if self.item_drop_manager:

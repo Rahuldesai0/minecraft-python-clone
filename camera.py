@@ -279,16 +279,82 @@ class Camera:
 
 
 
-	def update_matrices(self):
-        # create projection matrix
+	def get_view_position_and_rotation(self, perspective=0, world=None):
+		"""
+		Returns (cam_pos, cam_rot) based on perspective mode:
+		0: First Person (camera at eye level)
+		1: Third Person Back (camera behind player looking forward)
+		2: Third Person Front (camera in front of player looking backward)
+		"""
+		px, py, pz = self.position
+		yaw, pitch = self.rotation
+
+		if perspective == 0:
+			return (px, py, pz), (yaw, pitch)
+
+		elif perspective == 1:
+			# Third Person Back
+			dx = math.sin(yaw) * math.cos(pitch)
+			dy = math.sin(pitch)
+			dz = -math.cos(yaw) * math.cos(pitch)
+			dist = 3.5
+
+			if world:
+				steps = 20
+				for i in range(1, steps + 1):
+					step_d = (dist * i) / steps
+					tx, ty, tz = px - dx * step_d, py - dy * step_d, pz - dz * step_d
+					bx, by, bz = int(round(tx)), int(round(ty)), int(round(tz))
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num != 0 and b_num not in (9, 19, 15, 20):
+						dist = max(0.5, step_d - 0.3)
+						break
+
+			cx = px - dx * dist
+			cy = py - dy * dist
+			cz = pz - dz * dist
+			return (cx, cy, cz), (yaw, pitch)
+
+		elif perspective == 2:
+			# Third Person Front: Camera positioned in front of player (+D * 3.5), looking back at player's face!
+			dx = math.sin(yaw) * math.cos(pitch)
+			dy = math.sin(pitch)
+			dz = -math.cos(yaw) * math.cos(pitch)
+			dist = 3.5
+
+			if world:
+				steps = 20
+				for i in range(1, steps + 1):
+					step_d = (dist * i) / steps
+					tx, ty, tz = px + dx * step_d, py + dy * step_d, pz + dz * step_d
+					bx, by, bz = int(round(tx)), int(round(ty)), int(round(tz))
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num != 0 and b_num not in (9, 19, 15, 20):
+						dist = max(0.5, step_d - 0.3)
+						break
+
+			cx = px + dx * dist
+			cy = py + dy * dist
+			cz = pz + dz * dist
+
+			front_yaw = yaw + math.pi
+			front_pitch = -pitch
+			return (cx, cy, cz), (front_yaw, front_pitch)
+
+		return (px, py, pz), (yaw, pitch)
+
+	def update_matrices(self, perspective=0, world=None):
+		cam_pos, cam_rot = self.get_view_position_and_rotation(perspective, world)
+
+		# Projection matrix
 		self.p_matrix.load_identity()
 		self.p_matrix.perspective(90, float(self.width) / self.height, 0.1, 500)
 
-        # create modelview matrix
+		# Modelview matrix
 		self.mv_matrix.load_identity()
-		self.mv_matrix.rotate_2d(self.rotation[0] + math.tau / 4, self.rotation[1])
-		self.mv_matrix.translate(-self.position[0], -self.position[1], -self.position[2])
+		self.mv_matrix.rotate_2d(cam_rot[0] + math.tau / 4, cam_rot[1])
+		self.mv_matrix.translate(-cam_pos[0], -cam_pos[1], -cam_pos[2])
 
-        # modelviewprojection matrix
+		# Modelviewprojection matrix
 		mvp_matrix = self.mv_matrix * self.p_matrix
 		self.shader.uniform_matrix(self.shader_matrix_location, mvp_matrix)

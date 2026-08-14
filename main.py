@@ -102,6 +102,11 @@ class Window(pyglet.window.Window):
 			color=(255, 255, 255, 255)
 		)
 
+		# Steve 3D Player Model & Perspective System (F5)
+		import player_model
+		self.player_model = player_model.StevePlayerModel()
+		self.perspective = 0  # 0: First Person, 1: Third Person Back, 2: Third Person Front
+
 		# Crosshair stuff
 		self.create_crosshair()
 
@@ -179,6 +184,29 @@ class Window(pyglet.window.Window):
 				d['block_id'], d['count'], d['position'], velocity=d.get('velocity', [0,0,0])
 			)
 
+		# Restore Chest Storage Data
+		if 'chests' in w_data and w_data['chests']:
+			for key_str, slots in w_data['chests'].items():
+				parts = [int(p) for p in key_str.split(',')]
+				pos_key = (parts[0], parts[1], parts[2])
+				c_obj = world.ChestData()
+				c_obj.slots = slots
+				self.world.chests[pos_key] = c_obj
+
+		# Restore Furnace Storage & Smelting State
+		if 'furnaces' in w_data and w_data['furnaces']:
+			for key_str, f_dict in w_data['furnaces'].items():
+				parts = [int(p) for p in key_str.split(',')]
+				pos_key = (parts[0], parts[1], parts[2])
+				f_obj = world.FurnaceData()
+				f_obj.input_slot = f_dict.get('input_slot', [0, 0])
+				f_obj.fuel_slot = f_dict.get('fuel_slot', [0, 0])
+				f_obj.output_slot = f_dict.get('output_slot', [0, 0])
+				f_obj.burn_time_remaining = f_dict.get('burn_time_remaining', 0.0)
+				f_obj.max_burn_time = f_dict.get('max_burn_time', 0.0)
+				f_obj.smelt_progress = f_dict.get('smelt_progress', 0.0)
+				self.world.furnaces[pos_key] = f_obj
+
 		self._prepare_spawn_chunks()
 
 	def _prepare_spawn_chunks(self):
@@ -235,9 +263,27 @@ class Window(pyglet.window.Window):
 				for d in self.item_drop_manager.drops
 			]
 
+			chests_data = {}
+			if hasattr(self.world, 'chests'):
+				for (cx, cy, cz), chest_obj in self.world.chests.items():
+					chests_data[f"{cx},{cy},{cz}"] = chest_obj.slots
+
+			furnaces_data = {}
+			if hasattr(self.world, 'furnaces'):
+				for (fx, fy, fz), furnace_obj in self.world.furnaces.items():
+					furnaces_data[f"{fx},{fy},{fz}"] = {
+						'input_slot': furnace_obj.input_slot,
+						'fuel_slot': furnace_obj.fuel_slot,
+						'output_slot': furnace_obj.output_slot,
+						'burn_time_remaining': furnace_obj.burn_time_remaining,
+						'max_burn_time': furnace_obj.max_burn_time,
+						'smelt_progress': furnace_obj.smelt_progress
+					}
+
 			world_save.save_world(
 				self.active_world_folder, self.world_seed,
-				player_data, world_data, inventory_data, drops_data
+				player_data, world_data, inventory_data, drops_data,
+				chests_data, furnaces_data
 			)
 
 		self.mouse_captured = False
@@ -350,6 +396,16 @@ class Window(pyglet.window.Window):
 
 		# Update active world mechanics (liquids, furnaces)
 		self.world.update(delta_time)
+
+		# Update Steve player model animation
+		is_moving = any(self.camera.input) and self.mouse_captured and not self.gui.inventory_open
+		is_sneaking = getattr(self.camera, 'sneaking', False)
+		is_in_liquid = self.camera.is_in_liquid(self.world)
+		holding_item = (self.gui.get_current_block_id() != 0)
+		self.player_model.update(
+			delta_time, is_moving, self.sprinting, self.left_mouse_down,
+			sneaking=is_sneaking, in_liquid=is_in_liquid, holding_item=holding_item
+		)
 
 		# Continuous Block Breaking Physics & Progress Accumulation
 		if self.left_mouse_down and self.mouse_captured and not self.gui.inventory_open:
@@ -473,7 +529,7 @@ class Window(pyglet.window.Window):
 
 		# Bind 3D world shader FIRST before matrix updates or 3D rendering
 		self.shader.use()
-		self.camera.update_matrices()
+		self.camera.update_matrices(self.perspective, self.world)
 
 		gl.glActiveTexture(gl.GL_TEXTURE0)
 		gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
@@ -488,6 +544,10 @@ class Window(pyglet.window.Window):
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
 
+		# If 3rd Person View (Back or Front), render Steve 3D Player Model!
+		if self.perspective != 0:
+			self.player_model.render_third_person(self.camera, self.perspective, self.world)
+
 		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
 		self.item_drop_manager.draw(self.shader, self.gui)
 
@@ -496,6 +556,14 @@ class Window(pyglet.window.Window):
 		gl.glDepthMask(gl.GL_FALSE)
 		self.draw_celestial_bodies()
 		gl.glDepthMask(gl.GL_TRUE)
+
+		# If 1st Person View, render Steve's 1st Person 3D Arm using dedicated pipeline!
+		if self.perspective == 0 and self.game_state == "PLAYING" and not self.gui.inventory_open:
+			self.player_model.render_first_person_arm(
+				self.camera,
+				self.gui.get_current_block_id(),
+				self.gui.icon_textures
+			)
 
 		# 4. Render 2D UI overlays (F3 debug, crosshair, mining progress, inventory, menus)
 		self.draw_2d_overlays()
@@ -1118,6 +1186,9 @@ class Window(pyglet.window.Window):
 
 		if key == pyglet.window.key.F3:
 			self.show_debug = not self.show_debug
+
+		if key == pyglet.window.key.F5:
+			self.perspective = (self.perspective + 1) % 3
 			return
 
 		# ESC Key handling in PLAYING state

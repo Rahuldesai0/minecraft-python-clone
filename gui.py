@@ -1493,6 +1493,15 @@ class InventoryGUI:
 				sy = grid_y - r * (slot_s + pad)
 				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
 					return ("creative", idx, [b_id, 64])
+
+			hb_x = win_x + (win_w - (9 * slot_s + 8 * pad)) // 2
+			hb_y = win_y + 12
+			for i in range(9):
+				sx = hb_x + i * (slot_s + pad)
+				sy = hb_y
+				if sx <= x <= sx + slot_s and sy <= y <= sy + slot_s:
+					return ("hotbar", i, self.hotbar_slots[i])
+
 			return None
 
 		if self.crafting_mode == "single_chest" and self.active_chest1:
@@ -1878,11 +1887,22 @@ class InventoryGUI:
 			self.handle_shift_click(slot_info)
 			return True
 
-		# 2. CREATIVE PALETTE CLICKS
+		# 2. CREATIVE PALETTE & HOTBAR CLICKS
 		if self.window.flying:
 			if slot_info and slot_info[0] == "creative":
 				b_id = slot_info[2][0]
-				self.held_stack = [b_id, 64 if not is_right else 1]
+				if is_shift:
+					# Shift-click in creative: instantly place stack of 64 into active or first open hotbar slot!
+					target_idx = self.selected_slot
+					if self.hotbar_slots[target_idx][0] != 0 and self.hotbar_slots[target_idx][0] != b_id:
+						for i in range(9):
+							if self.hotbar_slots[i][0] == 0:
+								target_idx = i
+								break
+					self.hotbar_slots[target_idx] = [b_id, 64]
+					self.set_selected_slot(target_idx)
+				else:
+					self.held_stack = [b_id, 64 if not is_right else 1]
 				return True
 			elif slot_info and slot_info[0] == "hotbar":
 				idx = slot_info[1]
