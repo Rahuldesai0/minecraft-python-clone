@@ -1139,7 +1139,7 @@ class Window(pyglet.window.Window):
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
 		is_placeable = (0 < self.holding < 100)
-		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72)
+		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76)
 		DOOR_TRAPDOOR_TOGGLES = {
 			43: 44, 44: 43,  # Oak Door Bottom Closed <-> Open
 			65: 66, 66: 65,  # Oak Door Top Closed <-> Open
@@ -1149,6 +1149,7 @@ class Window(pyglet.window.Window):
 			69: 70, 70: 69,  # Oak Trapdoor Top Closed <-> Open
 			49: 50, 50: 49,  # Iron Trapdoor Bottom Closed <-> Open
 			71: 72, 72: 71,  # Iron Trapdoor Top Closed <-> Open
+			75: 76, 76: 75,  # Oak Fence Gate Closed <-> Open
 		}
 
 		def get_cardinal_dir():
@@ -1302,6 +1303,12 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(53, connections=conns)
 				self.world.set_block_state(target_pos, st)
 
+			# 11. Oak Fence Gate (75)
+			elif held_item == 75:
+				facing = block_state.LEFT_DIRECTIONS[cardinal_dir]
+				st = block_state.BlockState(75, facing=facing, open_state=False)
+				self.world.set_block_state(target_pos, st)
+
 			else:
 				self.world.set_block(target_pos, held_item)
 
@@ -1317,7 +1324,7 @@ class Window(pyglet.window.Window):
 							place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
 							return
 						else:
-							# Normal Right Click -> Toggle Doors/Trapdoors or Open GUIs
+							# Normal Right Click -> Toggle Doors/Trapdoors/Fence Gates or Open GUIs
 							if target_b in (43, 44, 45, 46, 65, 66, 67, 68):
 								st = self.world.get_block_state(next_block)
 								cur_open = st.open_state if st else (target_b in (44, 46, 66, 68))
@@ -1349,6 +1356,15 @@ class Window(pyglet.window.Window):
 									st.open_state = not st.open_state
 									if st.block_id in DOOR_TRAPDOOR_TOGGLES and (st.block_id in (48, 50, 70, 72)) != st.open_state:
 										st.block_id = DOOR_TRAPDOOR_TOGGLES[st.block_id]
+									self.world.set_block_state(next_block, st)
+								elif target_b in DOOR_TRAPDOOR_TOGGLES:
+									self.world.set_block(next_block, DOOR_TRAPDOOR_TOGGLES[target_b])
+
+							elif target_b in (75, 76):
+								st = self.world.get_block_state(next_block)
+								if st:
+									st.open_state = not st.open_state
+									st.block_id = 76 if st.open_state else 75
 									self.world.set_block_state(next_block, st)
 								elif target_b in DOOR_TRAPDOOR_TOGGLES:
 									self.world.set_block(next_block, DOOR_TRAPDOOR_TOGGLES[target_b])

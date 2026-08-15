@@ -255,10 +255,20 @@ class Camera:
 		if block_num == 0 or block_num in (9, 19, 15, 20):
 			return []
 
-		# Oak Fence (51) & Stone Wall (52) - 1.5 blocks tall collision height for jumping
+		# Oak Fence (51) & Stone Wall (52) & Closed Fence Gate (75) - 1.5 blocks tall collision height for jumping
 		if block_num in (51, 52):
 			r = 0.25 if block_num == 51 else 0.3
 			return [(block_x - r, block_y - 0.5, block_z - r, block_x + r, block_y + 1.0, block_z + r)]
+
+		if block_num in (75, 76):
+			st = world.get_block_state((block_x, block_y, block_z)) if world else None
+			gate_open = getattr(st, 'open_state', False) or (block_num == 76)
+			if not gate_open:
+				facing = getattr(st, 'facing', 'NORTH') if st else 'NORTH'
+				if facing in ('NORTH', 'SOUTH'):
+					return [(block_x - 0.5, block_y - 0.5, block_z - 0.125, block_x + 0.5, block_y + 1.0, block_z + 0.125)]
+				else:
+					return [(block_x - 0.125, block_y - 0.5, block_z - 0.5, block_x + 0.125, block_y + 1.0, block_z + 0.5)]
 
 		return block_state.get_block_hitboxes(world, (block_x, block_y, block_z), block_num)
 

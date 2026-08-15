@@ -33,6 +33,8 @@ import models.trapdoor_top_open
 import models.fence
 import models.wall
 import models.glass_pane
+import models.fence_gate
+import models.fence_gate_open
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -578,7 +580,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 				else:
 					# Non-Cube Custom Model Geometry using native 3D model definitions + BlockState parameters
-					rot_f = facing if b_num in (41, 42, 73, 74, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72) else "NORTH"
+					rot_f = facing if b_num in (41, 42, 73, 74, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72, 75, 76) else "NORTH"
 
 					if b_num in (38, 39, 40, 62, 63, 64):
 						# Slabs (Bottom, Top, Double)
@@ -634,6 +636,19 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							else:
 								add_custom_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
+					elif b_num in (75, 76):
+						# Fence Gates (Facing, Open)
+						gate_open = open_state or (b_num == 76)
+						if gate_open:
+							add_custom_box((-0.5, -0.5, -0.125), (-0.375, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((-0.5, -0.375, 0.125), (-0.375, 0.375, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((0.375, -0.375, 0.125), (0.5, 0.375, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						else:
+							add_custom_box((-0.5, -0.5, -0.125), (-0.375, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((-0.375, -0.375, -0.0625), (0.375, 0.375, 0.0625), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+
 					elif b_num in (51, 52, 53):
 						# Fences (51), Walls (52), Glass Panes (53)
 						nb_n = get_nb(local_x, local_y, local_z - 1)
@@ -645,9 +660,9 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							if conns and d_key in conns: return conns[d_key]
 							if nb == 0 or nb in (9, 19, 15, 20): return False
 							if b_num == 51:
-								return nb == 51 or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+								return nb in (51, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 52:
-								return nb in (52, 53) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+								return nb in (52, 53, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 53:
 								return nb in (53, 52) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							return False
@@ -868,9 +883,11 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_trapdoor_top_open", block_face_textures={"all": "iron_trapdoor"}, model=models.trapdoor_top_open, transparent=True, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_stairs_top", block_face_textures={"all": "planks"}, model=models.stairs_top, transparent=True, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_stairs_top", block_face_textures={"all": "cobblestone"}, model=models.stairs_top, transparent=True, break_time=1.2, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate", block_face_textures={"all": "planks"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate_open", block_face_textures={"all": "planks"}, model=models.fence_gate_open, transparent=True, break_time=0.6, requires_tool=False))
 
 		import gui
-		for item_id, item_name, tex_name in gui.TOOL_ITEMS:
+		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
 
 		self.texture_manager.add_texture("sun")

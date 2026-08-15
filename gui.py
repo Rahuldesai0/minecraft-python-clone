@@ -40,18 +40,19 @@ PALETTE_ITEMS = [
 	(12, "Dead Bush", "dead_bush"),
 	(34, "Sponge", "sponge"),
 	(37, "Chest", "chest_front"),
-	(38, "Oak Slab", "slab_side"),
-	(39, "Cobblestone Slab", "cobblestone"),
-	(40, "Stone Slab", "stone"),
-	(41, "Oak Stairs", "planks"),
-	(42, "Cobblestone Stairs", "cobblestone"),
+	(38, "Oak Slab", "items/oak_slab"),
+	(39, "Cobblestone Slab", "items/cobblestone_slab"),
+	(40, "Stone Slab", "items/stone_slab"),
+	(41, "Oak Stairs", "items/oak_stairs"),
+	(42, "Cobblestone Stairs", "items/cobblestone_stairs"),
 	(43, "Oak Door", "items/door_wood"),
 	(45, "Iron Door", "items/door_iron"),
 	(47, "Oak Trapdoor", "trapdoor"),
 	(49, "Iron Trapdoor", "iron_trapdoor"),
-	(51, "Oak Fence", "planks"),
-	(52, "Cobblestone Wall", "cobblestone"),
-	(53, "Glass Pane", "glass"),
+	(51, "Oak Fence", "items/oak_fence"),
+	(52, "Cobblestone Wall", "items/cobblestone_wall"),
+	(53, "Glass Pane", "items/glass_pane"),
+	(75, "Oak Fence Gate", "items/oak_fence_gate"),
 ]
 
 TOOL_ITEMS = [
@@ -310,6 +311,8 @@ BLOCK_MINING_PROPERTIES = {
 	72: ("pickaxe", 1, 1.5, 49),   # Iron Trapdoor Top Open -> drops Iron Trapdoor item 49
 	73: ("axe", 0, 0.6, 41),       # Oak Top Stairs -> drops Oak Stairs item 41
 	74: ("pickaxe", 1, 1.2, 42),   # Cobblestone Top Stairs -> drops Cobblestone Stairs item 42
+	75: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Closed)
+	76: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Open -> drops Closed item 75)
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -1337,6 +1340,12 @@ class InventoryGUI:
 		if h == 2 and w == 3:
 			if matrix[0][0] == 7 and matrix[0][1] == 100 and matrix[0][2] == 7 and matrix[1][0] == 7 and matrix[1][1] == 100 and matrix[1][2] == 7:
 				self.crafting_result = [51, 3]  # Oak Fence (51)
+				return
+
+		# Recipe 18: Oak Fence Gate (4 Sticks + 2 Planks in 2x3: [[100, 7, 100], [100, 7, 100]]) -> 1 Fence Gate
+		if h == 2 and w == 3:
+			if matrix[0][0] == 100 and matrix[0][1] == 7 and matrix[0][2] == 100 and matrix[1][0] == 100 and matrix[1][1] == 7 and matrix[1][2] == 100:
+				self.crafting_result = [75, 1]  # Oak Fence Gate (75)
 				return
 
 		self.crafting_result = [0, 0]

@@ -211,10 +211,10 @@ class ItemDropManager:
 							pos_data.extend(v_corners[idx])
 							tex_data.extend(t_corners[idx])
 							shd_data.append(0.9)
-				elif getattr(b_type, 'model', None) is not None and not getattr(b_type, 'is_cube', True):
-					# Actual 3D Model Geometry for Slabs, Stairs, Fences, Walls, Panes (scale 0.35)
+				elif not getattr(b_type, 'is_cube', True):
+					# Actual 3D Model Geometry for Slabs, Stairs, Fences, Walls, Panes, Fence Gates (scale 0.35)
 					scale = 0.35
-					for f_idx, face_verts in enumerate(b_type.model.vertex_positions):
+					for f_idx, face_verts in enumerate(b_type.vertex_positions):
 						raw_t = b_type.tex_coords[f_idx] if f_idx < len(b_type.tex_coords) else b_type.tex_coords[0]
 						t_corners = [
 							(raw_t[0], raw_t[1], raw_t[2]),
@@ -232,10 +232,11 @@ class ItemDropManager:
 							rz = vx * sin_r + vz * cos_r + z
 							v_corners.append((rx, ry, rz))
 
+						s_val = b_type.shading_values[f_idx][0] if f_idx < len(b_type.shading_values) else 0.9
 						for idx in (0, 1, 2, 0, 2, 3):
 							pos_data.extend(v_corners[idx])
 							tex_data.extend(t_corners[idx])
-							shd_data.append(0.9)
+							shd_data.append(s_val)
 				else:
 					# 3D Mini Cube for Standard Block Items
 					for face_i, f_idx in enumerate(face_map):

@@ -10,6 +10,7 @@ class Block_type:
 		# create members based on model attributes
 
 		self.transparent = transparent
+		self.model = model
 		self.is_cube = model.is_cube
 		self.translucent = getattr(model, "translucent", False)
 

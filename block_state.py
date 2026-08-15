@@ -116,9 +116,8 @@ def calculate_stair_shape(world, pos, facing, half):
 
 def is_connectable_fence(nb_b, my_b, world_info):
 	if nb_b == 0 or nb_b in (9, 19, 15, 20): return False
-	if nb_b == my_b: return True
-	if my_b == 51 and nb_b == 51: return True
-	if my_b == 52 and nb_b in (52, 53): return True
+	if my_b == 51 and nb_b in (51, 75, 76): return True
+	if my_b == 52 and nb_b in (52, 53, 75, 76): return True
 	if my_b == 53 and nb_b in (53, 52): return True
 	info = world_info.get(nb_b, {})
 	return info.get("is_cube", False) and not info.get("transparent", False)
@@ -427,6 +426,21 @@ def get_block_hitboxes(world, pos, block_num):
 				(bx - 0.0625, by - 0.5, bz - 0.5, bx + 0.0625, by + 0.5, bz + 0.5)
 			]
 		return boxes
+
+	# 8. Fence Gates (75, 76)
+	if block_num in (75, 76):
+		gate_open = open_state or (block_num == 76)
+		if gate_open:
+			return [
+				rotate_box((-0.5, -0.5, -0.125), (-0.375, 0.5, 0.5), facing),
+				rotate_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.5), facing)
+			]
+		else:
+			return [
+				rotate_box((-0.5, -0.5, -0.125), (-0.375, 0.5, 0.125), facing),
+				rotate_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), facing),
+				rotate_box((-0.375, -0.375, -0.0625), (0.375, 0.375, 0.0625), facing)
+			]
 
 	# Standard Full Cube
 	return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
