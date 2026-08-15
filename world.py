@@ -37,16 +37,19 @@ import models.glass_pane
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
 
-def _generate_ring_offsets(max_rd):
-	offsets = []
-	for dx in range(-max_rd, max_rd + 1):
-		for dz in range(-max_rd, max_rd + 1):
-			dist_sq = dx * dx + dz * dz
-			offsets.append((dist_sq, dx, dz))
-	offsets.sort(key=lambda item: item[0])
-	return [(dx, dz) for _, dx, dz in offsets]
+_RING_OFFSETS_CACHE = {}
 
-RING_OFFSETS = _generate_ring_offsets(MAX_RENDER_DISTANCE)
+def get_ring_offsets(rd):
+	if rd not in _RING_OFFSETS_CACHE:
+		offsets = []
+		for dx in range(-rd, rd + 1):
+			for dz in range(-rd, rd + 1):
+				offsets.append((dx * dx + dz * dz, dx, dz))
+		offsets.sort(key=lambda item: item[0])
+		_RING_OFFSETS_CACHE[rd] = [(dx, dz) for _, dx, dz in offsets]
+	return _RING_OFFSETS_CACHE[rd]
+
+RING_OFFSETS = get_ring_offsets(MAX_RENDER_DISTANCE)
 
 
 def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, cave_scale, cave_threshold, save_dir, seed=0):
@@ -890,8 +893,8 @@ class World:
 
 		os.makedirs(self.save_dir, exist_ok=True)
 
-		# Multithreaded Executor (4 Workers) for in-memory Terrain Generation & Section Meshing without IPC pickling overhead
-		self.process_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ChunkWorker")
+		# Multithreaded Executor (3 Workers) balanced to eliminate GIL contention with main Pyglet render loop
+		self.process_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ChunkWorker")
 		self.chunk_generation_futures = {}
 		self.section_mesh_futures = {}
 
@@ -998,20 +1001,16 @@ class World:
 		if c_pos not in self.chunks:
 			return
 		chk = self.chunks[c_pos]
+		blocks = chk.blocks
 		for sy in range(16):
 			min_y = sy * 16
-			# Skip all-air sections instantly
+			# Fast slice check over 16 columns (microseconds instead of 4096 iterations)
 			has_blocks = False
-			for y in range(min_y, min_y + 16):
-				base_y = y * 16
-				for x in range(16):
-					base_xy = x * 4096 + base_y
-					for z in range(16):
-						if chk.blocks[base_xy + z] != 0:
-							has_blocks = True
-							break
-					if has_blocks: break
-				if has_blocks: break
+			for x in range(16):
+				start_idx = x * 4096 + min_y * 16
+				if any(blocks[start_idx : start_idx + 256]):
+					has_blocks = True
+					break
 
 			if has_blocks:
 				self.section_mesh_queue.add((cx, cz, sy))
@@ -1036,8 +1035,8 @@ class World:
 				except Exception as e:
 					print(f"Section mesh task failed for {sec_key}: {e}")
 
-		# 2. Budgeted GPU Uploads (capped at 64 KB per frame tick)
-		MAX_GPU_UPLOAD_BYTES_PER_FRAME = 64 * 1024
+		# 2. Budgeted GPU Uploads (capped at 32 KB per frame tick for smooth 60 FPS)
+		MAX_GPU_UPLOAD_BYTES_PER_FRAME = 32 * 1024
 		uploaded_bytes = 0
 
 		if self.pending_section_uploads:
@@ -1069,9 +1068,9 @@ class World:
 
 			uploaded_bytes += max(1024, sec_bytes)
 
-		# 3. Submit pending section meshing tasks (max 4 active workers)
-		if len(self.section_mesh_futures) < 4 and self.section_mesh_queue:
-			slots_free = 4 - len(self.section_mesh_futures)
+		# 3. Submit pending section meshing tasks (max 2 active workers to prevent GIL contention)
+		if len(self.section_mesh_futures) < 2 and self.section_mesh_queue:
+			slots_free = 2 - len(self.section_mesh_futures)
 			pending_list = list(self.section_mesh_queue)
 			if len(pending_list) > 1:
 				def mesh_priority(item):
@@ -1098,13 +1097,13 @@ class World:
 					continue
 
 				center_chk = self.chunks[c_pos]
-				c_bytes = bytes(center_chk.blocks)
-				c_states = { f"{lx},{ly},{lz}": st.to_dict() for (lx, ly, lz), st in center_chk.block_states.items() if st }
+				c_bytes = center_chk.blocks
+				c_states = { f"{lx},{ly},{lz}": st.to_dict() for (lx, ly, lz), st in center_chk.block_states.items() if st } if center_chk.block_states else None
 
-				e_bytes = bytes(self.chunks[(cx + 1, 0, cz)].blocks) if (cx + 1, 0, cz) in self.chunks else None
-				w_bytes = bytes(self.chunks[(cx - 1, 0, cz)].blocks) if (cx - 1, 0, cz) in self.chunks else None
-				s_bytes = bytes(self.chunks[(cx, 0, cz + 1)].blocks) if (cx, 0, cz + 1) in self.chunks else None
-				n_bytes = bytes(self.chunks[(cx, 0, cz - 1)].blocks) if (cx, 0, cz - 1) in self.chunks else None
+				e_bytes = self.chunks[(cx + 1, 0, cz)].blocks if (cx + 1, 0, cz) in self.chunks else None
+				w_bytes = self.chunks[(cx - 1, 0, cz)].blocks if (cx - 1, 0, cz) in self.chunks else None
+				s_bytes = self.chunks[(cx, 0, cz + 1)].blocks if (cx, 0, cz + 1) in self.chunks else None
+				n_bytes = self.chunks[(cx, 0, cz - 1)].blocks if (cx, 0, cz - 1) in self.chunks else None
 
 				self.section_mesh_futures[(cx, cz, sy)] = self.process_executor.submit(
 					build_section_mesh_process,
@@ -1465,7 +1464,7 @@ class World:
 				return
 
 			if max(abs(chunk_position[0] - player_cx), abs(chunk_position[2] - player_cz)) > self.unload_distance:
-				return
+				continue
 
 			if b"|STATE_DATA|" in raw_data:
 				parts = raw_data.split(b"|STATE_DATA|")
@@ -1490,11 +1489,14 @@ class World:
 			self.chunks[chunk_position] = chk
 			self.queue_chunk_sections_for_meshing(chunk_position[0], chunk_position[2])
 
-			# Trigger border section re-meshing for adjacent loaded neighbors
+			# Trigger border section re-meshing ONLY for neighbors that were missing this chunk
 			cx, _, cz = chunk_position
 			for nx, nz in [(cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)]:
-				if (nx, 0, nz) in self.chunks:
-					self.queue_chunk_sections_for_meshing(nx, nz)
+				n_pos = (nx, 0, nz)
+				if n_pos in self.chunks:
+					n_chk = self.chunks[n_pos]
+					if n_chk.had_missing_neighbors:
+						self.queue_chunk_sections_for_meshing(nx, nz)
 			return  # 1 chunk per frame max to guarantee O(1) main-thread execution time
 
 	def _rebuild_load_queue(self, player_cx, player_cz):
@@ -1503,25 +1505,24 @@ class World:
 		futures = self.chunk_generation_futures
 
 		queue = []
-		for dx, dz in RING_OFFSETS:
-			if max(abs(dx), abs(dz)) > rd:
-				continue
+		for dx, dz in get_ring_offsets(rd):
 			c_pos = (player_cx + dx, 0, player_cz + dz)
 			if c_pos not in chunks and c_pos not in futures:
 				queue.append(c_pos)
 		self._load_queue = queue
 
 	def _submit_generations(self):
-		while self._load_queue and len(self.chunk_generation_futures) < 2:
-			chunk_pos = self._load_queue.pop(0)
-			if chunk_pos in self.chunks or chunk_pos in self.chunk_generation_futures:
-				continue
-			self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
-				build_chunk_blocks_process,
-				chunk_pos[0], chunk_pos[2],
-				self.scale, self.octaves, self.persistence, self.lacunarity,
-				self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
-			return
+		if self._load_queue and len(self.chunk_generation_futures) < 1:
+			while self._load_queue:
+				chunk_pos = self._load_queue.pop(0)
+				if chunk_pos in self.chunks or chunk_pos in self.chunk_generation_futures:
+					continue
+				self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
+					build_chunk_blocks_process,
+					chunk_pos[0], chunk_pos[2],
+					self.scale, self.octaves, self.persistence, self.lacunarity,
+					self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
+				return
 
 	def update_chunks(self, player_position):
 		player_cx = math.floor(player_position[0] / chunk.CHUNK_WIDTH)
