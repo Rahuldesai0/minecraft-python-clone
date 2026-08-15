@@ -40,6 +40,18 @@ PALETTE_ITEMS = [
 	(12, "Dead Bush", "dead_bush"),
 	(34, "Sponge", "sponge"),
 	(37, "Chest", "chest_front"),
+	(38, "Oak Slab", "slab_side"),
+	(39, "Cobblestone Slab", "cobblestone"),
+	(40, "Stone Slab", "stone"),
+	(41, "Oak Stairs", "planks"),
+	(42, "Cobblestone Stairs", "cobblestone"),
+	(43, "Oak Door", "items/door_wood"),
+	(45, "Iron Door", "items/door_iron"),
+	(47, "Oak Trapdoor", "trapdoor"),
+	(49, "Iron Trapdoor", "iron_trapdoor"),
+	(51, "Oak Fence", "planks"),
+	(52, "Cobblestone Wall", "cobblestone"),
+	(53, "Glass Pane", "glass"),
 ]
 
 TOOL_ITEMS = [
@@ -259,6 +271,45 @@ BLOCK_MINING_PROPERTIES = {
 	35: ("pickaxe", 3, 2.5, 35),   # Gold Ore -> drops Gold Ore block (35)
 	36: ("pickaxe", 3, 2.5, 36),   # Redstone Ore (Requires Iron Pickaxe+)
 	37: ("axe", 0, 1.5, 37),       # Chest
+	# Non-Cube Blocks (38-53)
+	38: ("axe", 0, 0.4, 38),       # Oak Slab
+	39: ("pickaxe", 1, 1.0, 39),   # Cobblestone Slab
+	40: ("pickaxe", 1, 1.0, 40),   # Stone Slab
+	41: ("axe", 0, 0.6, 41),       # Oak Stairs
+	42: ("pickaxe", 1, 1.2, 42),   # Cobblestone Stairs
+	43: ("axe", 0, 0.6, 43),       # Oak Door (Closed)
+	44: ("axe", 0, 0.6, 43),       # Oak Door (Open drops Closed item 43)
+	45: ("pickaxe", 1, 1.5, 45),   # Iron Door (Closed)
+	46: ("pickaxe", 1, 1.5, 45),   # Iron Door (Open drops Closed item 45)
+	47: ("axe", 0, 0.6, 47),       # Oak Trapdoor (Closed)
+	48: ("axe", 0, 0.6, 47),       # Oak Trapdoor (Open drops Closed item 47)
+	49: ("pickaxe", 1, 1.5, 49),   # Iron Trapdoor (Closed)
+	50: ("pickaxe", 1, 1.5, 49),   # Iron Trapdoor (Open drops Closed item 49)
+	51: ("axe", 0, 0.6, 51),       # Oak Fence
+	52: ("pickaxe", 1, 1.2, 52),   # Cobblestone Wall
+	53: (None, 0, 0.2, 53),        # Glass Pane
+	# Block State Variations (54-74)
+	54: ("pickaxe", 1, 2.2, 27),   # Furnace South -> drops Furnace item 27
+	55: ("pickaxe", 1, 2.2, 27),   # Furnace West -> drops Furnace item 27
+	56: ("pickaxe", 1, 2.2, 27),   # Furnace East -> drops Furnace item 27
+	57: ("axe", 0, 1.5, 37),       # Chest South -> drops Chest item 37
+	58: ("axe", 0, 1.5, 37),       # Chest West -> drops Chest item 37
+	59: ("axe", 0, 1.5, 37),       # Chest East -> drops Chest item 37
+	60: ("axe", 0, 1.5, 8),        # Log X-Axis -> drops Log item 8
+	61: ("axe", 0, 1.5, 8),        # Log Z-Axis -> drops Log item 8
+	62: ("axe", 0, 0.4, 38),       # Oak Top Slab -> drops Oak Slab item 38
+	63: ("pickaxe", 1, 1.0, 39),   # Cobblestone Top Slab -> drops Cobblestone Slab item 39
+	64: ("pickaxe", 1, 1.0, 40),   # Stone Top Slab -> drops Stone Slab item 40
+	65: ("axe", 0, 0.6, 43),       # Oak Door Top -> drops Oak Door item 43
+	66: ("axe", 0, 0.6, 43),       # Oak Door Top Open -> drops Oak Door item 43
+	67: ("pickaxe", 1, 1.5, 45),   # Iron Door Top -> drops Iron Door item 45
+	68: ("pickaxe", 1, 1.5, 45),   # Iron Door Top Open -> drops Iron Door item 45
+	69: ("axe", 0, 0.6, 47),       # Oak Trapdoor Top -> drops Oak Trapdoor item 47
+	70: ("axe", 0, 0.6, 47),       # Oak Trapdoor Top Open -> drops Oak Trapdoor item 47
+	71: ("pickaxe", 1, 1.5, 49),   # Iron Trapdoor Top -> drops Iron Trapdoor item 49
+	72: ("pickaxe", 1, 1.5, 49),   # Iron Trapdoor Top Open -> drops Iron Trapdoor item 49
+	73: ("axe", 0, 0.6, 41),       # Oak Top Stairs -> drops Oak Stairs item 41
+	74: ("pickaxe", 1, 1.2, 42),   # Cobblestone Top Stairs -> drops Cobblestone Stairs item 42
 }
 
 def draw_bordered_box(x, y, width, height, border, bg_color, border_color):
@@ -401,6 +452,8 @@ class InventoryGUI:
 	def reset_inventory(self):
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
 		self.survival_inventory = [[0, 0] for _ in range(27)]
+		self.armor_slots = [[0, 0] for _ in range(4)]
+		self.creative_hotbar = [[2, 64], [4, 64], [5, 64], [1, 64], [7, 64], [8, 64], [6, 64], [21, 64], [9, 64]]
 		self.crafting_grid_2x2 = [[0, 0] for _ in range(4)]
 		self.crafting_grid_3x3 = [[0, 0] for _ in range(9)]
 		self.crafting_result = [0, 0]
@@ -417,6 +470,9 @@ class InventoryGUI:
 		self.drag_slot_snapshots.clear()
 		self.last_left_click_time = 0.0
 		self.inventory_open = False
+		self.creative_search_text = ""
+		self.creative_scroll_row = 0
+		self.creative_search_focused = False
 
 	@property
 	def active_crafting_grid(self):
@@ -596,6 +652,7 @@ class InventoryGUI:
 		return {
 			'hotbar': [list(slot) for slot in self.survival_hotbar],
 			'inventory': [list(slot) for slot in self.survival_inventory],
+			'creative_hotbar': [list(slot) for slot in self.creative_hotbar],
 			'armor_slots': [list(slot) for slot in self.armor_slots],
 			'crafting_grid_2x2': [list(slot) for slot in self.crafting_grid_2x2],
 			'crafting_grid_3x3': [list(slot) for slot in self.crafting_grid_3x3],
@@ -610,6 +667,8 @@ class InventoryGUI:
 			self.survival_hotbar = [list(slot) for slot in data['hotbar']]
 		if 'inventory' in data:
 			self.survival_inventory = [list(slot) for slot in data['inventory']]
+		if 'creative_hotbar' in data:
+			self.creative_hotbar = [list(slot) for slot in data['creative_hotbar']]
 		if 'armor_slots' in data:
 			self.armor_slots = [list(slot) for slot in data['armor_slots']]
 		if 'crafting_grid_2x2' in data:
@@ -1173,6 +1232,43 @@ class InventoryGUI:
 				if m0 in (124, 35, 28): self.crafting_result = [136, 1]; return  # Golden Leggings
 				if m0 in (123, 17, 29): self.crafting_result = [140, 1]; return  # Iron Leggings
 				if m0 in (122, 18, 30): self.crafting_result = [144, 1]; return  # Diamond Leggings
+
+		# Recipe 13: Slabs (3 horizontal materials: [[M, M, M]]) -> 6 Slabs
+		if h == 1 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2]:
+				if m0 == 7: self.crafting_result = [38, 6]; return   # Oak Slab (38)
+				if m0 == 1: self.crafting_result = [39, 6]; return   # Cobblestone Slab (39)
+				if m0 == 5: self.crafting_result = [40, 6]; return   # Stone Slab (40)
+
+		# Recipe 14: Stairs (6 materials in 3x3 stair shape: [[M, 0, 0], [M, M, 0], [M, M, M]]) -> 4 Stairs
+		if h == 3 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[1][0] == matrix[1][1] == matrix[2][0] == matrix[2][1] == matrix[2][2] and matrix[0][1] == 0 and matrix[0][2] == 0 and matrix[1][2] == 0:
+				if m0 == 7: self.crafting_result = [41, 4]; return   # Oak Stairs (41)
+				if m0 == 1: self.crafting_result = [42, 4]; return   # Cobblestone Stairs (42)
+
+		# Recipe 15: Doors (6 materials in 2x3 vertical rectangle: [[M, M], [M, M], [M, M]]) -> 3 Doors
+		if h == 3 and w == 2:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[0][1] == matrix[1][0] == matrix[1][1] == matrix[2][0] == matrix[2][1]:
+				if m0 == 7: self.crafting_result = [43, 3]; return   # Oak Door (43)
+				if m0 in (123, 17, 29): self.crafting_result = [45, 3]; return  # Iron Door (45)
+
+		# Recipe 16: Trapdoors (6 materials in 2x3 horizontal rectangle: [[M, M, M], [M, M, M]]) -> 2 Trapdoors
+		if h == 2 and w == 3:
+			m0 = matrix[0][0]
+			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] == matrix[1][0] == matrix[1][1] == matrix[1][2]:
+				if m0 == 7: self.crafting_result = [47, 2]; return   # Oak Trapdoor (47)
+				if m0 in (123, 17, 29): self.crafting_result = [49, 2]; return  # Iron Trapdoor (49)
+				if m0 == 1: self.crafting_result = [52, 6]; return   # Cobblestone Wall (52)
+				if m0 == 21: self.crafting_result = [53, 16]; return # Glass Pane (53)
+
+		# Recipe 17: Oak Fence (4 Planks + 2 Sticks in 2x3: [[7, 100, 7], [7, 100, 7]]) -> 3 Fences
+		if h == 2 and w == 3:
+			if matrix[0][0] == 7 and matrix[0][1] == 100 and matrix[0][2] == 7 and matrix[1][0] == 7 and matrix[1][1] == 100 and matrix[1][2] == 7:
+				self.crafting_result = [51, 3]  # Oak Fence (51)
+				return
 
 		self.crafting_result = [0, 0]
 

@@ -191,30 +191,74 @@ class ItemDropManager:
 			b_num = drop.block_id
 
 			if 0 < b_num < len(self.world.block_types) and self.world.block_types[b_num] is not None:
-				# 1. 3D Mini Cube for Block Items
 				b_type = self.world.block_types[b_num]
-				for face_i, f_idx in enumerate(face_map):
-					raw_t = b_type.tex_coords[f_idx] if f_idx < len(b_type.tex_coords) else b_type.tex_coords[0]
-					t_corners = [
-						(raw_t[0], raw_t[1], raw_t[2]),
-						(raw_t[3], raw_t[4], raw_t[5]),
-						(raw_t[6], raw_t[7], raw_t[8]),
-						(raw_t[9], raw_t[10], raw_t[11])
-					]
-					s_corners = self.cube_shading[face_i]
+				if b_num in (43, 45, 47, 49):
+					# 2D Item Sprite Card for Doors & Trapdoors
+					tex_name = "items/door_wood" if b_num == 43 else ("items/door_iron" if b_num == 45 else ("trapdoor" if b_num == 47 else "iron_trapdoor"))
+					layer = float(self.world.texture_manager.textures.index(tex_name)) if tex_name in self.world.texture_manager.textures else 0.0
+					uv_maps = [self.flat_uv_front, self.flat_uv_back]
+					for q_i, face_verts in enumerate(self.raw_flat_sprite):
+						v_corners = []
+						for vx, vy, vz in face_verts:
+							rx = vx * cos_r - vz * sin_r + x
+							ry = vy + y_pos
+							rz = vx * sin_r + vz * cos_r + z
+							v_corners.append((rx, ry, rz))
 
-					v_corners = []
-					for vx, vy, vz in self.raw_cube[face_i]:
-						rx = vx * cos_r - vz * sin_r + x
-						ry = vy + y_pos
-						rz = vx * sin_r + vz * cos_r + z
-						v_corners.append((rx, ry, rz))
+						uv_set = uv_maps[q_i]
+						t_corners = [(uv_set[k][0], uv_set[k][1], layer) for k in range(4)]
+						for idx in (0, 1, 2, 0, 2, 3):
+							pos_data.extend(v_corners[idx])
+							tex_data.extend(t_corners[idx])
+							shd_data.append(0.9)
+				elif getattr(b_type, 'model', None) is not None and not getattr(b_type, 'is_cube', True):
+					# Actual 3D Model Geometry for Slabs, Stairs, Fences, Walls, Panes (scale 0.35)
+					scale = 0.35
+					for f_idx, face_verts in enumerate(b_type.model.vertex_positions):
+						raw_t = b_type.tex_coords[f_idx] if f_idx < len(b_type.tex_coords) else b_type.tex_coords[0]
+						t_corners = [
+							(raw_t[0], raw_t[1], raw_t[2]),
+							(raw_t[3], raw_t[4], raw_t[5]),
+							(raw_t[6], raw_t[7], raw_t[8]),
+							(raw_t[9], raw_t[10], raw_t[11])
+						]
+						v_corners = []
+						for v_i in range(4):
+							vx = face_verts[v_i * 3 + 0] * scale
+							vy = face_verts[v_i * 3 + 1] * scale
+							vz = face_verts[v_i * 3 + 2] * scale
+							rx = vx * cos_r - vz * sin_r + x
+							ry = vy + y_pos
+							rz = vx * sin_r + vz * cos_r + z
+							v_corners.append((rx, ry, rz))
 
-					# Render 2 triangles per quad face (0, 1, 2) and (0, 2, 3)
-					for idx in (0, 1, 2, 0, 2, 3):
-						pos_data.extend(v_corners[idx])
-						tex_data.extend(t_corners[idx])
-						shd_data.append(s_corners[idx])
+						for idx in (0, 1, 2, 0, 2, 3):
+							pos_data.extend(v_corners[idx])
+							tex_data.extend(t_corners[idx])
+							shd_data.append(0.9)
+				else:
+					# 3D Mini Cube for Standard Block Items
+					for face_i, f_idx in enumerate(face_map):
+						raw_t = b_type.tex_coords[f_idx] if f_idx < len(b_type.tex_coords) else b_type.tex_coords[0]
+						t_corners = [
+							(raw_t[0], raw_t[1], raw_t[2]),
+							(raw_t[3], raw_t[4], raw_t[5]),
+							(raw_t[6], raw_t[7], raw_t[8]),
+							(raw_t[9], raw_t[10], raw_t[11])
+						]
+						s_corners = self.cube_shading[face_i]
+
+						v_corners = []
+						for vx, vy, vz in self.raw_cube[face_i]:
+							rx = vx * cos_r - vz * sin_r + x
+							ry = vy + y_pos
+							rz = vx * sin_r + vz * cos_r + z
+							v_corners.append((rx, ry, rz))
+
+						for idx in (0, 1, 2, 0, 2, 3):
+							pos_data.extend(v_corners[idx])
+							tex_data.extend(t_corners[idx])
+							shd_data.append(s_corners[idx])
 			else:
 				# 2. 2D Item Sprite Card for Tool Items
 				if b_num in gui_module.BLOCK_INFO:

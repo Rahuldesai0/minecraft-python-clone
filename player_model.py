@@ -717,7 +717,7 @@ class StevePlayerModel:
 		hand_y = arm_center[1] + 0.18
 		hand_z = arm_center[2] - 0.20
 
-		is_tool = (held_block_id >= 100)
+		is_tool = (held_block_id >= 100 or held_block_id in (43, 45, 47, 49))
 
 		if is_tool:
 			# Tool Item (e.g. Pickaxe, Shovel, Axe, Sword, Stick, Ingot)

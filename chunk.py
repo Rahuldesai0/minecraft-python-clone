@@ -149,6 +149,7 @@ class Chunk:
 			self.blocks = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
 
 		self.sections = {}
+		self.block_states = {}
 		self.active_opaque_sections = []
 		self.active_translucent_sections = []
 		self.had_missing_neighbors = False
@@ -161,6 +162,23 @@ class Chunk:
 	def set_block_number(self, x, y, z, val):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
 			self.blocks[x * 4096 + y * 16 + z] = val
+			if val == 0 and (x, y, z) in self.block_states:
+				del self.block_states[(x, y, z)]
+
+	def get_block_state(self, x, y, z):
+		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
+			return self.block_states.get((x, y, z))
+		return None
+
+	def set_block_state(self, x, y, z, state):
+		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
+			if state is None:
+				self.blocks[x * 4096 + y * 16 + z] = 0
+				if (x, y, z) in self.block_states:
+					del self.block_states[(x, y, z)]
+			else:
+				self.blocks[x * 4096 + y * 16 + z] = state.block_id
+				self.block_states[(x, y, z)] = state
 
 	def _update_active_sections(self):
 		self.active_opaque_sections = [sec for sec in self.sections.values() if sec.opaque_indices_length > 0]

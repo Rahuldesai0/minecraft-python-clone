@@ -249,6 +249,103 @@ class Camera:
 		if self.check_collision(world, [self.position[0], self.position[1], next_position[2]]):
 			self.position[2] = next_position[2]
 
+	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
+		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
+		if block_num == 0 or block_num in (9, 19, 15, 20):
+			return []
+
+		st = world.get_block_state((block_x, block_y, block_z)) if world else None
+		facing = getattr(st, 'facing', 'NORTH') if st else 'NORTH'
+		half = getattr(st, 'half', 'BOTTOM') if st else 'BOTTOM'
+		shape = getattr(st, 'shape', 'STRAIGHT') if st else 'STRAIGHT'
+		hinge = getattr(st, 'hinge', 'LEFT') if st else 'LEFT'
+		open_state = getattr(st, 'open_state', False) if st else False
+
+		def rotate_box(min_pt, max_pt, rot_facing):
+			def rot(p):
+				vx, vy, vz = p
+				if rot_facing == "EAST": return (-vz, vy, vx)
+				elif rot_facing == "SOUTH": return (-vx, vy, -vz)
+				elif rot_facing == "WEST": return (vz, vy, -vx)
+				return (vx, vy, vz)
+
+			p1 = rot((min_pt[0], min_pt[1], min_pt[2]))
+			p2 = rot((max_pt[0], max_pt[1], max_pt[2]))
+			return (
+				block_x + min(p1[0], p2[0]),
+				block_y + min(p1[1], p2[1]),
+				block_z + min(p1[2], p2[2]),
+				block_x + max(p1[0], p2[0]),
+				block_y + max(p1[1], p2[1]),
+				block_z + max(p1[2], p2[2])
+			)
+
+		# Slabs (38: Oak, 39: Cobblestone, 40: Stone, 62, 63, 64)
+		if block_num in (38, 39, 40, 62, 63, 64):
+			sl_h = "TOP" if block_num in (62, 63, 64) else half
+			if sl_h == "DOUBLE":
+				return [(block_x - 0.5, block_y - 0.5, block_z - 0.5, block_x + 0.5, block_y + 0.5, block_z + 0.5)]
+			elif sl_h == "TOP":
+				return [(block_x - 0.5, block_y, block_z - 0.5, block_x + 0.5, block_y + 0.5, block_z + 0.5)]
+			else:
+				return [(block_x - 0.5, block_y - 0.5, block_z - 0.5, block_x + 0.5, block_y, block_z + 0.5)]
+
+		# Doors (Bottom: 43, 44, 45, 46; Top: 65, 66, 67, 68)
+		if block_num in (43, 44, 45, 46, 65, 66, 67, 68):
+			d_open = open_state or (block_num in (44, 46, 66, 68))
+			if d_open:
+				if hinge == "RIGHT":
+					return [rotate_box((0.3125, -0.5, -0.5), (0.5, 0.5, 0.5), facing)]
+				else:
+					return [rotate_box((-0.5, -0.5, -0.5), (-0.3125, 0.5, 0.5), facing)]
+			else:
+				return [rotate_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), facing)]
+
+		# Trapdoors (47, 48, 49, 50, 69, 70, 71, 72)
+		if block_num in (47, 48, 49, 50, 69, 70, 71, 72):
+			is_top = block_num in (69, 70, 71, 72) or half == "TOP"
+			td_open = open_state or (block_num in (48, 50, 70, 72))
+			if td_open:
+				return [rotate_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), facing)]
+			else:
+				if is_top:
+					return [rotate_box((-0.5, 0.3125, -0.5), (0.5, 0.5, 0.5), facing)]
+				else:
+					return [rotate_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), facing)]
+
+		# Oak Fence (51) & Stone Wall (52) - 1.5 blocks tall collision height!
+		if block_num in (51, 52):
+			r = 0.25 if block_num == 51 else 0.3
+			return [(block_x - r, block_y - 0.5, block_z - r, block_x + r, block_y + 1.0, block_z + r)]
+
+		# Glass Pane (53)
+		if block_num == 53:
+			return [(block_x - 0.1, block_y - 0.5, block_z - 0.5, block_x + 0.1, block_y + 0.5, block_z + 0.5)]
+
+		# Stairs (41, 42, 73, 74)
+		if block_num in (41, 42, 73, 74):
+			is_top_stair = (block_num in (73, 74) or half in ("TOP", "UPPER"))
+			y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
+			y_step_min, y_step_max = (-0.5, 0.0) if is_top_stair else (0.0, 0.5)
+
+			boxes = [rotate_box((-0.5, y_base_min, -0.5), (0.5, y_base_max, 0.5), facing)]
+			if shape == "INNER_LEFT":
+				boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+				boxes.append(rotate_box((-0.5, y_step_min, 0.0), (0.0, y_step_max, 0.5), facing))
+			elif shape == "INNER_RIGHT":
+				boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+				boxes.append(rotate_box((0.0, y_step_min, 0.0), (0.5, y_step_max, 0.5), facing))
+			elif shape == "OUTER_LEFT":
+				boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.0, y_step_max, 0.0), facing))
+			elif shape == "OUTER_RIGHT":
+				boxes.append(rotate_box((0.0, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+			else:
+				boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+			return boxes
+
+		# Standard Full Cube
+		return [(block_x - 0.5, block_y - 0.5, block_z - 0.5, block_x + 0.5, block_y + 0.5, block_z + 0.5)]
+
 	def check_collision(self, world, position):
 		"""Return True when the camera's player body is unobstructed.
 		Liquid blocks (water & lava) are passable and do not cause collision.
@@ -276,11 +373,15 @@ class Camera:
 		max_bz = round(body_max_z - epsilon)
 
 		for block_x in range(min_bx, max_bx + 1):
-			for block_y in range(min_by, max_by + 1):
+			for block_y in range(min_by - 1, max_by + 2):
 				for block_z in range(min_bz, max_bz + 1):
 					block_num = world.get_block_number((block_x, block_y, block_z))
-					if block_num != 0 and block_num not in (9, 19, 15, 20):
-						return False
+					boxes = self.get_block_boxes(block_x, block_y, block_z, block_num, world=world)
+					for min_x, min_y, min_z, max_x, max_y, max_z in boxes:
+						if (body_min_x < max_x and body_max_x > min_x and
+							body_min_y < max_y and body_max_y > min_y and
+							body_min_z < max_z and body_max_z > min_z):
+							return False
 		return True
 
 	def intersects_player(self, block_position):

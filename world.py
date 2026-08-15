@@ -19,6 +19,20 @@ import models.leaves
 import models.liquid
 import models.plant
 import models.cactus
+import models.slab
+import models.stairs
+import models.stairs_top
+import models.door
+import models.door_open
+import models.door_top
+import models.door_top_open
+import models.trapdoor
+import models.trapdoor_open
+import models.trapdoor_top
+import models.trapdoor_top_open
+import models.fence
+import models.wall
+import models.glass_pane
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -43,7 +57,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		try:
 			with gzip.open(save_path, 'rb') as f:
 				data = f.read()
-			if len(data) == chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
 				return data
 		except Exception:
 			pass
@@ -282,13 +296,13 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	return bytes(flat_bytes)
 
 
-def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None):
+def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None):
 	"""Standalone worker function for ProcessPoolExecutor.
 	Meshes a single 16x16x16 vertical section of a chunk with 100% process pool isolation (zero GIL contention)."""
 	min_y = section_y * 16
 	max_y = min_y + 16
 
-	# 1. Quick all-air check (runs in 0.001ms)
+	# 1. Quick all-air check
 	all_air = True
 	for y in range(min_y, max_y):
 		base_y = y * 16
@@ -403,10 +417,70 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 				h_scale = get_liquid_h(local_x, local_y, local_z, is_water) if is_liquid else 1.0
 
-				def add_face(face, is_trans):
+				st_dict = center_states.get(f"{local_x},{local_y},{local_z}") if center_states else None
+				facing = st_dict.get('f', 'NORTH') if st_dict else 'NORTH'
+				half = st_dict.get('h', 'LOWER') if st_dict else 'LOWER'
+				hinge = st_dict.get('hg', 'LEFT') if st_dict else 'LEFT'
+				open_state = st_dict.get('o', False) if st_dict else False
+				shape = st_dict.get('s', 'STRAIGHT') if st_dict else 'STRAIGHT'
+				axis = st_dict.get('a', 'Y') if st_dict else 'Y'
+				conns = st_dict.get('c', {}) if st_dict else {}
+
+				LEFT_DIRECTIONS = {"NORTH": "WEST", "SOUTH": "EAST", "WEST": "SOUTH", "EAST": "NORTH"}
+				RIGHT_DIRECTIONS = {"NORTH": "EAST", "SOUTH": "WEST", "WEST": "NORTH", "EAST": "SOUTH"}
+
+				def rotate_pt(vx, vy, vz, rot_facing):
+					if rot_facing == "EAST": return (-vz, vy, vx)
+					elif rot_facing == "SOUTH": return (-vx, vy, -vz)
+					elif rot_facing == "WEST": return (vz, vy, -vx)
+					return (vx, vy, vz)
+
+				def add_custom_box(min_pt, max_pt, face_tex_indices, rot_facing="NORTH"):
+					nonlocal opaque_vert_count, trans_vert_count
+					pos_arr = trans_pos if is_translucent else opaque_pos
+					idx_arr = trans_idx if is_translucent else opaque_idx
+					x1, y1, z1 = min_pt
+					x2, y2, z2 = max_pt
+
+					# 6 Quad Faces: Right (+X), Left (-X), Top (+Y), Bottom (-Y), Front (+Z), Back (-Z)
+					quads = [
+						# Right (+X, face 0)
+						([(x2, y2, z2), (x2, y1, z2), (x2, y1, z1), (x2, y2, z1)], face_tex_indices[0], 0.85),
+						# Left (-X, face 1)
+						([(x1, y2, z1), (x1, y1, z1), (x1, y1, z2), (x1, y2, z2)], face_tex_indices[1], 0.85),
+						# Top (+Y, face 2)
+						([(x2, y2, z2), (x2, y2, z1), (x1, y2, z1), (x1, y2, z2)], face_tex_indices[2], 1.00),
+						# Bottom (-Y, face 3)
+						([(x1, y1, z2), (x1, y1, z1), (x2, y1, z1), (x2, y1, z2)], face_tex_indices[3], 0.50),
+						# Front (+Z, face 4)
+						([(x1, y2, z2), (x1, y1, z2), (x2, y1, z2), (x2, y2, z2)], face_tex_indices[4], 0.95),
+						# Back (-Z, face 5)
+						([(x2, y2, z1), (x2, y1, z1), (x1, y1, z1), (x1, y2, z1)], face_tex_indices[5], 0.80),
+					]
+
+					for quad_verts, tex_idx, shading in quads:
+						t_raw = b_info['tex_coords'][tex_idx] if tex_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
+						c = trans_vert_count if is_translucent else opaque_vert_count
+						idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+
+						for vx, vy, vz in quad_verts:
+							rx, ry, rz = rotate_pt(vx, vy, vz, rot_facing)
+							pos_arr.extend((rx + x, ry + y, rz + z))
+
+						if is_translucent:
+							trans_vert_count += 4
+							trans_tex.extend(t_raw[:12] if len(t_raw) >= 12 else t_raw * 4)
+							trans_shd.extend([shading] * 4)
+						else:
+							opaque_vert_count += 4
+							opaque_tex.extend(t_raw[:12] if len(t_raw) >= 12 else t_raw * 4)
+							opaque_shd.extend([shading] * 4)
+
+				def add_face(face, is_trans, custom_tc_idx=None):
 					nonlocal opaque_vert_count, trans_vert_count
 					vp = b_info['vertex_positions'][face]
-					tc = b_info['tex_coords'][face]
+					tc_i = face if custom_tc_idx is None else custom_tc_idx
+					tc = b_info['tex_coords'][tc_i] if tc_i < len(b_info['tex_coords']) else b_info['tex_coords'][0]
 					sh = b_info['shading_values'][face]
 
 					if is_trans:
@@ -444,15 +518,44 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						opaque_tex.extend(tc)
 						opaque_shd.extend(sh)
 
+				def get_dir_tex_idx(b_num, face_idx, facing):
+					if b_num in (27, 54, 55, 56, 37, 57, 58, 59):
+						if facing == "SOUTH": front_f = 0
+						elif facing == "NORTH": front_f = 1
+						elif facing == "EAST": front_f = 5
+						elif facing == "WEST": front_f = 4
+						else: front_f = 1
+
+						if face_idx == front_f:
+							return 4  # Front texture (chest_front / furnace_front)
+						elif face_idx == 2:
+							return 2  # Top texture
+						elif face_idx == 3:
+							return 3  # Bottom texture
+						else:
+							return 0  # Side texture
+					return face_idx
+
 				if b_info['is_cube']:
+					is_dir = b_num in (27, 54, 55, 56, 37, 57, 58, 59)
+					is_log = b_num in (8, 60, 61)
+
 					for face_idx, (dx, dy, dz) in enumerate(neighbor_offsets):
 						nx, ny, nz = local_x + dx, local_y + dy, local_z + dz
 						neighbor_num = get_nb(nx, ny, nz)
 
 						if neighbor_num == 0:
-							add_face(face_idx, is_translucent)
+							if is_dir:
+								tc_i = get_dir_tex_idx(b_num, face_idx, facing)
+								add_face(face_idx, is_translucent, custom_tc_idx=tc_i)
+							elif is_log:
+								log_ax = "X" if b_num == 60 else ("Z" if b_num == 61 else axis)
+								tc_i = (2 if face_idx in (0, 1) else 0) if log_ax == "X" else ((2 if face_idx in (4, 5) else 0) if log_ax == "Z" else (2 if face_idx in (2, 3) else 0))
+								add_face(face_idx, is_translucent, custom_tc_idx=tc_i)
+							else:
+								add_face(face_idx, is_translucent)
 						elif is_liquid and neighbor_num in (9, 19, 15, 20):
-							if face_idx != 3:  # Not bottom face
+							if face_idx != 3:
 								c_h = get_liquid_h(local_x, local_y, local_z, is_water)
 								n_h = get_liquid_h(nx, ny, nz, is_water)
 								if n_h < c_h - 0.01:
@@ -460,10 +563,133 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						else:
 							n_info = block_types_info.get(neighbor_num)
 							if not n_info or n_info['transparent']:
-								add_face(face_idx, is_translucent)
+								if is_dir:
+									tc_i = get_dir_tex_idx(b_num, face_idx, facing)
+									add_face(face_idx, is_translucent, custom_tc_idx=tc_i)
+								elif is_log:
+									log_ax = "X" if b_num == 60 else ("Z" if b_num == 61 else axis)
+									tc_i = (2 if face_idx in (0, 1) else 0) if log_ax == "X" else ((2 if face_idx in (4, 5) else 0) if log_ax == "Z" else (2 if face_idx in (2, 3) else 0))
+									add_face(face_idx, is_translucent, custom_tc_idx=tc_i)
+								else:
+									add_face(face_idx, is_translucent)
+
 				else:
-					for face_idx in range(len(b_info['vertex_positions'])):
-						add_face(face_idx, is_translucent)
+					# Non-Cube Custom Model Geometry using native 3D model definitions + BlockState parameters
+					rot_f = facing if b_num in (41, 42, 73, 74, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72) else "NORTH"
+
+					if b_num in (38, 39, 40, 62, 63, 64):
+						# Slabs (Bottom, Top, Double)
+						sl_h = "TOP" if b_num in (62, 63, 64) else half
+						if sl_h == "DOUBLE":
+							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
+						elif sl_h == "TOP":
+							add_custom_box((-0.5, 0.0, -0.5), (0.5, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
+						else:
+							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.0, 0.5), [0, 0, 0, 0, 0, 0])
+
+					elif b_num in (41, 42, 73, 74):
+						# Stairs (Facing, Half, Shape)
+						is_top_stair = (b_num in (73, 74) or half in ("TOP", "UPPER"))
+						y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
+						y_step_min, y_step_max = (-0.5, 0.0) if is_top_stair else (0.0, 0.5)
+
+						add_custom_box((-0.5, y_base_min, -0.5), (0.5, y_base_max, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						if shape == "INNER_LEFT":
+							add_custom_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((-0.5, y_step_min, 0.0), (0.0, y_step_max, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						elif shape == "INNER_RIGHT":
+							add_custom_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							add_custom_box((0.0, y_step_min, 0.0), (0.5, y_step_max, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						elif shape == "OUTER_LEFT":
+							add_custom_box((-0.5, y_step_min, -0.5), (0.0, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						elif shape == "OUTER_RIGHT":
+							add_custom_box((0.0, y_step_min, -0.5), (0.5, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						else:
+							add_custom_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+
+					elif b_num in (43, 44, 45, 46, 65, 66, 67, 68):
+						# Doors (Facing, Hinge, Half, Open)
+						d_open = open_state or (b_num in (44, 46, 66, 68))
+						if d_open:
+							if hinge == "RIGHT":
+								add_custom_box((0.3125, -0.5, -0.5), (0.5, 0.5, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							else:
+								add_custom_box((-0.5, -0.5, -0.5), (-0.3125, 0.5, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						else:
+							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+
+					elif b_num in (47, 48, 49, 50, 69, 70, 71, 72):
+						# Trapdoors (Facing, Half, Open)
+						is_top = b_num in (69, 70, 71, 72) or half == "TOP"
+						td_open = open_state or (b_num in (48, 50, 70, 72))
+
+						if td_open:
+							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+						else:
+							if is_top:
+								add_custom_box((-0.5, 0.3125, -0.5), (0.5, 0.5, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+							else:
+								add_custom_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
+
+					elif b_num in (51, 52, 53):
+						# Fences (51), Walls (52), Glass Panes (53)
+						nb_n = get_nb(local_x, local_y, local_z - 1)
+						nb_s = get_nb(local_x, local_y, local_z + 1)
+						nb_w = get_nb(local_x - 1, local_y, local_z)
+						nb_e = get_nb(local_x + 1, local_y, local_z)
+
+						def can_conn(nb, d_key):
+							if conns and d_key in conns: return conns[d_key]
+							if nb == 0 or nb in (9, 19, 15, 20): return False
+							if b_num == 51:
+								return nb == 51 or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							elif b_num == 52:
+								return nb in (52, 53) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							elif b_num == 53:
+								return nb in (53, 52) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							return False
+
+						c_n = can_conn(nb_n, 'north')
+						c_s = can_conn(nb_s, 'south')
+						c_w = can_conn(nb_w, 'west')
+						c_e = can_conn(nb_e, 'east')
+
+						is_straight = (c_n and c_s and not c_w and not c_e) or (c_w and c_e and not c_n and not c_s)
+
+						if b_num == 51:
+							add_custom_box((-0.125, -0.5, -0.125), (0.125, 0.5, 0.125), [0, 0, 0, 0, 0, 0])
+							if c_n:
+								add_custom_box((-0.08, 0.15, -0.5), (0.08, 0.35, -0.125), [0, 0, 0, 0, 0, 0])
+								add_custom_box((-0.08, -0.35, -0.5), (0.08, -0.15, -0.125), [0, 0, 0, 0, 0, 0])
+							if c_s:
+								add_custom_box((-0.08, 0.15, 0.125), (0.08, 0.35, 0.5), [0, 0, 0, 0, 0, 0])
+								add_custom_box((-0.08, -0.35, 0.125), (0.08, -0.15, 0.5), [0, 0, 0, 0, 0, 0])
+							if c_w:
+								add_custom_box((-0.5, 0.15, -0.08), (-0.125, 0.35, 0.08), [0, 0, 0, 0, 0, 0])
+								add_custom_box((-0.5, -0.35, -0.08), (-0.125, -0.15, 0.08), [0, 0, 0, 0, 0, 0])
+							if c_e:
+								add_custom_box((0.125, 0.15, -0.08), (0.5, 0.35, 0.08), [0, 0, 0, 0, 0, 0])
+								add_custom_box((0.125, -0.35, -0.08), (0.5, -0.15, 0.08), [0, 0, 0, 0, 0, 0])
+
+						elif b_num == 52:
+							above_b = get_nb(local_x, local_y + 1, local_z)
+							has_post = (not is_straight) or (above_b != 0 and above_b not in (9, 19, 15, 20))
+							if has_post:
+								add_custom_box((-0.25, -0.5, -0.25), (0.25, 0.5, 0.25), [0, 0, 0, 0, 0, 0])
+							if c_n: add_custom_box((-0.15, -0.5, -0.5), (0.15, 0.35, -0.25 if has_post else 0.0), [0, 0, 0, 0, 0, 0])
+							if c_s: add_custom_box((-0.15, -0.5, 0.25 if has_post else 0.0), (0.15, 0.35, 0.5), [0, 0, 0, 0, 0, 0])
+							if c_w: add_custom_box((-0.5, -0.5, -0.15), (-0.25 if has_post else 0.0, 0.35, 0.15), [0, 0, 0, 0, 0, 0])
+							if c_e: add_custom_box((0.25 if has_post else 0.0, -0.5, -0.15), (0.5, 0.35, 0.15), [0, 0, 0, 0, 0, 0])
+
+						elif b_num == 53:
+							add_custom_box((-0.03125, -0.5, -0.03125), (0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+							if c_n: add_custom_box((-0.03125, -0.5, -0.5), (0.03125, 0.5, -0.03125), [0, 0, 0, 0, 0, 0])
+							if c_s: add_custom_box((-0.03125, -0.5, 0.03125), (0.03125, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
+							if c_w: add_custom_box((-0.5, -0.5, -0.03125), (-0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+							if c_e: add_custom_box((0.03125, -0.5, -0.03125), (0.5, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+					else:
+						for face_idx in range(len(b_info['vertex_positions'])):
+							add_face(face_idx, is_translucent)
 
 	final_trans_idx = array.array('I', [idx + opaque_vert_count for idx in trans_idx])
 
@@ -600,6 +826,45 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="gold_ore", block_face_textures={"all": "gold_ore"}, break_time=2.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="redstone_ore", block_face_textures={"all": "redstone_ore"}, break_time=2.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="chest", block_face_textures={"top": "chest_top", "bottom": "planks", "sides": "chest_side", "front": "chest_front"}, break_time=1.5, requires_tool=False))
+		# Non-Cube Blocks & Block State Variations (38-74)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_slab", block_face_textures={"all": "planks"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_slab", block_face_textures={"all": "cobblestone"}, model=models.slab, transparent=True, break_time=1.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_slab", block_face_textures={"all": "stone"}, model=models.slab, transparent=True, break_time=1.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_stairs", block_face_textures={"all": "planks"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_stairs", block_face_textures={"all": "cobblestone"}, model=models.stairs, transparent=True, break_time=1.2, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_door", block_face_textures={"all": "door_wood_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_door_open", block_face_textures={"all": "door_wood_lower"}, model=models.door_open, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_door", block_face_textures={"all": "iron_door_bottom_half"}, model=models.door, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_door_open", block_face_textures={"all": "iron_door_bottom_half"}, model=models.door_open, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_trapdoor", block_face_textures={"all": "trapdoor"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_trapdoor_open", block_face_textures={"all": "trapdoor"}, model=models.trapdoor_open, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_trapdoor", block_face_textures={"all": "iron_trapdoor"}, model=models.trapdoor, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_trapdoor_open", block_face_textures={"all": "iron_trapdoor"}, model=models.trapdoor_open, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence", block_face_textures={"all": "planks"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_wall", block_face_textures={"all": "cobblestone"}, model=models.wall, transparent=True, break_time=1.2, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="glass_pane", block_face_textures={"all": "glass"}, model=models.glass_pane, transparent=True, break_time=0.2, requires_tool=False))
+		# Block State Variations (54-74)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="furnace_south", block_face_textures={"top": "furnace_y", "bottom": "stone", "sides": "furnace_side", "front": "furnace_front"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="furnace_west", block_face_textures={"top": "furnace_y", "bottom": "stone", "sides": "furnace_side", "front": "furnace_front"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="furnace_east", block_face_textures={"top": "furnace_y", "bottom": "stone", "sides": "furnace_side", "front": "furnace_front"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="chest_south", block_face_textures={"top": "chest_top", "bottom": "planks", "sides": "chest_side", "front": "chest_front"}, break_time=1.5, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="chest_west", block_face_textures={"top": "chest_top", "bottom": "planks", "sides": "chest_side", "front": "chest_front"}, break_time=1.5, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="chest_east", block_face_textures={"top": "chest_top", "bottom": "planks", "sides": "chest_side", "front": "chest_front"}, break_time=1.5, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="log_x", block_face_textures={"top": "log_side", "bottom": "log_side", "sides": "log_side"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="log_z", block_face_textures={"top": "log_side", "bottom": "log_side", "sides": "log_side"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_slab_top", block_face_textures={"all": "planks"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_slab_top", block_face_textures={"all": "cobblestone"}, model=models.slab, transparent=True, break_time=1.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_slab_top", block_face_textures={"all": "stone"}, model=models.slab, transparent=True, break_time=1.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_door_top", block_face_textures={"all": "door_wood_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_door_top_open", block_face_textures={"all": "door_wood_upper"}, model=models.door_top_open, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_door_top", block_face_textures={"all": "iron_door"}, model=models.door_top, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_door_top_open", block_face_textures={"all": "iron_door"}, model=models.door_top_open, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_trapdoor_top", block_face_textures={"all": "trapdoor"}, model=models.trapdoor_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_trapdoor_top_open", block_face_textures={"all": "trapdoor"}, model=models.trapdoor_top_open, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_trapdoor_top", block_face_textures={"all": "iron_trapdoor"}, model=models.trapdoor_top, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_trapdoor_top_open", block_face_textures={"all": "iron_trapdoor"}, model=models.trapdoor_top_open, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_stairs_top", block_face_textures={"all": "planks"}, model=models.stairs_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_stairs_top", block_face_textures={"all": "cobblestone"}, model=models.stairs_top, transparent=True, break_time=1.2, requires_tool=True))
 
 		import gui
 		for item_id, item_name, tex_name in gui.TOOL_ITEMS:
@@ -834,6 +1099,7 @@ class World:
 
 				center_chk = self.chunks[c_pos]
 				c_bytes = bytes(center_chk.blocks)
+				c_states = { f"{lx},{ly},{lz}": st.to_dict() for (lx, ly, lz), st in center_chk.block_states.items() if st }
 
 				e_bytes = bytes(self.chunks[(cx + 1, 0, cz)].blocks) if (cx + 1, 0, cz) in self.chunks else None
 				w_bytes = bytes(self.chunks[(cx - 1, 0, cz)].blocks) if (cx - 1, 0, cz) in self.chunks else None
@@ -842,7 +1108,7 @@ class World:
 
 				self.section_mesh_futures[(cx, cz, sy)] = self.process_executor.submit(
 					build_section_mesh_process,
-					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls
+					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls, c_states
 				)
 
 	def get_chunk_position(self, position):
@@ -865,6 +1131,94 @@ class World:
 		ly = int(y)
 		lz = int(z % chunk.CHUNK_LENGTH)
 		return chk.get_block_number(lx, ly, lz)
+
+	def get_block_state(self, position):
+		x, y, z = position
+		if y < 0 or y >= 256:
+			return None
+		chunk_position = (math.floor(x / chunk.CHUNK_WIDTH), 0, math.floor(z / chunk.CHUNK_LENGTH))
+		chk = self.chunks.get(chunk_position)
+		if chk is None:
+			return None
+		lx = int(x % chunk.CHUNK_WIDTH)
+		ly = int(y)
+		lz = int(z % chunk.CHUNK_LENGTH)
+		return chk.get_block_state(lx, ly, lz)
+
+	def set_block_state(self, position, state):
+		x, y, z = position
+		if y < 0 or y >= 256:
+			return
+		c_pos = (math.floor(x / chunk.CHUNK_WIDTH), 0, math.floor(z / chunk.CHUNK_LENGTH))
+		if c_pos not in self.chunks:
+			if state is None: return
+			self.chunks[c_pos] = chunk.Chunk(self, c_pos)
+		chk = self.chunks[c_pos]
+		lx = int(x % chunk.CHUNK_WIDTH)
+		ly = int(y)
+		lz = int(z % chunk.CHUNK_LENGTH)
+
+		chk.set_block_state(lx, ly, lz, state)
+		self.dirty_chunks.add(c_pos)
+
+		sy = ly // 16
+		self.section_mesh_queue.add((c_pos[0], c_pos[2], sy))
+		if ly % 16 == 0 and sy > 0: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy - 1))
+		if ly % 16 == 15 and sy < 15: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy + 1))
+		if lx == 15: self.section_mesh_queue.add((c_pos[0] + 1, c_pos[2], sy))
+		if lx == 0: self.section_mesh_queue.add((c_pos[0] - 1, c_pos[2], sy))
+		if lz == 15: self.section_mesh_queue.add((c_pos[0], c_pos[2] + 1, sy))
+		if lz == 0: self.section_mesh_queue.add((c_pos[0], c_pos[2] - 1, sy))
+
+		self.notify_neighbor_block_change(position)
+
+	def notify_neighbor_block_change(self, position):
+		"""Recalculates state for neighboring stairs, fences, walls, panes, and doors whenever a block changes."""
+		import block_state
+		px, py, pz = position
+		for dx, dy, dz in [(1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)]:
+			nb_pos = (px + dx, py + dy, pz + dz)
+			nb_b = self.get_block_number(nb_pos)
+			if nb_b == 0: continue
+			nb_st = self.get_block_state(nb_pos)
+
+			# 1. Stairs shape recalculation
+			if nb_b in (41, 42, 73, 74):
+				if not nb_st:
+					nb_st = block_state.BlockState(nb_b)
+				new_shape = block_state.calculate_stair_shape(self, nb_pos, nb_st.facing, nb_st.half)
+				if new_shape != nb_st.shape:
+					nb_st.shape = new_shape
+					self.set_block_state(nb_pos, nb_st)
+
+			# 2. Fence connection recalculation
+			elif nb_b in (51,):
+				if not nb_st:
+					nb_st = block_state.BlockState(51)
+				new_conn = block_state.calculate_fence_connections(self, nb_pos, nb_b)
+				if new_conn != nb_st.connections:
+					nb_st.connections = new_conn
+					self.set_block_state(nb_pos, nb_st)
+
+			# 3. Wall connection recalculation
+			elif nb_b in (52,):
+				if not nb_st:
+					nb_st = block_state.BlockState(52)
+				new_conn = block_state.calculate_wall_connections(self, nb_pos, nb_b)
+				if new_conn != nb_st.connections:
+					nb_st.connections = new_conn
+					self.set_block_state(nb_pos, nb_st)
+
+			# 4. Pane connection recalculation
+			elif nb_b in (53,):
+				if not nb_st:
+					nb_st = block_state.BlockState(53)
+				new_conn = block_state.calculate_pane_connections(self, nb_pos, nb_b)
+				if new_conn != nb_st.connections:
+					nb_st.connections = new_conn
+					self.set_block_state(nb_pos, nb_st)
+
+
 
 	def is_opaque_block(self, position):
 		b_num = self.get_block_number(position)
@@ -1070,14 +1424,23 @@ class World:
 		if lz == 15: self.section_mesh_queue.add((c_pos[0], c_pos[2] + 1, sy))
 		if lz == 0: self.section_mesh_queue.add((c_pos[0], c_pos[2] - 1, sy))
 
+		self.notify_neighbor_block_change(position)
+
 	def _save_chunk_to_file(self, chunk_position):
 		if chunk_position not in self.chunks:
 			return
-
+		import json
 		chk = self.chunks[chunk_position]
 		cx, _, cz = chunk_position
 		save_path = os.path.join(self.save_dir, f"{cx}_{cz}.chunk")
-		data = bytes(chk.blocks)
+		
+		state_map = {}
+		for (lx, ly, lz), st in chk.block_states.items():
+			if st:
+				state_map[f"{lx},{ly},{lz}"] = st.to_dict()
+
+		state_bytes = json.dumps(state_map).encode('utf-8')
+		data = bytes(chk.blocks) + b"|STATE_DATA|" + state_bytes
 
 		def async_write(path, content):
 			try:
@@ -1096,7 +1459,7 @@ class World:
 
 			del self.chunk_generation_futures[chunk_position]
 			try:
-				blocks = future.result()
+				raw_data = future.result()
 			except Exception as error:
 				print(f"Chunk generation failed for {chunk_position}: {error}")
 				return
@@ -1104,7 +1467,26 @@ class World:
 			if max(abs(chunk_position[0] - player_cx), abs(chunk_position[2] - player_cz)) > self.unload_distance:
 				return
 
+			if b"|STATE_DATA|" in raw_data:
+				parts = raw_data.split(b"|STATE_DATA|")
+				blocks = parts[0]
+				state_bytes = parts[1]
+			else:
+				blocks = raw_data
+				state_bytes = None
+
 			chk = chunk.Chunk(self, chunk_position, blocks=blocks)
+
+			if state_bytes:
+				import json, block_state
+				try:
+					st_dict = json.loads(state_bytes.decode('utf-8'))
+					for key_str, s_data in st_dict.items():
+						lx, ly, lz = map(int, key_str.split(','))
+						chk.block_states[(lx, ly, lz)] = block_state.BlockState.from_dict(s_data)
+				except Exception as e:
+					pass
+
 			self.chunks[chunk_position] = chk
 			self.queue_chunk_sections_for_meshing(chunk_position[0], chunk_position[2])
 

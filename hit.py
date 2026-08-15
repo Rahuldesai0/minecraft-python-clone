@@ -16,14 +16,18 @@ class Hit_ray:
 
 		self.distance = 0
 	
-	def check(self, hit_callback, distance, current_block, next_block):
+	def check(self, hit_callback, distance, current_block, next_block, face_vector=None):
+		hit_pos = (
+			self.position[0] + self.vector[0] * distance,
+			self.position[1] + self.vector[1] * distance,
+			self.position[2] + self.vector[2] * distance
+		)
 		block_num = self.world.get_block_number(next_block)
 		if block_num != 0 and block_num not in (9, 19, 15, 20):
-			hit_callback(current_block, next_block)
+			hit_callback(current_block, next_block, face_vector, hit_pos)
 			return True
 		
 		self.position = list(map(lambda x: self.position[x] + self.vector[x] * distance, range(3)))
-		
 		self.block = next_block
 		self.distance += distance
 
@@ -53,7 +57,7 @@ class Hit_ray:
 
 			if y >= -0.5 and y <= 0.5 and z >= -0.5 and z <= 0.5:
 				distance = math.sqrt((x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2)
-				return self.check(hit_callback, distance, self.block, (bx + sign[0], by, bz))
+				return self.check(hit_callback, distance, self.block, (bx + sign[0], by, bz), face_vector=(-sign[0], 0, 0))
 		
 		if vy:
 			x = (0.5 - ly) / vy * vx + lx
@@ -62,7 +66,7 @@ class Hit_ray:
 
 			if x >= -0.5 and x <= 0.5 and z >= -0.5 and z <= 0.5:
 				distance = math.sqrt((x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2)
-				return self.check(hit_callback, distance, self.block, (bx, by + sign[1], bz))
+				return self.check(hit_callback, distance, self.block, (bx, by + sign[1], bz), face_vector=(0, -sign[1], 0))
 		
 		if vz:
 			x = (0.5 - lz) / vz * vx + lx
@@ -71,4 +75,4 @@ class Hit_ray:
 
 			if x >= -0.5 and x <= 0.5 and y >= -0.5 and y <= 0.5:
 				distance = math.sqrt((x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2)
-				return self.check(hit_callback, distance, self.block, (bx, by, bz + sign[2]))
+				return self.check(hit_callback, distance, self.block, (bx, by, bz + sign[2]), face_vector=(0, 0, -sign[2]))

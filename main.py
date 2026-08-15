@@ -421,7 +421,7 @@ class Window(pyglet.window.Window):
 		if self.left_mouse_down and self.mouse_captured and not self.gui.inventory_open:
 			target_block = None
 			
-			def find_target(current_block, next_block):
+			def find_target(current_block, next_block, face_vector=None, hit_pos=None):
 				nonlocal target_block
 				target_block = next_block
 				return True
@@ -472,6 +472,22 @@ class Window(pyglet.window.Window):
 								drop_id, 1,
 								[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 							)
+
+						# Check 2-block door breaking synchronization
+						st_curr = self.world.get_block_state(target_block)
+						if b_num in (43, 44, 45, 46) or (st_curr and st_curr.half == "LOWER"):
+							# Lower door half broken -> remove upper door half at y+1
+							top_pos = (target_block[0], target_block[1] + 1, target_block[2])
+							top_b = self.world.get_block_number(top_pos)
+							if top_b in (43, 44, 45, 46, 65, 66, 67, 68):
+								self.world.set_block(top_pos, 0)
+						elif b_num in (65, 66, 67, 68) or (st_curr and st_curr.half == "UPPER"):
+							# Upper door half broken -> remove lower door half at y-1
+							bot_pos = (target_block[0], target_block[1] - 1, target_block[2])
+							bot_b = self.world.get_block_number(bot_pos)
+							if bot_b in (43, 44, 45, 46, 65, 66, 67, 68):
+								self.world.set_block(bot_pos, 0)
+
 
 						self.world.set_block(target_block, 0)
 						self.camera.add_exhaustion(0.005)
@@ -1119,33 +1135,231 @@ class Window(pyglet.window.Window):
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
 		is_placeable = (0 < self.holding < 100)
-		INTERACTIVE_BLOCKS = (26, 27, 37)  # Crafting Table, Furnace, Chest, etc.
+		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72)
+		DOOR_TRAPDOOR_TOGGLES = {
+			43: 44, 44: 43,  # Oak Door Bottom Closed <-> Open
+			65: 66, 66: 65,  # Oak Door Top Closed <-> Open
+			45: 46, 46: 45,  # Iron Door Bottom Closed <-> Open
+			67: 68, 68: 67,  # Iron Door Top Closed <-> Open
+			47: 48, 48: 47,  # Oak Trapdoor Bottom Closed <-> Open
+			69: 70, 70: 69,  # Oak Trapdoor Top Closed <-> Open
+			49: 50, 50: 49,  # Iron Trapdoor Bottom Closed <-> Open
+			71: 72, 72: 71,  # Iron Trapdoor Top Closed <-> Open
+		}
 
-		def hit_callback(current_block, next_block):
+		def get_cardinal_dir():
+			deg = (math.degrees(self.camera.rotation[0]) + 360) % 360
+			if 45 <= deg < 135: return "SOUTH"
+			elif 135 <= deg < 225: return "WEST"
+			elif 225 <= deg < 315: return "NORTH"
+			else: return "EAST"
+
+		def place_block_with_state(target_pos, held_item, next_pos, face_vector=None, hit_pos=None):
+			import block_state
+			cardinal_dir = block_state.get_player_facing(self.camera.rotation)
+
+			# 1. Furnace (27)
+			if held_item == 27:
+				st = block_state.BlockState(27, facing=cardinal_dir)
+				self.world.set_block_state(target_pos, st)
+
+			# 2. Chest (37)
+			elif held_item == 37:
+				st = block_state.BlockState(37, facing=cardinal_dir)
+				self.world.set_block_state(target_pos, st)
+
+			# 3. Log (8)
+			elif held_item == 8:
+				if face_vector is not None:
+					if face_vector[1] != 0: axis = "Y"
+					elif face_vector[0] != 0: axis = "X"
+					elif face_vector[2] != 0: axis = "Z"
+					else: axis = "Y"
+				else:
+					dx = target_pos[0] - next_pos[0]
+					dz = target_pos[2] - next_pos[2]
+					axis = "X" if dx != 0 else ("Z" if dz != 0 else "Y")
+				st = block_state.BlockState(8, axis=axis)
+				self.world.set_block_state(target_pos, st)
+
+			# 4. Slabs (38, 39, 40)
+			elif held_item in (38, 39, 40):
+				# Check slab combination on existing same-type slab
+				target_b = self.world.get_block_number(next_pos)
+				if target_b == held_item:
+					target_st = self.world.get_block_state(next_pos)
+					if target_st and target_st.half in ("BOTTOM", "TOP"):
+						combine = False
+						if face_vector == (0, 1, 0) and target_st.half == "BOTTOM":
+							combine = True
+						elif face_vector == (0, -1, 0) and target_st.half == "TOP":
+							combine = True
+						elif hit_pos is not None:
+							y_local = hit_pos[1] - next_pos[1]
+							if y_local >= 0.0 and target_st.half == "BOTTOM": combine = True
+							elif y_local < 0.0 and target_st.half == "TOP": combine = True
+						else:
+							combine = True
+
+						if combine:
+							target_st.half = "DOUBLE"
+							self.world.set_block_state(next_pos, target_st)
+							self.gui.consume_active_item()
+							self.holding = self.gui.get_current_block_id()
+							return
+
+				# Determine single slab placement half
+				if face_vector == (0, 1, 0):
+					half = "BOTTOM"
+				elif face_vector == (0, -1, 0):
+					half = "TOP"
+				elif hit_pos is not None:
+					y_local = hit_pos[1] - next_pos[1]
+					half = "TOP" if y_local >= 0.0 else "BOTTOM"
+				else:
+					half = "TOP" if self.camera.rotation[1] > 0 else "BOTTOM"
+
+				st = block_state.BlockState(held_item, half=half)
+				self.world.set_block_state(target_pos, st)
+
+			# 5. Doors (43, 45) - 2-block structure
+			elif held_item in (43, 45):
+				top_pos = (target_pos[0], target_pos[1] + 1, target_pos[2])
+				if self.world.get_block_number(top_pos) == 0 and not self.camera.intersects_player(top_pos):
+					hinge = block_state.calculate_door_hinge(self.world, target_pos, cardinal_dir, hit_pos=hit_pos)
+					b_bot = 43 if held_item == 43 else 45
+					b_top = 65 if held_item == 43 else 67
+
+					st_bot = block_state.BlockState(b_bot, facing=cardinal_dir, half="LOWER", hinge=hinge, open_state=False)
+					st_top = block_state.BlockState(b_top, facing=cardinal_dir, half="UPPER", hinge=hinge, open_state=False)
+
+					self.world.set_block_state(target_pos, st_bot)
+					self.world.set_block_state(top_pos, st_top)
+					self.gui.consume_active_item()
+					self.holding = self.gui.get_current_block_id()
+					return
+
+			# 6. Trapdoors (47, 49)
+			elif held_item in (47, 49):
+				if face_vector is not None and face_vector[1] == 0:
+					if face_vector == (0, 0, -1): facing = "NORTH"
+					elif face_vector == (0, 0, 1): facing = "SOUTH"
+					elif face_vector == (-1, 0, 0): facing = "WEST"
+					elif face_vector == (1, 0, 0): facing = "EAST"
+					else: facing = cardinal_dir
+					if hit_pos is not None:
+						y_local = hit_pos[1] - next_pos[1]
+						half = "TOP" if y_local >= 0.0 else "BOTTOM"
+					else:
+						half = "BOTTOM"
+				elif face_vector == (0, 1, 0):
+					facing = cardinal_dir
+					half = "BOTTOM"
+				elif face_vector == (0, -1, 0):
+					facing = cardinal_dir
+					half = "TOP"
+				else:
+					facing = cardinal_dir
+					half = "BOTTOM"
+				st = block_state.BlockState(held_item, facing=facing, half=half, open_state=False)
+				self.world.set_block_state(target_pos, st)
+
+			# 7. Stairs (41, 42)
+			elif held_item in (41, 42):
+				if face_vector == (0, 1, 0):
+					half = "BOTTOM"
+				elif face_vector == (0, -1, 0):
+					half = "TOP"
+				elif hit_pos is not None:
+					y_local = hit_pos[1] - next_pos[1]
+					half = "TOP" if y_local >= 0.0 else "BOTTOM"
+				else:
+					half = "TOP" if self.camera.rotation[1] > 0 else "BOTTOM"
+				facing = block_state.RIGHT_DIRECTIONS[cardinal_dir]
+				shape = block_state.calculate_stair_shape(self.world, target_pos, facing, half)
+				st = block_state.BlockState(held_item, facing=facing, half=half, shape=shape)
+				self.world.set_block_state(target_pos, st)
+
+			# 8. Fences (51)
+			elif held_item == 51:
+				conns = block_state.calculate_fence_connections(self.world, target_pos, 51)
+				st = block_state.BlockState(51, connections=conns)
+				self.world.set_block_state(target_pos, st)
+
+			# 9. Walls (52)
+			elif held_item == 52:
+				conns = block_state.calculate_wall_connections(self.world, target_pos, 52)
+				st = block_state.BlockState(52, connections=conns)
+				self.world.set_block_state(target_pos, st)
+
+			# 10. Glass Panes (53)
+			elif held_item == 53:
+				conns = block_state.calculate_pane_connections(self.world, target_pos, 53)
+				st = block_state.BlockState(53, connections=conns)
+				self.world.set_block_state(target_pos, st)
+
+			else:
+				self.world.set_block(target_pos, held_item)
+
+			self.gui.consume_active_item()
+			self.holding = self.gui.get_current_block_id()
+
+		def hit_callback(current_block, next_block, face_vector=None, hit_pos=None):
 			if self.world.get_block_number(current_block) != 14 and 0 <= current_block[1] < 256:
 				if button == pyglet.window.mouse.RIGHT:
 					target_b = self.world.get_block_number(next_block)
 					if target_b in INTERACTIVE_BLOCKS:
 						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):
-							# Shift + Right Click while holding placeable block -> OVERRIDE GUI AND PLACE BLOCK!
-							self.world.set_block(current_block, self.holding)
-							self.gui.consume_active_item()
-							self.holding = self.gui.get_current_block_id()
+							place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
 							return
 						else:
-							# Normal Right Click OR Shift-Right Click with non-placeable item -> Open GUI!
-							if target_b == 26:
+							# Normal Right Click -> Toggle Doors/Trapdoors or Open GUIs
+							if target_b in (43, 44, 45, 46, 65, 66, 67, 68):
+								st = self.world.get_block_state(next_block)
+								cur_open = st.open_state if st else (target_b in (44, 46, 66, 68))
+								new_open = not cur_open
+								
+								# Determine vertical pair positions
+								if st and st.half == "UPPER" or target_b in (65, 66, 67, 68):
+									top_pos = next_block
+									bot_pos = (next_block[0], next_block[1] - 1, next_block[2])
+								else:
+									bot_pos = next_block
+									top_pos = (next_block[0], next_block[1] + 1, next_block[2])
+
+								for p in (bot_pos, top_pos):
+									p_st = self.world.get_block_state(p)
+									p_b = self.world.get_block_number(p)
+									if p_st:
+										p_st.open_state = new_open
+										if p_st.block_id in DOOR_TRAPDOOR_TOGGLES and (p_st.block_id in (44, 46, 66, 68)) != new_open:
+											p_st.block_id = DOOR_TRAPDOOR_TOGGLES[p_st.block_id]
+										self.world.set_block_state(p, p_st)
+									elif p_b in DOOR_TRAPDOOR_TOGGLES:
+										new_b = DOOR_TRAPDOOR_TOGGLES[p_b] if new_open != (p_b in (44, 46, 66, 68)) else p_b
+										self.world.set_block(p, new_b)
+
+							elif target_b in (47, 48, 49, 50, 69, 70, 71, 72):
+								st = self.world.get_block_state(next_block)
+								if st:
+									st.open_state = not st.open_state
+									if st.block_id in DOOR_TRAPDOOR_TOGGLES and (st.block_id in (48, 50, 70, 72)) != st.open_state:
+										st.block_id = DOOR_TRAPDOOR_TOGGLES[st.block_id]
+									self.world.set_block_state(next_block, st)
+								elif target_b in DOOR_TRAPDOOR_TOGGLES:
+									self.world.set_block(next_block, DOOR_TRAPDOOR_TOGGLES[target_b])
+
+							elif target_b in (26,):
 								self.gui.open_crafting_table()
-							elif target_b == 27:
+							elif target_b in (27, 54, 55, 56):
 								self.gui.open_furnace(self.world.get_furnace(next_block))
-							elif target_b == 37:
+							elif target_b in (37, 57, 58, 59):
 								self.gui.open_chest(next_block, self.world)
 							return
 
 					if is_placeable and not self.camera.intersects_player(current_block):
-						self.world.set_block(current_block, self.holding)
-						self.gui.consume_active_item()
-						self.holding = self.gui.get_current_block_id()
+						place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
+
 				elif button == pyglet.window.mouse.MIDDLE:
 					target_b = self.world.get_block_number(next_block)
 					if target_b not in (9, 19, 15, 20):
