@@ -312,84 +312,145 @@ BLOCK_MINING_PROPERTIES = {
 	74: ("pickaxe", 1, 1.2, 42),   # Cobblestone Top Stairs -> drops Cobblestone Stairs item 42
 }
 
+# Zero-allocation reusable shape caches for HUD and UI boxes
+_box_outer = None
+_box_inner = None
+
 def draw_bordered_box(x, y, width, height, border, bg_color, border_color):
-	outer = pyglet.shapes.Rectangle(x, y, width, height, color=border_color)
-	outer.draw()
+	global _box_outer, _box_inner
+	if _box_outer is None:
+		_box_outer = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(255, 255, 255, 255))
+		_box_inner = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(255, 255, 255, 255))
+
+	_box_outer.x = x
+	_box_outer.y = y
+	_box_outer.width = width
+	_box_outer.height = height
+	_box_outer.color = border_color
+	_box_outer.draw()
+
 	if width > 2 * border and height > 2 * border:
-		inner = pyglet.shapes.Rectangle(x + border, y + border, width - 2 * border, height - 2 * border, color=bg_color)
-		inner.draw()
+		_box_inner.x = x + border
+		_box_inner.y = y + border
+		_box_inner.width = width - 2 * border
+		_box_inner.height = height - 2 * border
+		_box_inner.color = bg_color
+		_box_inner.draw()
+
+# Reusable HUD shapes
+_heart_c1 = None
+_heart_c2 = None
+_heart_tri = None
+_heart_in_c1 = None
+_heart_in_c2 = None
+_heart_in_tri = None
 
 def draw_vector_heart(x, y, is_full=True, is_half=False):
-	outer_c1 = pyglet.shapes.Circle(x + 4, y + 10, 4, color=(30, 0, 0, 220))
-	outer_c2 = pyglet.shapes.Circle(x + 11, y + 10, 4, color=(30, 0, 0, 220))
-	outer_tri = pyglet.shapes.Triangle(x, y + 9, x + 15, y + 9, x + 7.5, y + 1, color=(30, 0, 0, 220))
-	outer_c1.draw()
-	outer_c2.draw()
-	outer_tri.draw()
+	global _heart_c1, _heart_c2, _heart_tri, _heart_in_c1, _heart_in_c2, _heart_in_tri
+	if _heart_c1 is None:
+		_heart_c1 = pyglet.shapes.Circle(0, 0, 4, color=(30, 0, 0, 220))
+		_heart_c2 = pyglet.shapes.Circle(0, 0, 4, color=(30, 0, 0, 220))
+		_heart_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(30, 0, 0, 220))
+		_heart_in_c1 = pyglet.shapes.Circle(0, 0, 3, color=(230, 25, 25, 255))
+		_heart_in_c2 = pyglet.shapes.Circle(0, 0, 3, color=(230, 25, 25, 255))
+		_heart_in_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(230, 25, 25, 255))
+
+	_heart_c1.x, _heart_c1.y = x + 4, y + 10
+	_heart_c2.x, _heart_c2.y = x + 11, y + 10
+	_heart_tri.x, _heart_tri.y = x, y + 9
+	_heart_tri.x2, _heart_tri.y2 = x + 15, y + 9
+	_heart_tri.x3, _heart_tri.y3 = x + 7.5, y + 1
+
+	_heart_c1.draw()
+	_heart_c2.draw()
+	_heart_tri.draw()
 
 	if not is_full and not is_half:
 		return
 
-	red_c = (230, 25, 25, 255)
-
 	if is_full:
-		c1 = pyglet.shapes.Circle(x + 4, y + 10, 3, color=red_c)
-		c2 = pyglet.shapes.Circle(x + 11, y + 10, 3, color=red_c)
-		tri = pyglet.shapes.Triangle(x + 1, y + 9, x + 14, y + 9, x + 7.5, y + 2, color=red_c)
-		c1.draw()
-		c2.draw()
-		tri.draw()
+		_heart_in_c1.x, _heart_in_c1.y = x + 4, y + 10
+		_heart_in_c2.x, _heart_in_c2.y = x + 11, y + 10
+		_heart_in_tri.x, _heart_in_tri.y = x + 1, y + 9
+		_heart_in_tri.x2, _heart_in_tri.y2 = x + 14, y + 9
+		_heart_in_tri.x3, _heart_in_tri.y3 = x + 7.5, y + 2
+		_heart_in_c1.draw()
+		_heart_in_c2.draw()
+		_heart_in_tri.draw()
 	elif is_half:
-		c1 = pyglet.shapes.Circle(x + 4, y + 10, 3, color=red_c)
-		tri = pyglet.shapes.Triangle(x + 1, y + 9, x + 7.5, y + 9, x + 7.5, y + 2, color=red_c)
-		c1.draw()
-		tri.draw()
+		_heart_in_c1.x, _heart_in_c1.y = x + 4, y + 10
+		_heart_in_tri.x, _heart_in_tri.y = x + 1, y + 9
+		_heart_in_tri.x2, _heart_in_tri.y2 = x + 7.5, y + 9
+		_heart_in_tri.x3, _heart_in_tri.y3 = x + 7.5, y + 2
+		_heart_in_c1.draw()
+		_heart_in_tri.draw()
+
+_shield_out = None
+_shield_out_tri = None
+_shield_in = None
+_shield_in_tri = None
 
 def draw_vector_shield(x, y, is_full=True, is_half=False):
-	bg_col = (40, 45, 55, 230)
-	shield_outer = pyglet.shapes.Rectangle(x + 2, y + 3, 11, 8, color=bg_col)
-	shield_tri = pyglet.shapes.Triangle(x + 2, y + 3, x + 13, y + 3, x + 7.5, y - 3, color=bg_col)
-	shield_outer.draw()
-	shield_tri.draw()
+	global _shield_out, _shield_out_tri, _shield_in, _shield_in_tri
+	if _shield_out is None:
+		_shield_out = pyglet.shapes.Rectangle(0, 0, 11, 8, color=(40, 45, 55, 230))
+		_shield_out_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(40, 45, 55, 230))
+		_shield_in = pyglet.shapes.Rectangle(0, 0, 7, 6, color=(180, 200, 220, 255))
+		_shield_in_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(180, 200, 220, 255))
+
+	_shield_out.x, _shield_out.y = x + 2, y + 3
+	_shield_out_tri.x, _shield_out_tri.y = x + 2, y + 3
+	_shield_out_tri.x2, _shield_out_tri.y2 = x + 13, y + 3
+	_shield_out_tri.x3, _shield_out_tri.y3 = x + 7.5, y - 3
+
+	_shield_out.draw()
+	_shield_out_tri.draw()
 
 	if not is_full and not is_half:
 		return
 
-	iron_col = (180, 200, 220, 255)
 	if is_full:
-		inner = pyglet.shapes.Rectangle(x + 4, y + 4, 7, 6, color=iron_col)
-		tri = pyglet.shapes.Triangle(x + 4, y + 4, x + 11, y + 4, x + 7.5, y - 1, color=iron_col)
-		inner.draw()
-		tri.draw()
+		_shield_in.x, _shield_in.y = x + 4, y + 4
+		_shield_in.width = 7
+		_shield_in_tri.x, _shield_in_tri.y = x + 4, y + 4
+		_shield_in_tri.x2, _shield_in_tri.y2 = x + 11, y + 4
+		_shield_in_tri.x3, _shield_in_tri.y3 = x + 7.5, y - 1
+		_shield_in.draw()
+		_shield_in_tri.draw()
 	elif is_half:
-		inner = pyglet.shapes.Rectangle(x + 4, y + 4, 3, 6, color=iron_col)
-		tri = pyglet.shapes.Triangle(x + 4, y + 4, x + 7.5, y + 4, x + 7.5, y - 1, color=iron_col)
-		inner.draw()
-		tri.draw()
+		_shield_in.x, _shield_in.y = x + 4, y + 4
+		_shield_in.width = 3
+		_shield_in_tri.x, _shield_in_tri.y = x + 4, y + 4
+		_shield_in_tri.x2, _shield_in_tri.y2 = x + 7.5, y + 4
+		_shield_in_tri.x3, _shield_in_tri.y3 = x + 7.5, y - 1
+		_shield_in.draw()
+		_shield_in_tri.draw()
+
+_drum_bone_out = None
+_drum_meat_out = None
+_drum_bone_in = None
+_drum_meat_in = None
 
 def draw_vector_drumstick(x, y, is_full=True, is_half=False):
-	bg_col = (45, 30, 15, 230)
-	bone_outer = pyglet.shapes.Circle(x + 2, y + 2, 2.5, color=bg_col)
-	meat_outer = pyglet.shapes.Circle(x + 8, y + 8, 5.5, color=bg_col)
-	bone_outer.draw()
-	meat_outer.draw()
+	global _drum_bone_out, _drum_meat_out, _drum_bone_in, _drum_meat_in
+	if _drum_bone_out is None:
+		_drum_bone_out = pyglet.shapes.Circle(0, 0, 2.5, color=(45, 30, 15, 230))
+		_drum_meat_out = pyglet.shapes.Circle(0, 0, 5.5, color=(45, 30, 15, 230))
+		_drum_bone_in = pyglet.shapes.Circle(0, 0, 1.5, color=(235, 225, 210, 255))
+		_drum_meat_in = pyglet.shapes.Circle(0, 0, 4.0, color=(190, 95, 35, 255))
+
+	_drum_bone_out.x, _drum_bone_out.y = x + 2, y + 2
+	_drum_meat_out.x, _drum_meat_out.y = x + 8, y + 8
+	_drum_bone_out.draw()
+	_drum_meat_out.draw()
 
 	if not is_full and not is_half:
 		return
 
-	meat_col = (190, 95, 35, 255)
-	bone_col = (235, 225, 210, 255)
-
-	if is_full:
-		bone = pyglet.shapes.Circle(x + 2, y + 2, 1.5, color=bone_col)
-		meat = pyglet.shapes.Circle(x + 8, y + 8, 4.0, color=meat_col)
-		bone.draw()
-		meat.draw()
-	elif is_half:
-		bone = pyglet.shapes.Circle(x + 2, y + 2, 1.5, color=bone_col)
-		meat = pyglet.shapes.Sector(x + 8, y + 8, 4.0, angle=3.14159, start_angle=1.5708, color=meat_col)
-		bone.draw()
-		meat.draw()
+	_drum_bone_in.x, _drum_bone_in.y = x + 2, y + 2
+	_drum_meat_in.x, _drum_meat_in.y = x + 8, y + 8
+	_drum_bone_in.draw()
+	_drum_meat_in.draw()
 
 class InventoryGUI:
 	def __init__(self, window):
@@ -440,6 +501,14 @@ class InventoryGUI:
 			x=0, y=0, anchor_x="center", anchor_y="bottom",
 			color=(255, 255, 255, 255)
 		)
+
+		# Reusable static labels and sprites for zero-allocation rendering
+		dummy_img = self.icon_textures.get(1, list(self.icon_textures.values())[0]) if self.icon_textures else pyglet.image.ImageData(1, 1, 'RGBA', b'\x00\x00\x00\x00')
+		self.slot_sprite = pyglet.sprite.Sprite(dummy_img)
+		self.count_label = pyglet.text.Label("", font_name="Arial", font_size=10, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
+		self.hotbar_num_labels = [pyglet.text.Label(str(i + 1), font_name="Arial", font_size=9, anchor_x="left", anchor_y="top", color=(220, 220, 220, 255)) for i in range(9)]
+		self.veil_rect = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(0, 0, 0, 160))
+		self.hurt_flash = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(255, 0, 0, 140))
 
 	def get_total_armor_protection(self):
 		"""Returns total defense points (0 to 20) provided by currently equipped armor pieces."""
@@ -1310,8 +1379,10 @@ class InventoryGUI:
 
 		if self.window.camera.hurt_time > 0:
 			alpha = int(140 * (self.window.camera.hurt_time / 0.4))
-			flash = pyglet.shapes.Rectangle(0, 0, self.window.width, self.window.height, color=(255, 0, 0, alpha))
-			flash.draw()
+			self.hurt_flash.width = self.window.width
+			self.hurt_flash.height = self.window.height
+			self.hurt_flash.color = (255, 0, 0, alpha)
+			self.hurt_flash.draw()
 
 		hover_text = None
 
@@ -1445,16 +1516,23 @@ class InventoryGUI:
 
 			if b_id in self.icon_textures and cnt > 0:
 				img = self.icon_textures[b_id]
-				spr = pyglet.sprite.Sprite(img, x=sx + 6, y=sy + 6)
-				spr.scale_x = 32.0 / img.width
-				spr.scale_y = 32.0 / img.height
-				spr.draw()
+				self.slot_sprite.image = img
+				self.slot_sprite.x = sx + 6
+				self.slot_sprite.y = sy + 6
+				self.slot_sprite.scale_x = 32.0 / img.width
+				self.slot_sprite.scale_y = 32.0 / img.height
+				self.slot_sprite.draw()
 
 				if cnt > 1 or not self.window.flying:
-					cnt_lbl = pyglet.text.Label(str(cnt), font_name="Arial", font_size=10, x=sx + slot_size - 4, y=sy + 3, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
-					cnt_lbl.draw()
+					self.count_label.text = str(cnt)
+					self.count_label.font_size = 10
+					self.count_label.x = sx + slot_size - 4
+					self.count_label.y = sy + 3
+					self.count_label.draw()
 
-			num_lbl = pyglet.text.Label(str(i + 1), font_name="Arial", font_size=9, x=sx + 3, y=sy + slot_size - 2, anchor_x="left", anchor_y="top", color=(220, 220, 220, 255))
+			num_lbl = self.hotbar_num_labels[i]
+			num_lbl.x = sx + 3
+			num_lbl.y = sy + slot_size - 2
 			num_lbl.draw()
 
 			if sx <= self.mouse_x <= sx + slot_size and sy <= self.mouse_y <= sy + slot_size:
@@ -1469,17 +1547,24 @@ class InventoryGUI:
 		b_id, cnt = slot[0], slot[1]
 		if b_id in self.icon_textures and cnt > 0:
 			img = self.icon_textures[b_id]
-			spr = pyglet.sprite.Sprite(img, x=sx + 4, y=sy + 4)
-			spr.scale_x = 32.0 / img.width
-			spr.scale_y = 32.0 / img.height
-			spr.draw()
+			self.slot_sprite.image = img
+			self.slot_sprite.x = sx + 4
+			self.slot_sprite.y = sy + 4
+			self.slot_sprite.scale_x = 32.0 / img.width
+			self.slot_sprite.scale_y = 32.0 / img.height
+			self.slot_sprite.draw()
 
-			cnt_lbl = pyglet.text.Label(str(cnt), font_name="Arial", font_size=9, x=sx + slot_s - 3, y=sy + 2, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
-			cnt_lbl.draw()
+			if cnt > 1 or not self.window.flying:
+				self.count_label.text = str(cnt)
+				self.count_label.font_size = 9
+				self.count_label.x = sx + slot_s - 3
+				self.count_label.y = sy + 2
+				self.count_label.draw()
 
 	def _draw_inventory_overlay(self, current_hover):
-		veil = pyglet.shapes.Rectangle(0, 0, self.window.width, self.window.height, color=(0, 0, 0, 160))
-		veil.draw()
+		self.veil_rect.width = self.window.width
+		self.veil_rect.height = self.window.height
+		self.veil_rect.draw()
 
 		win_w = 640
 		win_h = 540 if self.crafting_mode == "double_chest" else 460

@@ -103,6 +103,7 @@ class Window(pyglet.window.Window):
 			multiline=True, width=500,
 			color=(255, 255, 255, 255)
 		)
+		self.break_progress_bar = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(255, 180, 0, 240))
 
 		# Steve 3D Player Model & Perspective System (F5)
 		import player_model
@@ -865,8 +866,11 @@ class Window(pyglet.window.Window):
 		gui.draw_bordered_box(cx - w // 2, cy, w, h, pad, (10, 10, 15, 230), (200, 200, 220, 255))
 
 		fill_w = max(1, int((w - 2 * pad) * min(1.0, self.break_progress)))
-		fill_bar = pyglet.shapes.Rectangle(cx - w // 2 + pad, cy + pad, fill_w, h - 2 * pad, color=(255, 180, 0, 240))
-		fill_bar.draw()
+		self.break_progress_bar.x = cx - w // 2 + pad
+		self.break_progress_bar.y = cy + pad
+		self.break_progress_bar.width = fill_w
+		self.break_progress_bar.height = h - 2 * pad
+		self.break_progress_bar.draw()
 
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glEnable(gl.GL_CULL_FACE)

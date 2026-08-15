@@ -205,4 +205,231 @@ def calculate_door_hinge(world, pos, facing, hit_pos=None):
 	return "LEFT"
 
 
+def ray_intersect_aabb(ray_orig, ray_dir, box):
+	"""Returns (t_hit, face_vector) if ray intersects AABB box at t > 0, else (None, None).
+	box: (min_x, min_y, min_z, max_x, max_y, max_z)
+	"""
+	ox, oy, oz = ray_orig
+	dx, dy, dz = ray_dir
+	min_x, min_y, min_z, max_x, max_y, max_z = box
+
+	t_near = -float('inf')
+	t_far = float('inf')
+	near_face = None
+
+	# X axis
+	if abs(dx) < 1e-8:
+		if ox < min_x or ox > max_x:
+			return None, None
+	else:
+		t1 = (min_x - ox) / dx
+		t2 = (max_x - ox) / dx
+		face1 = (-1, 0, 0)
+		face2 = (1, 0, 0)
+		if t1 > t2:
+			t1, t2 = t2, t1
+			face1, face2 = face2, face1
+		if t1 > t_near:
+			t_near = t1
+			near_face = face1
+		if t2 < t_far:
+			t_far = t2
+		if t_near > t_far or t_far < 0:
+			return None, None
+
+	# Y axis
+	if abs(dy) < 1e-8:
+		if oy < min_y or oy > max_y:
+			return None, None
+	else:
+		t1 = (min_y - oy) / dy
+		t2 = (max_y - oy) / dy
+		face1 = (0, -1, 0)
+		face2 = (0, 1, 0)
+		if t1 > t2:
+			t1, t2 = t2, t1
+			face1, face2 = face2, face1
+		if t1 > t_near:
+			t_near = t1
+			near_face = face1
+		if t2 < t_far:
+			t_far = t2
+		if t_near > t_far or t_far < 0:
+			return None, None
+
+	# Z axis
+	if abs(dz) < 1e-8:
+		if oz < min_z or oz > max_z:
+			return None, None
+	else:
+		t1 = (min_z - oz) / dz
+		t2 = (max_z - oz) / dz
+		face1 = (0, 0, -1)
+		face2 = (0, 0, 1)
+		if t1 > t2:
+			t1, t2 = t2, t1
+			face1, face2 = face2, face1
+		if t1 > t_near:
+			t_near = t1
+			near_face = face1
+		if t2 < t_far:
+			t_far = t2
+		if t_near > t_far or t_far < 0:
+			return None, None
+
+	if t_near < 0:
+		t_near = 0.0
+
+	return t_near, near_face
+
+
+def get_block_hitboxes(world, pos, block_num):
+	"""Returns list of world-space AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num at pos."""
+	if block_num == 0 or block_num in (9, 19, 15, 20):
+		return []
+
+	bx, by, bz = pos
+	st = world.get_block_state(pos) if world else None
+	facing = getattr(st, 'facing', 'NORTH') if st else 'NORTH'
+	half = getattr(st, 'half', 'BOTTOM') if st else 'BOTTOM'
+	shape = getattr(st, 'shape', 'STRAIGHT') if st else 'STRAIGHT'
+	hinge = getattr(st, 'hinge', 'LEFT') if st else 'LEFT'
+	open_state = getattr(st, 'open_state', False) if st else False
+	conns = getattr(st, 'connections', None) if st else None
+
+	def rotate_box(min_pt, max_pt, rot_facing):
+		def rot(p):
+			vx, vy, vz = p
+			if rot_facing == "EAST": return (-vz, vy, vx)
+			elif rot_facing == "SOUTH": return (-vx, vy, -vz)
+			elif rot_facing == "WEST": return (vz, vy, -vx)
+			return (vx, vy, vz)
+
+		p1 = rot((min_pt[0], min_pt[1], min_pt[2]))
+		p2 = rot((max_pt[0], max_pt[1], max_pt[2]))
+		return (
+			bx + min(p1[0], p2[0]),
+			by + min(p1[1], p2[1]),
+			bz + min(p1[2], p2[2]),
+			bx + max(p1[0], p2[0]),
+			by + max(p1[1], p2[1]),
+			bz + max(p1[2], p2[2])
+		)
+
+	# 1. Slabs (38, 39, 40, 62, 63, 64)
+	if block_num in (38, 39, 40, 62, 63, 64):
+		sl_h = "TOP" if block_num in (62, 63, 64) else half
+		if sl_h == "DOUBLE":
+			return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
+		elif sl_h == "TOP":
+			return [(bx - 0.5, by, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
+		else:
+			return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by, bz + 0.5)]
+
+	# 2. Doors (43, 44, 45, 46, 65, 66, 67, 68)
+	if block_num in (43, 44, 45, 46, 65, 66, 67, 68):
+		d_open = open_state or (block_num in (44, 46, 66, 68))
+		if d_open:
+			if hinge == "RIGHT":
+				return [rotate_box((0.3125, -0.5, -0.5), (0.5, 0.5, 0.5), facing)]
+			else:
+				return [rotate_box((-0.5, -0.5, -0.5), (-0.3125, 0.5, 0.5), facing)]
+		else:
+			return [rotate_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), facing)]
+
+	# 3. Trapdoors (47, 48, 49, 50, 69, 70, 71, 72)
+	if block_num in (47, 48, 49, 50, 69, 70, 71, 72):
+		is_top = block_num in (69, 70, 71, 72) or half == "TOP"
+		td_open = open_state or (block_num in (48, 50, 70, 72))
+		if td_open:
+			return [rotate_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), facing)]
+		else:
+			if is_top:
+				return [rotate_box((-0.5, 0.3125, -0.5), (0.5, 0.5, 0.5), facing)]
+			else:
+				return [rotate_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), facing)]
+
+	# 4. Stairs (41, 42, 73, 74)
+	if block_num in (41, 42, 73, 74):
+		is_top_stair = (block_num in (73, 74) or half in ("TOP", "UPPER"))
+		y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
+		y_step_min, y_step_max = (-0.5, 0.0) if is_top_stair else (0.0, 0.5)
+
+		boxes = [rotate_box((-0.5, y_base_min, -0.5), (0.5, y_base_max, 0.5), facing)]
+		if shape == "INNER_LEFT":
+			boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+			boxes.append(rotate_box((-0.5, y_step_min, 0.0), (0.0, y_step_max, 0.5), facing))
+		elif shape == "INNER_RIGHT":
+			boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+			boxes.append(rotate_box((0.0, y_step_min, 0.0), (0.5, y_step_max, 0.5), facing))
+		elif shape == "OUTER_LEFT":
+			boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.0, y_step_max, 0.0), facing))
+		elif shape == "OUTER_RIGHT":
+			boxes.append(rotate_box((0.0, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+		else:
+			boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
+		return boxes
+
+	# 5. Fences (51)
+	if block_num == 51:
+		if conns is None and world:
+			conns = calculate_fence_connections(world, pos, 51)
+		boxes = [(bx - 0.125, by - 0.5, bz - 0.125, bx + 0.125, by + 0.5, bz + 0.125)]
+		if conns:
+			if conns.get("north", False):
+				boxes.append((bx - 0.0625, by - 0.375, bz - 0.5, bx + 0.0625, by + 0.375, bz - 0.125))
+			if conns.get("south", False):
+				boxes.append((bx - 0.0625, by - 0.375, bz + 0.125, bx + 0.0625, by + 0.375, bz + 0.5))
+			if conns.get("west", False):
+				boxes.append((bx - 0.5, by - 0.375, bz - 0.0625, bx - 0.125, by + 0.375, bz + 0.0625))
+			if conns.get("east", False):
+				boxes.append((bx + 0.125, by - 0.375, bz - 0.0625, bx + 0.5, by + 0.375, bz + 0.0625))
+		return boxes
+
+	# 6. Walls (52)
+	if block_num == 52:
+		if conns is None and world:
+			conns = calculate_wall_connections(world, pos, 52)
+		boxes = [(bx - 0.25, by - 0.5, bz - 0.25, bx + 0.25, by + 0.5, bz + 0.25)]
+		if conns:
+			if conns.get("north", False):
+				boxes.append((bx - 0.15, by - 0.5, bz - 0.5, bx + 0.15, by + 0.35, bz - 0.25))
+			if conns.get("south", False):
+				boxes.append((bx - 0.15, by - 0.5, bz + 0.25, bx + 0.15, by + 0.35, bz + 0.5))
+			if conns.get("west", False):
+				boxes.append((bx - 0.5, by - 0.5, bz - 0.15, bx - 0.25, by + 0.35, bz + 0.15))
+			if conns.get("east", False):
+				boxes.append((bx + 0.25, by - 0.5, bz - 0.15, bx + 0.5, by + 0.35, bz + 0.15))
+		return boxes
+
+	# 7. Glass Panes (53)
+	if block_num == 53:
+		if conns is None and world:
+			conns = calculate_pane_connections(world, pos, 53)
+		boxes = [(bx - 0.0625, by - 0.5, bz - 0.0625, bx + 0.0625, by + 0.5, bz + 0.0625)]
+		has_conn = False
+		if conns:
+			if conns.get("north", False):
+				boxes.append((bx - 0.0625, by - 0.5, bz - 0.5, bx + 0.0625, by + 0.5, bz - 0.0625))
+				has_conn = True
+			if conns.get("south", False):
+				boxes.append((bx - 0.0625, by - 0.5, bz + 0.0625, bx + 0.0625, by + 0.5, bz + 0.5))
+				has_conn = True
+			if conns.get("west", False):
+				boxes.append((bx - 0.5, by - 0.5, bz - 0.0625, bx - 0.0625, by + 0.5, bz + 0.0625))
+				has_conn = True
+			if conns.get("east", False):
+				boxes.append((bx + 0.0625, by - 0.5, bz - 0.0625, bx + 0.5, by + 0.5, bz + 0.0625))
+				has_conn = True
+		if not has_conn:
+			boxes = [
+				(bx - 0.5, by - 0.5, bz - 0.0625, bx + 0.5, by + 0.5, bz + 0.0625),
+				(bx - 0.0625, by - 0.5, bz - 0.5, bx + 0.0625, by + 0.5, bz + 0.5)
+			]
+		return boxes
+
+	# Standard Full Cube
+	return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
+
+
 

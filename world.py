@@ -1071,27 +1071,27 @@ class World:
 
 		# 3. Submit pending section meshing tasks (max 4 active workers)
 		if len(self.section_mesh_futures) < 4 and self.section_mesh_queue:
+			slots_free = 4 - len(self.section_mesh_futures)
+			pending_list = list(self.section_mesh_queue)
+			if len(pending_list) > 1:
+				def mesh_priority(item):
+					cx, cz, sy = item[0], item[1], item[2]
+					dx = (cx * 16 + 8) - player_position[0]
+					dz = (cz * 16 + 8) - player_position[2]
+					dist_sq = dx * dx + dz * dz
+					dot = dx * look_x + dz * look_z
+					return dist_sq + (0.0 if dot >= 0 else 2000.0)
+
+				pending_list.sort(key=mesh_priority)
+
 			info = self.get_block_types_info()
 			w_lvls = dict(self.water_levels) if self.water_levels else None
 			l_lvls = dict(self.liquid_levels) if self.liquid_levels else None
 
-			# Sort pending meshing queue by proximity to camera
-			pending_list = list(self.section_mesh_queue)
-			def mesh_priority(item):
-				cx, cz, sy = item[0], item[1], item[2]
-				dx = (cx * 16 + 8) - player_position[0]
-				dz = (cz * 16 + 8) - player_position[2]
-				dist_sq = dx * dx + dz * dz
-				dot = dx * look_x + dz * look_z
-				return dist_sq + (0.0 if dot >= 0 else 2000.0)
-
-			pending_list.sort(key=mesh_priority)
-
-			for item in pending_list:
-				if len(self.section_mesh_futures) >= 4:
-					break
+			for item in pending_list[:slots_free]:
+				if item in self.section_mesh_queue:
+					self.section_mesh_queue.remove(item)
 				cx, cz, sy = item
-				self.section_mesh_queue.remove(item)
 
 				c_pos = (cx, 0, cz)
 				if c_pos not in self.chunks:
@@ -1490,21 +1490,8 @@ class World:
 			self.chunks[chunk_position] = chk
 			self.queue_chunk_sections_for_meshing(chunk_position[0], chunk_position[2])
 
-			# Enqueue active liquid boundary blocks in newly loaded chunk so fluid flow activates
+			# Trigger border section re-meshing for adjacent loaded neighbors
 			cx, _, cz = chunk_position
-			b_data = chk.blocks
-			if 9 in b_data or 19 in b_data or 15 in b_data or 20 in b_data:
-				for x_pos in range(16):
-					for z_pos in range(16):
-						base_xz = x_pos * 4096 + z_pos
-						for y_pos in range(1, 128):
-							b_id = b_data[base_xz + y_pos * 16]
-							if b_id in (9, 19, 15, 20):
-								wx = cx * 16 + x_pos
-								wz = cz * 16 + z_pos
-								self.liquid_tick_queue.add((wx, y_pos, wz))
-
-			# Also trigger border section re-meshing for adjacent loaded neighbors
 			for nx, nz in [(cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)]:
 				if (nx, 0, nz) in self.chunks:
 					self.queue_chunk_sections_for_meshing(nx, nz)
