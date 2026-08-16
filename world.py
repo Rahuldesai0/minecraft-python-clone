@@ -1537,7 +1537,7 @@ class World:
 									# Only valid upstream source if it has liquid above it and is on the floor (waterfall base)
 									if self.get_block_number((nx, y + 1, nz)) in (9, 19) and not self.is_downward_flow_open(nb_pos, is_water=True):
 										upstream.append(0)
-								elif nb_lvl < 7:
+								elif nb_lvl < cur_lvl or (cur_lvl == 8 and nb_lvl < 7):
 									upstream.append(nb_lvl)
 
 						if not upstream:
@@ -1664,7 +1664,7 @@ class World:
 								if nb_lvl == 4:
 									if self.get_block_number((nx, y + 1, nz)) in (15, 20) and not self.is_downward_flow_open(nb_pos, is_water=False):
 										upstream.append(0)
-								elif nb_lvl < 3:
+								elif nb_lvl < cur_lvl or (cur_lvl == 4 and nb_lvl < 3):
 									upstream.append(nb_lvl)
 
 						if not upstream:

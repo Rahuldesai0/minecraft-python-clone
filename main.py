@@ -469,8 +469,16 @@ class Window(pyglet.window.Window):
 					if self.break_progress >= 1.0:
 						# Spawn 3D dropped item entity ONLY if harvested with proper tool tier!
 						if not self.flying and can_harvest and drop_id is not None:
+							actual_drop_id = drop_id
+							if b_num == 77:
+								import random
+								if random.random() < 0.10:
+									actual_drop_id = 146  # 10% chance to drop Flint item (146)
+								else:
+									actual_drop_id = 77   # 90% chance to drop Gravel block (77)
+
 							self.item_drop_manager.spawn_drop(
-								drop_id, 1,
+								actual_drop_id, 1,
 								[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 							)
 

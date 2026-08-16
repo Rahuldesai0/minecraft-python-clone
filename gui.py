@@ -104,6 +104,7 @@ TOOL_ITEMS = [
 	(143, "Diamond Chestplate", "items/diamond_chestplate"),
 	(144, "Diamond Leggings", "items/diamond_leggings"),
 	(145, "Diamond Boots", "items/diamond_boots"),
+	(146, "Flint", "items/flint"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -314,6 +315,7 @@ BLOCK_MINING_PROPERTIES = {
 	74: ("pickaxe", 1, 1.2, 42),   # Cobblestone Top Stairs -> drops Cobblestone Stairs item 42
 	75: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Closed)
 	76: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Open -> drops Closed item 75)
+	77: ("shovel", 0, 0.6, 77),    # Gravel (10% Flint drop handled on break)
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
