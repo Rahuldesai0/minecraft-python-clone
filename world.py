@@ -138,11 +138,14 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 					block_num = 17  # iron
 				elif 2 <= j <= 15 and rng.randrange(1000) < 3:
 					block_num = 18  # diamond
+				elif 15 <= j <= 65 and rng.randrange(100) < 3:
+					block_num = 77  # gravel pocket
 				set_b(i, j, k, block_num)
 
 			cont = pnoise2(wx / 350.0, wz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
 			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
 			is_river = river_raw < 0.055
+			gravel_noise = pnoise2((wx + 4500.0) / 22.0, (wz + 4500.0) / 22.0, octaves=2)
 
 			if sy > 110:
 				for j in range(sub_depth, sy):
@@ -151,13 +154,26 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			elif sy > 90:
 				for j in range(sub_depth, sy + 1):
 					set_b(i, j, k, 5)
-			elif cont < 0.05 and not is_river:
+			elif sy < 60:
+				# Ocean, deep sea, and riverbed generation with natural Gravel (77), Sand (6), and Dirt (4) patches
+				if gravel_noise > 0.12:
+					underwater_mat = 77  # Gravel patch!
+				elif cont < 0.08 or (cont < 0.20 and sy < 56):
+					underwater_mat = 6   # Sand patch
+				else:
+					underwater_mat = 4   # Dirt floor
+
 				for j in range(sub_depth, sy + 1):
-					set_b(i, j, k, 6)
+					set_b(i, j, k, underwater_mat)
+			elif cont < 0.05 and not is_river:
+				# Beach sand & occasional gravel beaches
+				beach_mat = 77 if gravel_noise > 0.38 else 6
+				for j in range(sub_depth, sy + 1):
+					set_b(i, j, k, beach_mat)
 			else:
 				for j in range(sub_depth, sy):
 					set_b(i, j, k, 4)
-				set_b(i, sy, k, 4 if sy < 60 else 2)
+				set_b(i, sy, k, 2)
 
 			if sy < 60:
 				for water_y in range(sy + 1, 61):
@@ -231,13 +247,38 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 								set_b(px, lake_surface_y, pz, 9)       # Water source top
 								set_b(px, lake_surface_y - 1, pz, 9)   # Water source in body
 								
-								# Basin floor
-								floor_block = 4 if rng.randrange(100) < 70 else 5
+								# Basin floor with Gravel patches, Dirt, Sand, and Stone
+								gx = chunk_offset_x + px
+								gz = chunk_offset_z + pz
+								pond_gravel = pnoise2((gx + 1200.0) / 12.0, (gz + 1200.0) / 12.0)
+								if pond_gravel > 0.05:
+									floor_block = 77  # Gravel patch in pond!
+								else:
+									f_roll = rng.randrange(100)
+									if f_roll < 65:
+										floor_block = 4  # Dirt
+									elif f_roll < 85:
+										floor_block = 6  # Sand
+									else:
+										floor_block = 5  # Stone
+
 								set_b(px, lake_surface_y - 2, pz, floor_block)
-								set_b(px, lake_surface_y - 3, pz, 5)
+								set_b(px, lake_surface_y - 3, pz, 77 if pond_gravel > 0.15 else 5)
 							elif dist_sq <= (radius + 1) * (radius + 1):
-								# Watertight solid dirt/stone retaining wall rim extending 1 block above water level
-								shore_block = 4 if rng.randrange(100) < 60 else 5
+								# Watertight solid dirt/stone/gravel retaining wall rim extending 1 block above water level
+								gx = chunk_offset_x + px
+								gz = chunk_offset_z + pz
+								pond_gravel = pnoise2((gx + 1200.0) / 12.0, (gz + 1200.0) / 12.0)
+								if pond_gravel > 0.20:
+									shore_block = 77  # Gravel shore patch
+								else:
+									s_roll = rng.randrange(100)
+									if s_roll < 60:
+										shore_block = 4  # Dirt
+									elif s_roll < 80:
+										shore_block = 6  # Sand
+									else:
+										shore_block = 5  # Stone
 								for ry in range(lake_surface_y - 2, lake_surface_y + 2):
 									b_curr = get_b(px, ry, pz)
 									if b_curr == 0 or b_curr in (9, 19, 15, 20):
@@ -886,6 +927,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone_stairs_top", block_face_textures={"all": "cobblestone"}, model=models.stairs_top, transparent=True, break_time=1.2, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate", block_face_textures={"all": "planks"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate_open", block_face_textures={"all": "planks"}, model=models.fence_gate_open, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="gravel", block_face_textures={"all": "gravel"}, break_time=0.6, requires_tool=False))
 
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
@@ -926,6 +968,8 @@ class World:
 		self.water_levels = {}
 		self.liquid_tick_queue = set()
 		self.liquid_tick_timer = 0.0
+		self.gravity_tick_queue = set()
+		self.gravity_tick_timer = 0.0
 		self._block_info_cache = None
 
 	def get_single_chest(self, pos):
@@ -959,9 +1003,15 @@ class World:
 
 	def update(self, dt):
 		self.liquid_tick_timer += dt
-		if self.liquid_tick_timer >= 0.08:  # ~12.5 Hz (matches Minecraft fluid speed, saves 80% CPU & meshing)
+		if self.liquid_tick_timer >= 0.15:  # ~6.6 Hz (1 block flow step per 0.15s, authentic Minecraft spread)
 			self.liquid_tick_timer = 0.0
 			self.tick_liquids(dt)
+
+		self.gravity_tick_timer += dt
+		if self.gravity_tick_timer >= 0.16:  # ~6.25 Hz (visibly slower, smooth sand & gravel falling)
+			self.gravity_tick_timer = 0.0
+			self.tick_gravity_blocks()
+
 		for furnace in list(self.furnaces.values()):
 			furnace.tick(dt)
 
@@ -1240,7 +1290,65 @@ class World:
 					nb_st.connections = new_conn
 					self.set_block_state(nb_pos, nb_st)
 
+		# Check if block directly above is a gravity block (sand/gravel) needing to fall
+		above_pos = (int(px), int(py + 1), int(pz))
+		if py + 1 < chunk.CHUNK_HEIGHT and self.get_block_number(above_pos) in (6, 77):
+			if self.is_passable_for_gravity(position):
+				self.gravity_tick_queue.add(above_pos)
 
+	def is_passable_for_gravity(self, pos):
+		"""Returns True if a falling sand/gravel block can fall into this position."""
+		x, y, z = pos
+		if y < 1 or y >= chunk.CHUNK_HEIGHT:
+			return False
+		b_num = self.get_block_number(pos)
+		return b_num == 0 or b_num in (9, 19, 15, 20, 10, 12, 31, 33)
+
+	def tick_gravity_blocks(self):
+		"""Simulates gravity for Sand (6) and Gravel (77) blocks."""
+		if not self.gravity_tick_queue:
+			return
+
+		# Sort by Y ascending: lowest blocks fall first to ensure natural cascading
+		current_queue = sorted(self.gravity_tick_queue, key=lambda p: p[1])
+		self.gravity_tick_queue.clear()
+		next_queue = set()
+
+		for pos in current_queue:
+			x, y, z = int(pos[0]), int(pos[1]), int(pos[2])
+			if y <= 1 or y >= chunk.CHUNK_HEIGHT:
+				continue
+
+			b_num = self.get_block_number((x, y, z))
+			if b_num not in (6, 77):
+				continue
+
+			down_pos = (x, y - 1, z)
+			if self.is_passable_for_gravity(down_pos):
+				b_st = self.get_block_state((x, y, z))
+				down_b = self.get_block_number(down_pos)
+
+				# If falling onto plants/flowers/snow, drop them as item
+				if down_b in (10, 12, 31, 33) and self.item_drop_manager:
+					self.item_drop_manager.spawn_drop(down_b, 1, [x + 0.5, y - 0.5, z + 0.5])
+
+				# Move block downward
+				self.set_block((x, y, z), 0)
+				self.set_block(down_pos, b_num)
+				if b_st:
+					self.set_block_state(down_pos, b_st)
+
+				# Continue falling if space below is also passable
+				if y - 1 > 1 and self.is_passable_for_gravity((x, y - 2, z)):
+					next_queue.add(down_pos)
+
+				# Queue any sand/gravel directly above to fall next
+				above_pos = (x, y + 1, z)
+				if y + 1 < chunk.CHUNK_HEIGHT and self.get_block_number(above_pos) in (6, 77):
+					next_queue.add(above_pos)
+
+		if next_queue:
+			self.gravity_tick_queue.update(next_queue)
 
 	def is_opaque_block(self, position):
 		b_num = self.get_block_number(position)
@@ -1361,16 +1469,19 @@ class World:
 		return [d_pair for d_pair, _ in open_dirs]
 
 	def tick_liquids(self, dt=0.0):
-		"""Official Minecraft Water & Lava 1:1 Flow & Slope Simulation Engine."""
+		"""Official Minecraft Water & Lava 1:1 Flow & Slope Simulation Engine (1 block step per tick)."""
 		if not self.liquid_tick_queue:
 			return
 
-		# Process active liquid queue up to 256 liquid blocks per frame
-		max_ticks_per_frame = 256
-		ticks_processed = 0
+		# Snapshot current batch so that newly spawned flow advances on subsequent ticks (1 block step per tick)
+		current_batch = list(self.liquid_tick_queue)
+		self.liquid_tick_queue.clear()
+		created_this_tick = set()
 
-		while self.liquid_tick_queue and ticks_processed < max_ticks_per_frame:
-			pos = self.liquid_tick_queue.pop()
+		for pos in current_batch:
+			if pos in created_this_tick:
+				continue
+
 			x, y, z = pos
 			if y <= 1 or y >= 255:
 				continue
@@ -1378,8 +1489,6 @@ class World:
 			b_num = self.get_block_number(pos)
 			if b_num not in (9, 19, 15, 20, 0):
 				continue
-
-			ticks_processed += 1
 
 			# --- 1. WATER SOURCE (9) OR FLOWING WATER (19) ---
 			if b_num in (9, 19):
@@ -1399,6 +1508,7 @@ class World:
 					if source_count >= 2 and is_solid_or_water:
 						self.set_block(pos, 9)
 						self.water_levels[pos] = 0
+						created_this_tick.add(pos)
 						is_source = True
 						cur_lvl = 0
 						self.liquid_tick_queue.add(pos)
@@ -1434,6 +1544,7 @@ class World:
 							# No upstream support: drain water
 							self.set_block(pos, 0)
 							self.water_levels.pop(pos, None)
+							created_this_tick.add(pos)
 							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
 								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
 							continue
@@ -1443,21 +1554,24 @@ class World:
 							if new_lvl > 7:
 								self.set_block(pos, 0)
 								self.water_levels.pop(pos, None)
+								created_this_tick.add(pos)
 								for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
 									self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
 								continue
 							self.water_levels[pos] = new_lvl
 							cur_lvl = new_lvl
 
-				# Water + Lava Horizontal Mixing Check
-				for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
-					nx, nz = x + dx, z + dz
-					n_pos = (nx, y, nz)
+				# Water + Lava Mixing Check (All 6 directions: 4 horizontal + up + down)
+				for dx, dy, dz in ((0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (1, 0, 0), (-1, 0, 0)):
+					nx, ny, nz = x + dx, y + dy, z + dz
+					n_pos = (nx, ny, nz)
 					nb_num = self.get_block_number(n_pos)
 					if nb_num == 15: # Lava Source -> Obsidian
 						self.set_block(n_pos, 24)
+						created_this_tick.add(n_pos)
 					elif nb_num == 20: # Flowing Lava -> Cobblestone
 						self.set_block(n_pos, 1)
+						created_this_tick.add(n_pos)
 
 				# Spread Downward
 				down_pos = (x, y - 1, z)
@@ -1467,12 +1581,15 @@ class World:
 				if down_is_open:
 					self.set_block(down_pos, 19)
 					self.water_levels[down_pos] = 8
+					created_this_tick.add(down_pos)
 					self.liquid_tick_queue.add(down_pos)
 					self.liquid_tick_queue.add((x, y - 2, z))
 				elif down_num == 15: # Lava Source below water -> Obsidian
 					self.set_block(down_pos, 24)
+					created_this_tick.add(down_pos)
 				elif down_num == 20: # Flowing Lava below water -> Cobblestone
 					self.set_block(down_pos, 1)
+					created_this_tick.add(down_pos)
 
 				# Horizontal Spread:
 				# 1. Source blocks ALWAYS spread horizontally to open adjacent air blocks.
@@ -1490,6 +1607,7 @@ class World:
 							if target_lvl <= 7:
 								self.set_block(n_pos, 19)
 								self.water_levels[n_pos] = target_lvl
+								created_this_tick.add(n_pos)
 								self.liquid_tick_queue.add(n_pos)
 								self.liquid_tick_queue.add((nx, y - 1, nz))
 						elif n_num == 19:
@@ -1498,16 +1616,34 @@ class World:
 							target_lvl = 1 if is_source or cur_lvl == 8 else cur_lvl + 1
 							if target_lvl < existing_lvl:
 								self.water_levels[n_pos] = target_lvl
+								created_this_tick.add(n_pos)
 								self.liquid_tick_queue.add(n_pos)
 						elif n_num == 15: # Water flows into Lava Source -> Obsidian
 							self.set_block(n_pos, 24)
+							created_this_tick.add(n_pos)
 						elif n_num == 20: # Water flows into Flowing Lava -> Cobblestone
 							self.set_block(n_pos, 1)
+							created_this_tick.add(n_pos)
 
 			# --- 2. LAVA SOURCE (15) OR FLOWING LAVA (20) ---
 			elif b_num in (15, 20):
 				is_source = (b_num == 15)
 				cur_lvl = 0 if is_source else self.liquid_levels.get(pos, 1)
+
+				# Check if this lava block itself is touching water in any adjacent direction
+				touches_water = False
+				for dx, dy, dz in ((0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (1, 0, 0), (-1, 0, 0)):
+					if self.get_block_number((x + dx, y + dy, z + dz)) in (9, 19):
+						touches_water = True
+						break
+
+				if touches_water:
+					if is_source:
+						self.set_block(pos, 24)  # Lava Source touching Water -> Obsidian
+					else:
+						self.set_block(pos, 1)   # Flowing Lava touching Water -> Cobblestone
+					created_this_tick.add(pos)
+					continue
 
 				# If flowing lava, check upstream support
 				if not is_source:
@@ -1534,6 +1670,7 @@ class World:
 						if not upstream:
 							self.set_block(pos, 0)
 							self.liquid_levels.pop(pos, None)
+							created_this_tick.add(pos)
 							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
 								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
 							continue
@@ -1543,6 +1680,7 @@ class World:
 							if new_lvl > 3:
 								self.set_block(pos, 0)
 								self.liquid_levels.pop(pos, None)
+								created_this_tick.add(pos)
 								for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
 									self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
 								continue
@@ -1557,10 +1695,12 @@ class World:
 				if down_is_open:
 					self.set_block(down_pos, 20)
 					self.liquid_levels[down_pos] = 4
+					created_this_tick.add(down_pos)
 					self.liquid_tick_queue.add(down_pos)
 					self.liquid_tick_queue.add((x, y - 2, z))
-				elif down_num in (9, 19): # Lava flowing down onto water -> Stone
-					self.set_block(down_pos, 5)
+				elif down_num in (9, 19): # Lava flowing down onto water -> Cobblestone
+					self.set_block(down_pos, 1)
+					created_this_tick.add(down_pos)
 
 				# Horizontal Spread:
 				# 1. Source blocks ALWAYS spread horizontally to open adjacent air blocks.
@@ -1578,10 +1718,12 @@ class World:
 							if target_lvl <= 3:
 								self.set_block(n_pos, 20)
 								self.liquid_levels[n_pos] = target_lvl
+								created_this_tick.add(n_pos)
 								self.liquid_tick_queue.add(n_pos)
 								self.liquid_tick_queue.add((nx, y - 1, nz))
-						elif n_num in (9, 19): # Lava flows into water -> Cobblestone
+						elif n_num in (9, 19): # Flowing Lava flows into water -> Cobblestone
 							self.set_block(n_pos, 1)
+							created_this_tick.add(n_pos)
 
 			# --- 3. AIR / PASSABLE BLOCK (Infinite Water Source Creation Check) ---
 			elif b_num == 0:
@@ -1596,6 +1738,7 @@ class World:
 				if source_count >= 2 and is_solid_or_source:
 					self.set_block(pos, 9)
 					self.water_levels[pos] = 0
+					created_this_tick.add(pos)
 					self.liquid_tick_queue.add(pos)
 					for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
 						self.liquid_tick_queue.add((x + dx, y, z + dz))
@@ -1675,6 +1818,15 @@ class World:
 		if lx == 0: self.section_mesh_queue.add((c_pos[0] - 1, c_pos[2], sy))
 		if lz == 15: self.section_mesh_queue.add((c_pos[0], c_pos[2] + 1, sy))
 		if lz == 0: self.section_mesh_queue.add((c_pos[0], c_pos[2] - 1, sy))
+
+		# Gravity checks for Sand (6) and Gravel (77)
+		if number in (6, 77):
+			if ly > 1 and self.is_passable_for_gravity((px, py - 1, pz)):
+				self.gravity_tick_queue.add((int(px), int(py), int(pz)))
+		elif self.is_passable_for_gravity((px, py, pz)):
+			above_pos = (int(px), int(py + 1), int(pz))
+			if py + 1 < chunk.CHUNK_HEIGHT and self.get_block_number(above_pos) in (6, 77):
+				self.gravity_tick_queue.add(above_pos)
 
 		self.notify_neighbor_block_change(position)
 

@@ -8,6 +8,7 @@ import pyglet.gl as gl
 PALETTE_ITEMS = [
 	(2, "Grass Block", "grass"),
 	(4, "Dirt", "dirt"),
+	(77, "Gravel", "gravel"),
 	(5, "Stone", "stone"),
 	(1, "Cobblestone", "cobblestone"),
 	(7, "Oak Planks", "planks"),
