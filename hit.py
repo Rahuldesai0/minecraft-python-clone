@@ -4,8 +4,9 @@ import block_state
 HIT_RANGE = 3
 
 class Hit_ray:
-	def __init__(self, world, rotation, starting_position):
+	def __init__(self, world, rotation, starting_position, hit_liquids=False):
 		self.world = world
+		self.hit_liquids = hit_liquids
 		
 		self.vector = (
 			math.cos(rotation[0]) * math.cos(rotation[1]),
@@ -20,9 +21,15 @@ class Hit_ray:
 	
 	def check(self, hit_callback, distance, current_block, next_block, face_vector=None):
 		block_num = self.world.get_block_number(next_block)
-		if block_num != 0 and block_num not in (9, 19, 15, 20):
+		is_hit = False
+		if self.hit_liquids and block_num in (9, 15):
+			is_hit = True
+		elif block_num != 0 and block_num not in (9, 19, 15, 20):
+			is_hit = True
+
+		if is_hit:
 			boxes = block_state.get_block_hitboxes(self.world, next_block, block_num)
-			if boxes:
+			if boxes and block_num not in (9, 15):
 				# Find closest ray-AABB intersection among block's sub-boxes
 				best_t = float('inf')
 				best_face = None

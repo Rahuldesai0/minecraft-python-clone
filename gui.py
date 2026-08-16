@@ -54,6 +54,9 @@ PALETTE_ITEMS = [
 	(52, "Cobblestone Wall", "items/cobblestone_wall"),
 	(53, "Glass Pane", "items/glass_pane"),
 	(75, "Oak Fence Gate", "items/oak_fence_gate"),
+	(147, "Bucket", "items/bucket_empty"),
+	(148, "Water Bucket", "items/bucket_water"),
+	(149, "Lava Bucket", "items/bucket_lava"),
 ]
 
 TOOL_ITEMS = [
@@ -105,6 +108,9 @@ TOOL_ITEMS = [
 	(144, "Diamond Leggings", "items/diamond_leggings"),
 	(145, "Diamond Boots", "items/diamond_boots"),
 	(146, "Flint", "items/flint"),
+	(147, "Bucket", "items/bucket_empty"),
+	(148, "Water Bucket", "items/bucket_water"),
+	(149, "Lava Bucket", "items/bucket_lava"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -129,9 +135,11 @@ ARMOR_DEFENSE_POINTS = {
 }
 
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools & Armor (101-120, 130-145) do not stack (max stack = 1)."""
-	if (101 <= item_id <= 120) or (130 <= item_id <= 145):
+	"""Returns the maximum stack size for an item ID. Tools, Armor, & Liquid Buckets (101-120, 130-145, 148, 149) do not stack (max stack = 1). Empty Buckets stack to 16."""
+	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149):
 		return 1
+	if item_id == 147:
+		return 16
 	return 64
 
 # Minecraft Attack Damage values (in HP):
@@ -208,6 +216,7 @@ FUEL_BURN_TIMES = {
 	109: 10.0,  # Wooden Shovel -> 10s
 	113: 10.0,  # Wooden Sword -> 10s
 	100: 5.0,   # Stick -> 5s (0.5 smelts)
+	149: 1000.0, # Lava Bucket -> 1000s (100 smelts)
 }
 
 # Tool Properties: item_id -> (category, tier, speed_multiplier)
@@ -1289,6 +1298,13 @@ class InventoryGUI:
 				if m0 in (124, 35, 28): self.crafting_result = [137, 1]; return  # Golden Boots
 				if m0 in (123, 17, 29): self.crafting_result = [141, 1]; return  # Iron Boots
 				if m0 in (122, 18, 30): self.crafting_result = [145, 1]; return  # Diamond Boots
+
+		# Recipe: Bucket (3 Iron Ingots in V-shape: [[M, 0, M], [0, M, 0]]) -> 1 Bucket (147)
+		if h == 2 and w == 3:
+			m0 = matrix[0][0]
+			if m0 in (123, 17, 29) and matrix[0][1] == 0 and matrix[0][2] == m0 and matrix[1][0] == 0 and matrix[1][1] == m0 and matrix[1][2] == 0:
+				self.crafting_result = [147, 1]
+				return
 
 		# Recipe 11: Chestplates (8 materials in 3x3 hollow neck ring: [[M, 0, M], [M, M, M], [M, M, M]])
 		if h == 3 and w == 3:

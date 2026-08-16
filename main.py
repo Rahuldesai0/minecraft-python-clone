@@ -1326,6 +1326,45 @@ class Window(pyglet.window.Window):
 			if self.world.get_block_number(current_block) != 14 and 0 <= current_block[1] < 256:
 				if button == pyglet.window.mouse.RIGHT:
 					target_b = self.world.get_block_number(next_block)
+
+					# 1. Bucket interactions (147 = Empty Bucket, 148 = Water Bucket, 149 = Lava Bucket)
+					if self.holding == 147:
+						if target_b in (9, 15):
+							# Scoop liquid source block!
+							self.world.set_block(next_block, 0)
+							new_bucket = 148 if target_b == 9 else 149
+							active_slot = self.gui.hotbar_slots[self.gui.selected_slot]
+							if getattr(self, "flying", False):
+								active_slot[0] = new_bucket
+								active_slot[1] = 1
+							else:
+								if active_slot[1] == 1:
+									active_slot[0] = new_bucket
+								else:
+									active_slot[1] -= 1
+									self.gui.add_item(new_bucket, 1)
+							self.holding = self.gui.get_current_block_id()
+							return
+						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass  # Fall through to interactive block GUI/toggle below
+						else:
+							return  # Empty bucket on non-liquid does nothing
+
+					elif self.holding in (148, 149):
+						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass  # Fall through to interactive block GUI/toggle below
+						else:
+							# Place liquid source block at current_block (adjacent open space)
+							if 0 <= current_block[1] < 256:
+								liquid_id = 9 if self.holding == 148 else 15
+								self.world.set_block(current_block, liquid_id)
+								active_slot = self.gui.hotbar_slots[self.gui.selected_slot]
+								if not getattr(self, "flying", False):
+									active_slot[0] = 147  # Empty Bucket
+									active_slot[1] = 1
+								self.holding = self.gui.get_current_block_id()
+								return
+
 					if target_b in INTERACTIVE_BLOCKS:
 						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):
 							place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
@@ -1399,7 +1438,7 @@ class Window(pyglet.window.Window):
 									break
 						self.holding = self.gui.get_current_block_id()
 		
-		hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
+		hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position, hit_liquids=(self.holding == 147))
 		while hit_ray.distance < hit.HIT_RANGE:
 			if hit_ray.step(hit_callback):
 				break

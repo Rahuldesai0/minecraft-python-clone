@@ -788,10 +788,14 @@ class FurnaceData:
 			fuel_id, fuel_cnt = self.fuel_slot[0], self.fuel_slot[1]
 			burn_sec = gui.FUEL_BURN_TIMES.get(fuel_id, 0.0)
 			if burn_sec > 0 and fuel_cnt > 0:
-				self.fuel_slot[1] -= 1
-				if self.fuel_slot[1] <= 0:
-					self.fuel_slot[0] = 0
-					self.fuel_slot[1] = 0
+				if fuel_id == 149:  # Lava Bucket leaves Empty Bucket (147)
+					self.fuel_slot[0] = 147
+					self.fuel_slot[1] = 1
+				else:
+					self.fuel_slot[1] -= 1
+					if self.fuel_slot[1] <= 0:
+						self.fuel_slot[0] = 0
+						self.fuel_slot[1] = 0
 				self.burn_time_remaining = burn_sec
 				self.max_burn_time = burn_sec
 
