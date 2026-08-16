@@ -36,6 +36,7 @@ class Window(pyglet.window.Window):
 
 		self.world = world.World()
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
+		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
 		
 		# create shader
@@ -391,10 +392,10 @@ class Window(pyglet.window.Window):
 				self.mouse_captured = True
 				self.set_exclusive_mouse(True)
 
-				# Position player safely 1 block higher if generating a fresh new world
+				# Position player safely on the surface if generating a fresh new world
 				if not self.is_saved_load:
 					spawn_y = self.get_surface_height(0, 0)
-					self.camera.position = [0.5, spawn_y + 2.85, 0.5]
+					self.camera.position = [0.5, spawn_y + 1.0 + self.camera.eye_offset, 0.5]
 					self.camera.velocity_y = 0.0
 					self.camera.fall_start_y = None
 			return
@@ -434,7 +435,12 @@ class Window(pyglet.window.Window):
 
 			if target_block:
 				b_num = self.world.get_block_number(target_block)
-				if 0 < b_num < len(self.world.block_types) and b_num not in (9, 19, 15, 20, 14):
+				# Check if breaking a fire block (78) or punching a burning block side overlay
+				if b_num == 78 or target_block in self.world.burning_blocks:
+					self.world.extinguish_block(target_block)
+					self.breaking_block = None
+					self.break_progress = 0.0
+				elif 0 < b_num < len(self.world.block_types) and b_num not in (9, 19, 15, 20, 14):
 					if self.flying:
 						self.break_progress = 1.0
 						tool_cat, tool_tier, can_harvest, drop_id = None, 0, False, None
@@ -1115,6 +1121,25 @@ class Window(pyglet.window.Window):
 
 			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage):
 				return
+
+			# Check if hitting a Fire block (78) or burning block side overlay to extinguish it immediately
+			target_block = None
+			def find_target(current_block, next_block, face_vector=None, hit_pos=None):
+				nonlocal target_block
+				target_block = next_block
+
+			hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
+			while hit_ray.distance < hit.HIT_RANGE:
+				if hit_ray.step(find_target):
+					break
+
+			if target_block:
+				b_num = self.world.get_block_number(target_block)
+				if b_num == 78 or target_block in self.world.burning_blocks:
+					self.world.extinguish_block(target_block)
+					self.breaking_block = None
+					self.break_progress = 0.0
+					return
 		elif button == pyglet.window.mouse.RIGHT:
 			held_id = self.gui.get_current_block_id()
 			if held_id in gui.FOOD_VALUES and self.camera.hunger < 20:
@@ -1364,6 +1389,25 @@ class Window(pyglet.window.Window):
 									active_slot[1] = 1
 								self.holding = self.gui.get_current_block_id()
 								return
+
+					# 2. Flint and Steel interactions (151)
+					elif self.holding == 151:
+						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass  # Fall through to interactive block GUI/toggle below
+						else:
+							import random
+							if face_vector == (0, 1, 0):
+								# Top face: place full fire block (78) in open space above
+								if 0 <= current_block[1] < 256:
+									cur_b = self.world.get_block_number(current_block)
+									if cur_b == 0 or cur_b in (10, 12, 31, 33):
+										self.world.set_fire(current_block, duration=random.uniform(8.0, 10.0))
+										return
+							elif face_vector in ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)):
+								# Side or bottom face: mask only the 4 lateral side faces of that block with fire texture for 8-10s
+								if target_b != 0:
+									self.world.ignite_block_face(next_block, face_idx={0, 1, 4, 5}, duration=random.uniform(8.0, 10.0))
+									return
 
 					if target_b in INTERACTIVE_BLOCKS:
 						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):

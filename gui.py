@@ -53,10 +53,11 @@ PALETTE_ITEMS = [
 	(51, "Oak Fence", "items/oak_fence"),
 	(52, "Cobblestone Wall", "items/cobblestone_wall"),
 	(53, "Glass Pane", "items/glass_pane"),
-	(75, "Oak Fence Gate", "items/oak_fence_gate"),
+	(56, "Oak Fence Gate", "items/oak_fence_gate"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
+	(151, "Flint and Steel", "items/flint_and_steel"),
 ]
 
 TOOL_ITEMS = [
@@ -111,6 +112,7 @@ TOOL_ITEMS = [
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
+	(151, "Flint and Steel", "items/flint_and_steel"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -135,8 +137,8 @@ ARMOR_DEFENSE_POINTS = {
 }
 
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools, Armor, & Liquid Buckets (101-120, 130-145, 148, 149) do not stack (max stack = 1). Empty Buckets stack to 16."""
-	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149):
+	"""Returns the maximum stack size for an item ID. Tools, Armor, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets stack to 16."""
+	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151):
 		return 1
 	if item_id == 147:
 		return 16
@@ -466,6 +468,33 @@ def draw_vector_drumstick(x, y, is_full=True, is_half=False):
 	_drum_meat_in.x, _drum_meat_in.y = x + 8, y + 8
 	_drum_bone_in.draw()
 	_drum_meat_in.draw()
+
+_bubble_out = None
+_bubble_in = None
+_bubble_glint = None
+_bubble_pop = None
+
+def draw_vector_bubble(x, y, is_full=True):
+	global _bubble_out, _bubble_in, _bubble_glint, _bubble_pop
+	if _bubble_out is None:
+		_bubble_out = pyglet.shapes.Circle(0, 0, 5.0, color=(10, 40, 85, 230))
+		_bubble_in = pyglet.shapes.Circle(0, 0, 3.8, color=(40, 165, 245, 220))
+		_bubble_glint = pyglet.shapes.Circle(0, 0, 1.2, color=(255, 255, 255, 240))
+		_bubble_pop = pyglet.shapes.Circle(0, 0, 4.5, color=(15, 50, 95, 70))
+
+	cx = x + 7
+	cy = y + 7
+
+	if is_full:
+		_bubble_out.x, _bubble_out.y = cx, cy
+		_bubble_in.x, _bubble_in.y = cx, cy
+		_bubble_glint.x, _bubble_glint.y = cx - 1.2, cy + 1.2
+		_bubble_out.draw()
+		_bubble_in.draw()
+		_bubble_glint.draw()
+	else:
+		_bubble_pop.x, _bubble_pop.y = cx, cy
+		_bubble_pop.draw()
 
 class InventoryGUI:
 	def __init__(self, window):
@@ -1367,6 +1396,12 @@ class InventoryGUI:
 				self.crafting_result = [75, 1]  # Oak Fence Gate (75)
 				return
 
+		# Recipe 19: Flint and Steel (1 Iron Ingot 123 + 1 Flint 146 in any 2-slot arrangement)
+		flat_items = [x for row in matrix for x in row if x != 0]
+		if sorted(flat_items) == [123, 146]:
+			self.crafting_result = [151, 1]  # Flint and Steel (151)
+			return
+
 		self.crafting_result = [0, 0]
 
 	def set_selected_slot(self, slot_idx):
@@ -1412,6 +1447,11 @@ class InventoryGUI:
 			self.hurt_flash.color = (255, 0, 0, alpha)
 			self.hurt_flash.draw()
 
+		if getattr(self.window.camera, "fire_timer", 0) > 0 and not getattr(self.window, "flying", False):
+			import time
+			f_alpha = int(55 + 30 * math.sin(time.time() * 14.0))
+			draw_bordered_box(0, 0, self.window.width, int(self.window.height * 0.38), 0, (255, 120, 20, f_alpha), (0, 0, 0, 0))
+
 		hover_text = None
 
 		hover_text = self._draw_hotbar(hover_text)
@@ -1420,6 +1460,7 @@ class InventoryGUI:
 			self._draw_health_bar()
 			self._draw_armor_bar()
 			self._draw_hunger_bar()
+			self._draw_bubble_bar()
 
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
@@ -1518,6 +1559,30 @@ class InventoryGUI:
 				draw_vector_drumstick(fx, fy, is_full=False, is_half=True)
 			else:
 				draw_vector_drumstick(fx, fy, is_full=False, is_half=False)
+
+	def _draw_bubble_bar(self):
+		air = getattr(self.window.camera, "air", 10.0)
+		head_underwater = getattr(self.window.camera, "is_head_underwater", lambda w: False)(self.window.world)
+		# Only display bubble bar when player's head is underwater or air is depleted (< 10.0)
+		if not head_underwater and air >= 10.0:
+			return
+
+		slot_size = 44
+		padding = 6
+		total_w = 9 * slot_size + 8 * padding
+		start_x = (self.window.width + total_w) // 2 - 180
+		start_y = 82  # Positioned directly above hunger bar (which is at y = 64)
+
+		bubbles_remaining = int(math.ceil(air))  # 0 to 10
+
+		for i in range(10):
+			bx = start_x + (9 - i) * 18
+			by = start_y
+
+			if i < bubbles_remaining:
+				draw_vector_bubble(bx, by, is_full=True)
+			else:
+				draw_vector_bubble(bx, by, is_full=False)
 
 	def _draw_hotbar(self, current_hover):
 		slot_size = 44
@@ -2694,3 +2759,48 @@ class InventoryGUI:
 		else:
 			return
 		self.set_selected_slot(new_slot)
+
+	def drop_all_on_death(self, death_position, item_drop_manager):
+		"""Drops all inventory, hotbar, armor, crafting grid, and cursor held items at death_position."""
+		import random
+		px, py, pz = death_position
+
+		def drop_slot(slot):
+			if slot and slot[0] != 0 and slot[1] > 0:
+				if item_drop_manager:
+					vx = random.uniform(-1.8, 1.8)
+					vy = random.uniform(1.5, 3.5)
+					vz = random.uniform(-1.8, 1.8)
+					item_drop_manager.spawn_drop(slot[0], slot[1], [px, py - 0.4, pz], velocity=[vx, vy, vz])
+				slot[0] = 0
+				slot[1] = 0
+
+		# 1. Hotbar slots
+		for slot in self.survival_hotbar:
+			drop_slot(slot)
+
+		# 2. Main inventory slots
+		for slot in self.survival_inventory:
+			drop_slot(slot)
+
+		# 3. Armor slots
+		for slot in self.armor_slots:
+			drop_slot(slot)
+
+		# 4. Crafting 2x2 & 3x3 slots
+		for slot in self.crafting_grid_2x2:
+			drop_slot(slot)
+		for slot in self.crafting_grid_3x3:
+			drop_slot(slot)
+		self.crafting_result = [0, 0]
+
+		# 5. Cursor held stack
+		if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
+			if item_drop_manager:
+				vx = random.uniform(-1.8, 1.8)
+				vy = random.uniform(1.5, 3.5)
+				vz = random.uniform(-1.8, 1.8)
+				item_drop_manager.spawn_drop(self.held_stack[0], self.held_stack[1], [px, py - 0.4, pz], velocity=[vx, vy, vz])
+			self.held_stack = None
+
+		self.inventory_open = False

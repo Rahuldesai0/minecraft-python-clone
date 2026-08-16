@@ -87,6 +87,8 @@ class MobEntity:
 		self.is_moving = False
 		self.hurt_time = 0.0
 		self.is_dead = False
+		self.fire_timer = 0.0
+		self.fire_damage_timer = 0.0
 
 		self.target_dest = None
 		self.speed_mult = 1.0
@@ -99,6 +101,63 @@ class MobEntity:
 	def set_target_destination(self, x, z, speed_mult=1.0):
 		self.target_dest = (x, z)
 		self.speed_mult = speed_mult
+
+	def is_touching_fire(self, world):
+		"""Checks if the mob's bounding box intersects a Fire block (78)."""
+		mx, my, mz = self.position
+		half_w = self.width / 2.0
+		min_bx = int(math.floor(mx - half_w + 0.5))
+		max_bx = int(math.floor(mx + half_w + 0.5))
+		min_by = int(math.floor(my + 0.5))
+		max_by = int(math.floor(my + self.height + 0.5))
+		min_bz = int(math.floor(mz - half_w + 0.5))
+		max_bz = int(math.floor(mz + half_w + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num == 78 or (bx, by, bz) in getattr(world, 'active_fires', {}):
+						return True
+		return False
+
+	def is_in_water(self, world):
+		"""Checks if the mob's bounding box touches water (9 or 19)."""
+		mx, my, mz = self.position
+		half_w = self.width / 2.0
+		min_bx = int(math.floor(mx - half_w + 0.5))
+		max_bx = int(math.floor(mx + half_w + 0.5))
+		min_by = int(math.floor(my + 0.5))
+		max_by = int(math.floor(my + self.height + 0.5))
+		min_bz = int(math.floor(mz - half_w + 0.5))
+		max_bz = int(math.floor(mz + half_w + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num in (9, 19):
+						return True
+		return False
+
+	def is_in_lava(self, world):
+		"""Checks if the mob's bounding box touches lava (15 or 20)."""
+		mx, my, mz = self.position
+		half_w = self.width / 2.0
+		min_bx = int(math.floor(mx - half_w + 0.5))
+		max_bx = int(math.floor(mx + half_w + 0.5))
+		min_by = int(math.floor(my + 0.5))
+		max_by = int(math.floor(my + self.height + 0.5))
+		min_bz = int(math.floor(mz - half_w + 0.5))
+		max_bz = int(math.floor(mz + half_w + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num in (15, 20):
+						return True
+		return False
 
 	def take_damage(self, damage, attacker_pos=None, is_fire=False):
 		if self.is_dead or damage <= 0:
@@ -117,6 +176,33 @@ class MobEntity:
 
 		if self.hurt_time > 0:
 			self.hurt_time = max(0.0, self.hurt_time - dt)
+
+		# Fire, Lava & Water physics / damage
+		if self.is_in_water(world):
+			self.fire_timer = 0.0
+			self.fire_damage_timer = 0.0
+		else:
+			in_lava = self.is_in_lava(world)
+			touching_fire = self.is_touching_fire(world)
+
+			if in_lava or touching_fire:
+				self.fire_timer = max(self.fire_timer, random.uniform(5.0, 6.0))
+
+			if in_lava:
+				# Lava deals heavy damage (4 HP every 0.5s)
+				self.fire_damage_timer += dt
+				if self.fire_damage_timer >= 0.5:
+					self.fire_damage_timer = 0.0
+					self.take_damage(4, is_fire=True)
+			elif self.fire_timer > 0.0:
+				self.fire_timer = max(0.0, self.fire_timer - dt)
+				self.fire_damage_timer += dt
+				damage_interval = 0.8 if touching_fire else 1.0
+				if self.fire_damage_timer >= damage_interval:
+					self.fire_damage_timer = 0.0
+					self.take_damage(1, is_fire=True)
+			else:
+				self.fire_damage_timer = 0.0
 
 		# Tick AI Goals
 		self.panic_goal.update(dt)

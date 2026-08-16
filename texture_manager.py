@@ -33,7 +33,12 @@ class Texture_manager:
 		if not texture in self.textures:
 			self.textures.append(texture)
 
-			texture_image = pyglet.image.load(f"textures/{texture}.png").get_image_data()
+			raw_image = pyglet.image.load(f"textures/{texture}.png")
+			if raw_image.height > self.texture_height:
+				texture_image = raw_image.get_region(0, raw_image.height - self.texture_height, self.texture_width, self.texture_height).get_image_data()
+			else:
+				texture_image = raw_image.get_image_data()
+
 			gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.texture_array)
 
 			gl.glTexSubImage3D(

@@ -343,7 +343,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	return bytes(flat_bytes)
 
 
-def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None):
+def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None, burning_blocks=None):
 	"""Standalone worker function for ProcessPoolExecutor.
 	Meshes a single 16x16x16 vertical section of a chunk with 100% process pool isolation (zero GIL contention)."""
 	min_y = section_y * 16
@@ -751,6 +751,54 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						for face_idx in range(len(b_info['vertex_positions'])):
 							add_face(face_idx, is_translucent)
 
+	# Render burning block fire overlays (masked side face fire)
+	if burning_blocks:
+		b78_info = block_types_info.get(78)
+		fire_tex_idx = int(b78_info['tex_coords'][0][2]) if b78_info and b78_info.get('tex_coords') else 0
+		cube_vps = block_types_info[1]['vertex_positions'] if 1 in block_types_info else None
+
+		if cube_vps:
+			for key_str_or_tuple, fire_faces in burning_blocks.items():
+				if isinstance(key_str_or_tuple, str):
+					lx, ly, lz = map(int, key_str_or_tuple.split(','))
+				else:
+					lx, ly, lz = key_str_or_tuple
+
+				if not (min_y <= ly < max_y):
+					continue
+
+				bx = chunk_x * 16 + lx
+				by = ly
+				bz = chunk_z * 16 + lz
+
+				for f_idx in fire_faces:
+					if 0 <= f_idx < 6:
+						dx, dy, dz = neighbor_offsets[f_idx]
+						nb_num = get_nb(lx + dx, ly + dy, lz + dz)
+						nb_info = block_types_info.get(nb_num)
+						# Render fire face if exposed to air, liquids, transparent blocks, or other fire
+						if nb_num == 0 or (nb_info and nb_info['transparent']) or nb_num in (9, 19, 15, 20, 78):
+							vp = cube_vps[f_idx]
+							offset_scale = 0.003
+
+							c = trans_vert_count
+							trans_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+							trans_vert_count += 4
+
+							for i in range(4):
+								trans_pos.append(vp[i * 3 + 0] + bx + dx * offset_scale)
+								trans_pos.append(vp[i * 3 + 1] + by + dy * offset_scale)
+								trans_pos.append(vp[i * 3 + 2] + bz + dz * offset_scale)
+
+							fire_tc = [
+								0.0, 1.0, float(fire_tex_idx),
+								0.0, 0.0, float(fire_tex_idx),
+								1.0, 0.0, float(fire_tex_idx),
+								1.0, 1.0, float(fire_tex_idx)
+							]
+							trans_tex.extend(fire_tc)
+							trans_shd.extend([1.0, 1.0, 1.0, 1.0])
+
 	final_trans_idx = array.array('I', [idx + opaque_vert_count for idx in trans_idx])
 
 	return (
@@ -932,11 +980,13 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate", block_face_textures={"all": "planks"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate_open", block_face_textures={"all": "planks"}, model=models.fence_gate_open, transparent=True, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="gravel", block_face_textures={"all": "gravel"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="fire", block_face_textures={"all": "fire"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
 
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
 
+		self.texture_manager.add_texture("fire")
 		self.texture_manager.add_texture("sun")
 		self.texture_manager.add_texture("moon")
 		self.texture_manager.generate_mipmaps()
@@ -972,9 +1022,58 @@ class World:
 		self.water_levels = {}
 		self.liquid_tick_queue = set()
 		self.liquid_tick_timer = 0.0
+		self.lava_tick_timer = 0.0
 		self.gravity_tick_queue = set()
 		self.gravity_tick_timer = 0.0
+		self.active_fires = {}      # (x, y, z) -> remaining_seconds (for standalone Fire block ID 78)
+		self.burning_blocks = {}    # (x, y, z) -> {'timer': remaining_seconds, 'faces': set([face_idx])} (for masked side face fire)
 		self._block_info_cache = None
+
+	def schedule_mesh_update(self, position):
+		x, y, z = position
+		if y < 0 or y >= 256:
+			return
+		cx = math.floor(x / chunk.CHUNK_WIDTH)
+		cz = math.floor(z / chunk.CHUNK_LENGTH)
+		sy = int(y) // 16
+		self.section_mesh_queue.add((cx, cz, sy))
+		self.dirty_chunks.add((cx, 0, cz))
+
+	def set_fire(self, position, duration=9.0):
+		"""Places a Fire block (78) on top of a solid surface that burns for 8-10s."""
+		self.set_block(position, 78)
+		self.active_fires[tuple(position)] = duration
+
+	def ignite_block_face(self, position, face_idx=None, duration=9.0):
+		"""Masks the lateral side faces (0, 1, 4, 5) of an existing block with fire texture for 8-10s (excludes top & bottom)."""
+		p_key = tuple(position)
+		if face_idx is None or face_idx in ("ALL", "SIDES", "ALL_SIDES"):
+			target_faces = {0, 1, 4, 5}  # Lateral side faces only (East, West, South, North)
+		elif isinstance(face_idx, int):
+			target_faces = {face_idx}
+		else:
+			target_faces = set(face_idx)
+
+		if p_key not in self.burning_blocks:
+			self.burning_blocks[p_key] = {'timer': duration, 'faces': target_faces}
+		else:
+			self.burning_blocks[p_key]['faces'].update(target_faces)
+			self.burning_blocks[p_key]['timer'] = max(self.burning_blocks[p_key]['timer'], duration)
+		self.schedule_mesh_update(position)
+
+	def extinguish_block(self, position):
+		"""Extinguishes a Fire block (78) or side fire overlay on a burning block."""
+		p_key = tuple(position)
+		extinguished = False
+		if p_key in self.active_fires or self.get_block_number(p_key) == 78:
+			self.set_block(p_key, 0)
+			self.active_fires.pop(p_key, None)
+			extinguished = True
+		if p_key in self.burning_blocks:
+			self.burning_blocks.pop(p_key, None)
+			self.schedule_mesh_update(p_key)
+			extinguished = True
+		return extinguished
 
 	def get_single_chest(self, pos):
 		p_key = (int(pos[0]), int(pos[1]), int(pos[2]))
@@ -1007,14 +1106,44 @@ class World:
 
 	def update(self, dt):
 		self.liquid_tick_timer += dt
-		if self.liquid_tick_timer >= 0.15:  # ~6.6 Hz (1 block flow step per 0.15s, authentic Minecraft spread)
+		self.lava_tick_timer += dt
+
+		# Water flow step timer: 0.15s (~6.6 Hz, 1 block step per 0.15s)
+		tick_water = False
+		if self.liquid_tick_timer >= 0.15:
 			self.liquid_tick_timer = 0.0
-			self.tick_liquids(dt)
+			tick_water = True
+
+		# Lava flow step timer: 0.30s (~3.3 Hz, half the speed of water!)
+		tick_lava = False
+		if self.lava_tick_timer >= 0.30:
+			self.lava_tick_timer = 0.0
+			tick_lava = True
+
+		if tick_water or tick_lava:
+			self.tick_liquids(dt, tick_water=tick_water, tick_lava=tick_lava)
 
 		self.gravity_tick_timer += dt
 		if self.gravity_tick_timer >= 0.16:  # ~6.25 Hz (visibly slower, smooth sand & gravel falling)
 			self.gravity_tick_timer = 0.0
 			self.tick_gravity_blocks()
+
+		# Update active fire blocks (Block ID 78) - disappear after 8-10s
+		for pos, rem_time in list(self.active_fires.items()):
+			new_time = rem_time - dt
+			if new_time <= 0.0:
+				if self.get_block_number(pos) == 78:
+					self.set_block(pos, 0)
+				self.active_fires.pop(pos, None)
+			else:
+				self.active_fires[pos] = new_time
+
+		# Update burning block side overlays - disappear after 8-10s
+		for pos, data in list(self.burning_blocks.items()):
+			data['timer'] -= dt
+			if data['timer'] <= 0.0:
+				self.burning_blocks.pop(pos, None)
+				self.schedule_mesh_update(pos)
 
 		for furnace in list(self.furnaces.values()):
 			furnace.tick(dt)
@@ -1059,7 +1188,12 @@ class World:
 			n_bytes = bytes(self.chunks[(cx, 0, cz - 1)].blocks) if (cx, 0, cz - 1) in self.chunks else None
 
 			for sy in range(16):
-				res = build_section_mesh_process(cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, dict(self.water_levels), dict(self.lava_levels))
+				b_blocks = {
+					(int(pos[0] % 16), int(pos[1]), int(pos[2] % 16)): list(data['faces'])
+					for pos, data in self.burning_blocks.items()
+					if math.floor(pos[0] / 16) == cx and math.floor(pos[2] / 16) == cz and (pos[1] // 16) == sy
+				} if self.burning_blocks else None
+				res = build_section_mesh_process(cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, dict(self.water_levels), dict(self.lava_levels), burning_blocks=b_blocks)
 				_, _, _, op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx, missing = res
 				chk.send_section_mesh_to_gpu(sy, op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx)
 
@@ -1181,10 +1315,15 @@ class World:
 
 				w_lvls = {pos: lvl for pos, lvl in self.water_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.water_levels else None
 				l_lvls = {pos: lvl for pos, lvl in self.liquid_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.liquid_levels else None
+				b_blocks = {
+					(int(pos[0] % 16), int(pos[1]), int(pos[2] % 16)): list(data['faces'])
+					for pos, data in self.burning_blocks.items()
+					if math.floor(pos[0] / 16) == cx and math.floor(pos[2] / 16) == cz and (pos[1] // 16) == sy
+				} if self.burning_blocks else None
 
 				self.section_mesh_futures[(cx, cz, sy)] = self.process_executor.submit(
 					build_section_mesh_process,
-					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls, c_states
+					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls, c_states, b_blocks
 				)
 
 	def get_chunk_position(self, position):
@@ -1472,7 +1611,7 @@ class World:
 		# Flat surface: flow in all unobstructed directions
 		return [d_pair for d_pair, _ in open_dirs]
 
-	def tick_liquids(self, dt=0.0):
+	def tick_liquids(self, dt=0.0, tick_water=True, tick_lava=True):
 		"""Official Minecraft Water & Lava 1:1 Flow & Slope Simulation Engine (1 block step per tick)."""
 		if not self.liquid_tick_queue:
 			return
@@ -1494,6 +1633,21 @@ class World:
 			if b_num not in (9, 19, 15, 20, 0):
 				continue
 
+			# If this is water (9, 19) but water is not ticking this cycle, re-queue and skip
+			if b_num in (9, 19) and not tick_water:
+				self.liquid_tick_queue.add(pos)
+				continue
+
+			# If this is lava (15, 20) but lava is not ticking this cycle, re-queue and skip
+			if b_num in (15, 20) and not tick_lava:
+				self.liquid_tick_queue.add(pos)
+				continue
+
+			# If this is air (0), only tick if water is ticking
+			if b_num == 0 and not tick_water:
+				self.liquid_tick_queue.add(pos)
+				continue
+
 			# --- 1. WATER SOURCE (9) OR FLOWING WATER (19) ---
 			if b_num in (9, 19):
 				is_source = (b_num == 9)
@@ -1507,9 +1661,9 @@ class World:
 							source_count += 1
 
 					down_num = self.get_block_number((x, y - 1, z))
-					is_solid_or_water = down_num in (9, 19) or (down_num != 0 and down_num not in (15, 20, 10, 12, 31, 33))
+					is_solid_or_source = (down_num == 9) or (down_num != 0 and down_num not in (9, 19, 15, 20, 10, 12, 31, 33))
 
-					if source_count >= 2 and is_solid_or_water:
+					if source_count >= 2 and is_solid_or_source:
 						self.set_block(pos, 9)
 						self.water_levels[pos] = 0
 						created_this_tick.add(pos)
@@ -1527,6 +1681,15 @@ class World:
 						self.water_levels[pos] = 8
 						cur_lvl = 8
 					else:
+						# If it was a falling water column (level 8) and water above is gone, drain immediately!
+						if cur_lvl == 8:
+							self.set_block(pos, 0)
+							self.water_levels.pop(pos, None)
+							created_this_tick.add(pos)
+							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+							continue
+
 						# Find upstream neighbors
 						upstream = []
 						for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
@@ -1541,7 +1704,7 @@ class World:
 									# Only valid upstream source if it has liquid above it and is on the floor (waterfall base)
 									if self.get_block_number((nx, y + 1, nz)) in (9, 19) and not self.is_downward_flow_open(nb_pos, is_water=True):
 										upstream.append(0)
-								elif nb_lvl < cur_lvl or (cur_lvl == 8 and nb_lvl < 7):
+								elif nb_lvl < cur_lvl:
 									upstream.append(nb_lvl)
 
 						if not upstream:
@@ -1656,6 +1819,15 @@ class World:
 						self.liquid_levels[pos] = 4
 						cur_lvl = 4
 					else:
+						# If it was a falling lava column (level 4) and lava above is gone, drain immediately!
+						if cur_lvl == 4:
+							self.set_block(pos, 0)
+							self.liquid_levels.pop(pos, None)
+							created_this_tick.add(pos)
+							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+							continue
+
 						upstream = []
 						for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
 							nx, nz = x + dx, z + dz
@@ -1668,7 +1840,7 @@ class World:
 								if nb_lvl == 4:
 									if self.get_block_number((nx, y + 1, nz)) in (15, 20) and not self.is_downward_flow_open(nb_pos, is_water=False):
 										upstream.append(0)
-								elif nb_lvl < cur_lvl or (cur_lvl == 4 and nb_lvl < 3):
+								elif nb_lvl < cur_lvl:
 									upstream.append(nb_lvl)
 
 						if not upstream:
@@ -1737,7 +1909,7 @@ class World:
 						source_count += 1
 
 				down_num = self.get_block_number((x, y - 1, z))
-				is_solid_or_source = down_num in (9, 19) or (down_num != 0 and down_num not in (15, 20, 10, 12, 31, 33))
+				is_solid_or_source = (down_num == 9) or (down_num != 0 and down_num not in (9, 19, 15, 20, 10, 12, 31, 33))
 
 				if source_count >= 2 and is_solid_or_source:
 					self.set_block(pos, 9)

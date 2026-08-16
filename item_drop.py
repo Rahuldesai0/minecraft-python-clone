@@ -20,11 +20,35 @@ class DroppedItem:
 		self.rotation = random.uniform(0, 360)
 		self.grounded = False
 		self.pickup_delay = 1.2  # 1.2s delay before dropped item can be picked up!
+		self.destroyed = False
+
+	def is_in_lava_or_fire(self, world):
+		"""Returns True if the item's bounding box intersects lava (15, 20) or fire (78 / active fires)."""
+		ix, iy, iz = self.position
+		min_bx = int(math.floor(ix - 0.3 + 0.5))
+		max_bx = int(math.floor(ix + 0.3 + 0.5))
+		min_by = int(math.floor(iy - 0.45 + 0.5))
+		max_by = int(math.floor(iy + 0.35 + 0.5))
+		min_bz = int(math.floor(iz - 0.3 + 0.5))
+		max_bz = int(math.floor(iz + 0.3 + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b = world.get_block_number((bx, by, bz))
+					if b in (15, 20, 78) or (bx, by, bz) in getattr(world, 'active_fires', {}):
+						return True
+		return False
 
 	def update(self, dt, world, player_pos):
 		self.age += dt
 		if self.pickup_delay > 0:
 			self.pickup_delay -= dt
+
+		# Check if item fell into lava or fire
+		if self.is_in_lava_or_fire(world):
+			self.destroyed = True
+			return
 
 		# Continuous smooth 360-degree rotation around vertical Y-axis
 		self.rotation = (self.rotation + 120.0 * dt) % 360.0
@@ -41,7 +65,11 @@ class DroppedItem:
 			by = int(math.floor(ny - 0.15))
 			bz = int(round(nz))
 
-			if world.get_block_number((bx, by, bz)) != 0:
+			b_num = world.get_block_number((bx, by, bz))
+			if b_num in (15, 20, 78) or (bx, by, bz) in getattr(world, 'active_fires', {}):
+				self.destroyed = True
+				return
+			elif b_num != 0:
 				self.velocity = [0.0, 0.0, 0.0]
 				self.grounded = True
 				self.position[1] = by + 1.25
@@ -116,6 +144,8 @@ class ItemDropManager:
 		if block_id == 0 or count <= 0:
 			return
 		drop = DroppedItem(block_id, count, position, velocity)
+		if drop.is_in_lava_or_fire(self.world):
+			return  # Vaporized immediately by lava or fire!
 		self.drops.append(drop)
 		self.merge_nearby_drops()
 
@@ -149,6 +179,11 @@ class ItemDropManager:
 		while i < len(self.drops):
 			drop = self.drops[i]
 			drop.update(dt, self.world, player_pos)
+
+			# Remove items destroyed by falling into lava or fire
+			if getattr(drop, "destroyed", False) or drop.is_in_lava_or_fire(self.world):
+				self.drops.pop(i)
+				continue
 
 			# Pickup check when player is within 0.8 blocks and pickup delay is finished
 			dx = px - drop.position[0]

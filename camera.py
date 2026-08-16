@@ -26,12 +26,20 @@ class Camera:
 		self.fall_start_y = None
 		self.hurt_time = 0.0
 		self.last_damage_time = 0.0
+		self.fire_timer = 0.0
+		self.fire_damage_timer = 0.0
 
 		# Survival Mode Hunger (20 points = 10 Drumsticks), Saturation & Exhaustion Tracking
 		self.hunger = 20
 		self.max_hunger = 20
 		self.saturation = 5.0
 		self.exhaustion = 0.0
+
+		# Oxygen & Drowning Tracking (10 bubbles = 10.0s air underwater)
+		self.air = 10.0
+		self.max_air = 10.0
+		self.drown_damage_timer = 0.0
+
 		self.gui = None
 
 	def eat_food(self, hunger_points, saturation_points):
@@ -49,7 +57,7 @@ class Camera:
 			else:
 				self.hunger = max(0, self.hunger - 1)
 
-	def take_damage(self, damage, flying=False, gui=None):
+	def take_damage(self, damage, flying=False, gui=None, world=None):
 		import time
 		if flying or damage <= 0 or self.health <= 0:
 			return
@@ -66,19 +74,136 @@ class Camera:
 		self.last_damage_time = time.time()
 
 		if self.health == 0:
-			self.respawn()
+			death_pos = list(self.position)
+			gui_ref = gui or self.gui
+			id_mgr = getattr(world, 'item_drop_manager', None)
+			if not id_mgr and gui_ref and hasattr(gui_ref, 'window'):
+				id_mgr = getattr(gui_ref.window, 'item_drop_manager', None)
+			if gui_ref and hasattr(gui_ref, 'drop_all_on_death'):
+				gui_ref.drop_all_on_death(death_pos, id_mgr)
 
-	def respawn(self):
+			self.respawn(world)
+
+	def respawn(self, world=None):
 		self.health = self.max_health
 		self.hunger = self.max_hunger
 		self.saturation = 5.0
 		self.exhaustion = 0.0
-		self.position = [0, 85, 0]
+
+		spawn_y = None
+		if world:
+			for y in range(255, 0, -1):
+				b = world.get_block_number((0, y, 0))
+				if b != 0 and b not in (9, 19, 15, 20):
+					spawn_y = y
+					break
+
+		if spawn_y is None:
+			spawn_y = 64
+
+		# Position player right on the ground surface with feet resting on the top of the block
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		self.position = [0.5, spawn_y + 1.0 + eye_h, 0.5]
 		self.velocity_y = 0.0
 		self.fall_start_y = None
+		self.fire_timer = 0.0
+		self.fire_damage_timer = 0.0
+		self.air = self.max_air
+		self.drown_damage_timer = 0.0
 
 	def round_position(self, position):
 		return [round(coord) for coord in position]
+
+	def is_head_underwater(self, world):
+		"""Checks if the player's head / eyes are submerged in water (9 or 19)."""
+		head_bx = int(round(self.position[0]))
+		head_by = int(round(self.position[1]))
+		head_bz = int(round(self.position[2]))
+		return world.get_block_number((head_bx, head_by, head_bz)) in (9, 19)
+
+	def is_touching_fire(self, world):
+		"""Checks if the player's bounding box intersects a Fire block (78)."""
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num == 78 or (bx, by, bz) in getattr(world, 'active_fires', {}):
+						return True
+		return False
+
+	def is_in_water(self, world):
+		"""Checks if the player's bounding box touches water (9 or 19)."""
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num in (9, 19):
+						return True
+		return False
+
+	def is_in_lava(self, world):
+		"""Checks if the player's bounding box touches lava (15 or 20)."""
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num in (15, 20):
+						return True
+		return False
 
 	def is_in_liquid(self, world):
 		bx = int(round(self.position[0]))
@@ -90,6 +215,7 @@ class Camera:
 
 	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
 		import time
+		import random
 
 		# Cap delta_time to prevent huge displacement on lag spikes
 		delta_time = min(delta_time, 0.05)
@@ -97,6 +223,54 @@ class Camera:
 		# Decay hurt time red flash overlay
 		if self.hurt_time > 0:
 			self.hurt_time = max(0.0, self.hurt_time - delta_time)
+
+		# Fire, Lava & Water physics / damage
+		if self.is_in_water(world):
+			self.fire_timer = 0.0
+			self.fire_damage_timer = 0.0
+		elif not flying:
+			in_lava = self.is_in_lava(world)
+			touching_fire = self.is_touching_fire(world)
+
+			if in_lava or touching_fire:
+				# Refresh / set burn timer to 5 to 6 seconds
+				self.fire_timer = max(self.fire_timer, random.uniform(5.0, 6.0))
+
+			if in_lava:
+				# Lava deals heavy damage (4 HP / 2 hearts every 0.5s)
+				self.fire_damage_timer += delta_time
+				if self.fire_damage_timer >= 0.5:
+					self.fire_damage_timer = 0.0
+					self.take_damage(4, flying=flying, world=world)
+			elif self.fire_timer > 0.0:
+				# Fire / Afterburn damage (1 HP every 0.8s in fire block, 1.0s outside)
+				self.fire_timer = max(0.0, self.fire_timer - delta_time)
+				self.fire_damage_timer += delta_time
+				damage_interval = 0.8 if touching_fire else 1.0
+				if self.fire_damage_timer >= damage_interval:
+					self.fire_damage_timer = 0.0
+					self.take_damage(1, flying=flying, world=world)
+			else:
+				self.fire_damage_timer = 0.0
+
+		# Oxygen & Drowning Mechanics
+		head_underwater = self.is_head_underwater(world)
+		if head_underwater and not flying:
+			# Depletes 1 bubble per second in water (10.0s total air)
+			self.air = max(0.0, self.air - delta_time)
+			if self.air <= 0.0:
+				self.drown_damage_timer += delta_time
+				# Drowning damage (2 HP / 1 heart per second once bubbles run out)
+				if self.drown_damage_timer >= 1.0:
+					self.drown_damage_timer = 0.0
+					self.take_damage(2, flying=flying, world=world)
+			else:
+				self.drown_damage_timer = 0.0
+		else:
+			self.drown_damage_timer = 0.0
+			# When player is out of water, bubbles replenish one per second
+			if self.air < self.max_air:
+				self.air = min(self.max_air, self.air + delta_time * 1.0)
 
 		# Passive Health Regeneration in Survival Mode (Requires Hunger >= 18 points / 9 drumsticks)
 		if not flying and self.hunger >= 18 and 0 < self.health < self.max_health:
@@ -125,7 +299,7 @@ class Camera:
 					if fall_dist > 3.0:
 						dmg = int(round(fall_dist - 3.0))
 						if dmg > 0:
-							self.take_damage(dmg, flying=flying)
+							self.take_damage(dmg, flying=flying, world=world)
 					self.fall_start_y = None
 
 		# Sneak check: Shift pressed while on ground, not flying, not swimming
@@ -252,7 +426,7 @@ class Camera:
 
 	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
 		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
-		if block_num == 0 or block_num in (9, 19, 15, 20):
+		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78):
 			return []
 
 		# Oak Fence (51) & Stone Wall (52) & Closed Fence Gate (75) - 1.5 blocks tall collision height for jumping

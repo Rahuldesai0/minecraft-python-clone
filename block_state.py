@@ -284,7 +284,7 @@ def ray_intersect_aabb(ray_orig, ray_dir, box):
 
 def get_block_hitboxes(world, pos, block_num):
 	"""Returns list of world-space AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num at pos."""
-	if block_num == 0 or block_num in (9, 19, 15, 20):
+	if block_num == 0 or block_num in (9, 19, 15, 20, 78):
 		return []
 
 	bx, by, bz = pos

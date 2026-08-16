@@ -97,7 +97,7 @@ class MobManager:
 
 			# Process dead mob drops & removal
 			if mob.is_dead:
-				drops, xp = mob.get_loot_drops()
+				drops, xp = mob.get_loot_drops(is_on_fire=(mob.fire_timer > 0))
 				if item_drop_manager:
 					for b_id, count in drops:
 						item_drop_manager.spawn_drop(b_id, count, mob.position)
