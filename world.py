@@ -1,5 +1,6 @@
 import math
 import time
+import collections
 from random import Random
 from noise import *
 import threading
@@ -160,7 +161,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 
 			if sy < 60:
 				for water_y in range(sy + 1, 61):
-					set_b(i, water_y, k, 19 if water_y < 60 else 9)
+					set_b(i, water_y, k, 9)
 
 	# 3. Carve 3D Caves
 	for i in range(chunk.CHUNK_WIDTH):
@@ -192,7 +193,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		for k in range(chunk.CHUNK_LENGTH):
 			for j in range(1, 9):
 				if get_b(i, j, k) == 0:
-					set_b(i, j, k, 20 if j < 8 else 15)
+					set_b(i, j, k, 15)
 
 	# 5. Surface Water Lakes (Carved & filled at a single uniform Y level, 100% bounded by solid dirt/stone retaining walls)
 	if rng.randrange(100) < 40:
@@ -228,7 +229,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 
 								# Perfectly flat water surface
 								set_b(px, lake_surface_y, pz, 9)       # Water source top
-								set_b(px, lake_surface_y - 1, pz, 19)  # Under water
+								set_b(px, lake_surface_y - 1, pz, 9)   # Water source in body
 								
 								# Basin floor
 								floor_block = 4 if rng.randrange(100) < 70 else 5
@@ -263,7 +264,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 
 							# Perfectly flat lava surface
 							set_b(px, pool_surface_y, pz, 15)       # Lava source top
-							set_b(px, pool_surface_y - 1, pz, 20)   # Under lava
+							set_b(px, pool_surface_y - 1, pz, 15)   # Lava source in body
 							set_b(px, pool_surface_y - 2, pz, 1)    # Stone floor
 						elif dist_sq <= 5:
 							# Watertight stone retaining wall rim extending 1 block above lava level
@@ -924,6 +925,7 @@ class World:
 		self.liquid_levels = {}
 		self.water_levels = {}
 		self.liquid_tick_queue = set()
+		self.liquid_tick_timer = 0.0
 		self._block_info_cache = None
 
 	def get_single_chest(self, pos):
@@ -956,7 +958,10 @@ class World:
 		return self.furnaces[p_key]
 
 	def update(self, dt):
-		self.tick_liquids(dt)
+		self.liquid_tick_timer += dt
+		if self.liquid_tick_timer >= 0.08:  # ~12.5 Hz (matches Minecraft fluid speed, saves 80% CPU & meshing)
+			self.liquid_tick_timer = 0.0
+			self.tick_liquids(dt)
 		for furnace in list(self.furnaces.values()):
 			furnace.tick(dt)
 
@@ -1101,8 +1106,6 @@ class World:
 				pending_list.sort(key=mesh_priority)
 
 			info = self.get_block_types_info()
-			w_lvls = dict(self.water_levels) if self.water_levels else None
-			l_lvls = dict(self.liquid_levels) if self.liquid_levels else None
 
 			for item in pending_list[:slots_free]:
 				if item in self.section_mesh_queue:
@@ -1121,6 +1124,9 @@ class World:
 				w_bytes = self.chunks[(cx - 1, 0, cz)].blocks if (cx - 1, 0, cz) in self.chunks else None
 				s_bytes = self.chunks[(cx, 0, cz + 1)].blocks if (cx, 0, cz + 1) in self.chunks else None
 				n_bytes = self.chunks[(cx, 0, cz - 1)].blocks if (cx, 0, cz - 1) in self.chunks else None
+
+				w_lvls = {pos: lvl for pos, lvl in self.water_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.water_levels else None
+				l_lvls = {pos: lvl for pos, lvl in self.liquid_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.liquid_levels else None
 
 				self.section_mesh_futures[(cx, cz, sy)] = self.process_executor.submit(
 					build_section_mesh_process,
@@ -1254,123 +1260,345 @@ class World:
 		if b_num == 20: return self.liquid_levels.get(pos, 1)
 		return -1
 
+	def can_liquid_flow_into(self, pos, is_water):
+		x, y, z = pos
+		if y < 1 or y >= 255:
+			return False
+		b_num = self.get_block_number(pos)
+		if b_num == 0 or b_num in (10, 12, 31, 33):
+			return True
+		if is_water:
+			return b_num in (15, 20) or b_num == 19
+		else:
+			return b_num in (9, 19) or b_num == 20
+
+	def is_downward_flow_open(self, pos, is_water):
+		x, y, z = pos
+		if y <= 1: return False
+		down_b = self.get_block_number((x, y - 1, z))
+		passable = (0, 10, 12, 31, 33)
+		if down_b in passable:
+			return True
+		if is_water:
+			if down_b in (15, 20): return True
+			if down_b == 19:
+				down_lvl = self.water_levels.get((x, y - 1, z), 1)
+				if down_lvl == 8: return True
+				below_down_b = self.get_block_number((x, y - 2, z))
+				return below_down_b in passable
+		else:
+			if down_b in (9, 19): return True
+			if down_b == 20:
+				down_lvl = self.liquid_levels.get((x, y - 1, z), 1)
+				if down_lvl == 4: return True
+				below_down_b = self.get_block_number((x, y - 2, z))
+				return below_down_b in passable
+		return False
+
+	def get_flow_directions(self, pos, is_water, is_source=False):
+		"""Determines cardinal flow direction(s) based on vertical priority and slope-seeking using unified BFS."""
+		x, y, z = pos
+		max_dist = 4 if is_water else 2
+
+		# 1. Filter valid open cardinal neighbors
+		open_dirs = []
+		for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+			n_pos = (x + dx, y, z + dz)
+			if self.can_liquid_flow_into(n_pos, is_water):
+				open_dirs.append(((dx, dz), n_pos))
+
+		if not open_dirs:
+			return []
+
+		# 2. Fast-path: Immediate drop-off check on direct neighbors (distance = 1)
+		immediate_drops = []
+		for d_pair, n_pos in open_dirs:
+			if self.is_downward_flow_open(n_pos, is_water):
+				immediate_drops.append(d_pair)
+
+		if immediate_drops:
+			return immediate_drops
+
+		# 3. Single unified multi-source BFS to find nearest drop-off within max_dist
+		queue = collections.deque()
+		visited = {(x, z)}
+
+		for idx, (d_pair, n_pos) in enumerate(open_dirs):
+			nx, nz = n_pos[0], n_pos[2]
+			visited.add((nx, nz))
+			queue.append((nx, nz, 1, idx))
+
+		min_dist = 999
+		winning_dirs = set()
+
+		while queue:
+			cx, cz, dist, dir_idx = queue.popleft()
+			if dist > min_dist:
+				break
+
+			if self.is_downward_flow_open((cx, y, cz), is_water):
+				if dist < min_dist:
+					min_dist = dist
+					winning_dirs = {open_dirs[dir_idx][0]}
+				elif dist == min_dist:
+					winning_dirs.add(open_dirs[dir_idx][0])
+				continue
+
+			if dist >= max_dist:
+				continue
+
+			for ddx, ddz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+				nx, nz = cx + ddx, cz + ddz
+				if (nx, nz) not in visited:
+					visited.add((nx, nz))
+					if self.can_liquid_flow_into((nx, y, nz), is_water):
+						queue.append((nx, nz, dist + 1, dir_idx))
+
+		if winning_dirs:
+			return list(winning_dirs)
+
+		# Flat surface: flow in all unobstructed directions
+		return [d_pair for d_pair, _ in open_dirs]
+
 	def tick_liquids(self, dt=0.0):
-		"""Official Minecraft Water & Lava Flow Solver."""
+		"""Official Minecraft Water & Lava 1:1 Flow & Slope Simulation Engine."""
 		if not self.liquid_tick_queue:
 			return
 
-		# Process up to 30 liquid updates per frame tick for smooth, fast fluid flow
-		active_coords = [self.liquid_tick_queue.pop() for _ in range(min(30, len(self.liquid_tick_queue)))]
+		# Process active liquid queue up to 256 liquid blocks per frame
+		max_ticks_per_frame = 256
+		ticks_processed = 0
 
-		for pos in active_coords:
+		while self.liquid_tick_queue and ticks_processed < max_ticks_per_frame:
+			pos = self.liquid_tick_queue.pop()
 			x, y, z = pos
 			if y <= 1 or y >= 255:
 				continue
 
 			b_num = self.get_block_number(pos)
+			if b_num not in (9, 19, 15, 20, 0):
+				continue
 
-			# --- 1. TARGET IS AIR BLOCK (b_num == 0) ---
-			if b_num == 0:
-				above_num = self.get_block_number((x, y + 1, z))
-				if above_num in (9, 19):
-					self.set_block(pos, 19)
-					self.water_levels[pos] = 8
-					self.liquid_tick_queue.add(pos)
-					if self.get_block_number((x, y - 1, z)) == 0:
-						self.liquid_tick_queue.add((x, y - 1, z))
-					continue
+			ticks_processed += 1
 
-				if above_num in (15, 20):
-					self.set_block(pos, 20)
-					self.liquid_levels[pos] = 4
-					self.liquid_tick_queue.add(pos)
-					if self.get_block_number((x, y - 1, z)) == 0:
-						self.liquid_tick_queue.add((x, y - 1, z))
-					continue
+			# --- 1. WATER SOURCE (9) OR FLOWING WATER (19) ---
+			if b_num in (9, 19):
+				is_source = (b_num == 9)
+				cur_lvl = 0 if is_source else self.water_levels.get(pos, 1)
 
-				# Water Horizontal Spreading Check
-				source_count = 0
-				upstream_water = []
+				# Infinite Water Source creation (e.g. 2 adjacent sources merge on flowing water or air with solid/water floor below)
+				if not is_source:
+					source_count = 0
+					for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+						if self.get_block_number((x + dx, y, z + dz)) == 9:
+							source_count += 1
 
-				for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
-					n_num = self.get_block_number((nx, ny, nz))
-					if n_num == 9:
-						source_count += 1
-						upstream_water.append(0)
-					elif n_num == 19:
-						w_lvl = self.get_water_level((nx, ny, nz))
-						if 0 <= w_lvl < 7:
-							upstream_water.append(w_lvl)
+					down_num = self.get_block_number((x, y - 1, z))
+					is_solid_or_water = down_num in (9, 19) or (down_num != 0 and down_num not in (15, 20, 10, 12, 31, 33))
 
-				down_num = self.get_block_number((x, y - 1, z))
-				is_solid_floor = down_num not in (0, 9, 19, 15, 20) or down_num == 9
-
-				if source_count >= 2 and is_solid_floor:
-					self.set_block(pos, 9)
-					self.water_levels[pos] = 0
-					self.liquid_tick_queue.add(pos)
-				elif upstream_water:
-					min_w = min(upstream_water)
-					target_w = min_w + 1
-					if target_w <= 7:
-						self.set_block(pos, 19)
-						self.water_levels[pos] = target_w
+					if source_count >= 2 and is_solid_or_water:
+						self.set_block(pos, 9)
+						self.water_levels[pos] = 0
+						is_source = True
+						cur_lvl = 0
 						self.liquid_tick_queue.add(pos)
-						if down_num == 0:
-							self.liquid_tick_queue.add((x, y - 1, z))
+						for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+							self.liquid_tick_queue.add((x + dx, y, z + dz))
 
-				# Lava Horizontal Spreading Check
-				upstream_lava = []
-				for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
-					n_num = self.get_block_number((nx, ny, nz))
-					if n_num == 15:
-						upstream_lava.append(0)
-					elif n_num == 20:
-						l_lvl = self.get_lava_level((nx, ny, nz))
-						if 0 <= l_lvl < 3:
-							upstream_lava.append(l_lvl)
+				# If flowing water, check if it still has valid upstream source/flow
+				if not is_source:
+					above_b = self.get_block_number((x, y + 1, z))
+					if above_b in (9, 19):
+						# Falling water from above
+						self.water_levels[pos] = 8
+						cur_lvl = 8
+					else:
+						# Find upstream neighbors
+						upstream = []
+						for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+							nx, nz = x + dx, z + dz
+							nb_pos = (nx, y, nz)
+							nb_num = self.get_block_number(nb_pos)
+							if nb_num == 9:
+								upstream.append(0)
+							elif nb_num == 19:
+								nb_lvl = self.water_levels.get(nb_pos, 1)
+								if nb_lvl == 8:
+									# Only valid upstream source if it has liquid above it and is on the floor (waterfall base)
+									if self.get_block_number((nx, y + 1, nz)) in (9, 19) and not self.is_downward_flow_open(nb_pos, is_water=True):
+										upstream.append(0)
+								elif nb_lvl < 7:
+									upstream.append(nb_lvl)
 
-				if upstream_lava:
-					min_l = min(upstream_lava)
-					target_l = min_l + 1
-					if target_l <= 3:
-						self.set_block(pos, 20)
-						self.liquid_levels[pos] = target_l
-						self.liquid_tick_queue.add(pos)
-						if down_num == 0:
-							self.liquid_tick_queue.add((x, y - 1, z))
+						if not upstream:
+							# No upstream support: drain water
+							self.set_block(pos, 0)
+							self.water_levels.pop(pos, None)
+							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+							continue
+						else:
+							min_u = min(upstream)
+							new_lvl = min_u + 1
+							if new_lvl > 7:
+								self.set_block(pos, 0)
+								self.water_levels.pop(pos, None)
+								for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+									self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+								continue
+							self.water_levels[pos] = new_lvl
+							cur_lvl = new_lvl
 
-			# --- 2. TARGET IS WATER BLOCK (b_num in 9, 19) ---
-			elif b_num in (9, 19):
-				curr_lvl = self.get_water_level(pos)
+				# Water + Lava Horizontal Mixing Check
+				for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+					nx, nz = x + dx, z + dz
+					n_pos = (nx, y, nz)
+					nb_num = self.get_block_number(n_pos)
+					if nb_num == 15: # Lava Source -> Obsidian
+						self.set_block(n_pos, 24)
+					elif nb_num == 20: # Flowing Lava -> Cobblestone
+						self.set_block(n_pos, 1)
 
+				# Spread Downward
 				down_pos = (x, y - 1, z)
-				if self.get_block_number(down_pos) == 0:
+				down_num = self.get_block_number(down_pos)
+				down_is_open = (down_num == 0 or down_num in (10, 12, 31, 33))
+
+				if down_is_open:
 					self.set_block(down_pos, 19)
 					self.water_levels[down_pos] = 8
 					self.liquid_tick_queue.add(down_pos)
+					self.liquid_tick_queue.add((x, y - 2, z))
+				elif down_num == 15: # Lava Source below water -> Obsidian
+					self.set_block(down_pos, 24)
+				elif down_num == 20: # Flowing Lava below water -> Cobblestone
+					self.set_block(down_pos, 1)
 
-				if curr_lvl < 7:
-					for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
-						n_pos = (nx, ny, nz)
-						if self.get_block_number(n_pos) == 0:
-							self.liquid_tick_queue.add(n_pos)
+				# Horizontal Spread:
+				# 1. Source blocks ALWAYS spread horizontally to open adjacent air blocks.
+				# 2. Flowing blocks spread horizontally on solid ground (not dropping down a hole) when level < 7 or waterfall base (level 8).
+				can_spread_horizontally = is_source or (not self.is_downward_flow_open(pos, is_water=True) and (cur_lvl < 7 or cur_lvl == 8))
 
-			# --- 3. TARGET IS LAVA BLOCK (b_num in 15, 20) ---
+				if can_spread_horizontally:
+					flow_dirs = self.get_flow_directions(pos, is_water=True, is_source=is_source)
+					for dx, dz in flow_dirs:
+						nx, nz = x + dx, z + dz
+						n_pos = (nx, y, nz)
+						n_num = self.get_block_number(n_pos)
+						if n_num == 0 or n_num in (10, 12, 31, 33):
+							target_lvl = 1 if is_source or cur_lvl == 8 else cur_lvl + 1
+							if target_lvl <= 7:
+								self.set_block(n_pos, 19)
+								self.water_levels[n_pos] = target_lvl
+								self.liquid_tick_queue.add(n_pos)
+								self.liquid_tick_queue.add((nx, y - 1, nz))
+						elif n_num == 19:
+							# Update existing flowing water if a shorter path reached it
+							existing_lvl = self.water_levels.get(n_pos, 1)
+							target_lvl = 1 if is_source or cur_lvl == 8 else cur_lvl + 1
+							if target_lvl < existing_lvl:
+								self.water_levels[n_pos] = target_lvl
+								self.liquid_tick_queue.add(n_pos)
+						elif n_num == 15: # Water flows into Lava Source -> Obsidian
+							self.set_block(n_pos, 24)
+						elif n_num == 20: # Water flows into Flowing Lava -> Cobblestone
+							self.set_block(n_pos, 1)
+
+			# --- 2. LAVA SOURCE (15) OR FLOWING LAVA (20) ---
 			elif b_num in (15, 20):
-				curr_lvl = self.get_lava_level(pos)
+				is_source = (b_num == 15)
+				cur_lvl = 0 if is_source else self.liquid_levels.get(pos, 1)
 
+				# If flowing lava, check upstream support
+				if not is_source:
+					above_b = self.get_block_number((x, y + 1, z))
+					if above_b in (15, 20):
+						self.liquid_levels[pos] = 4
+						cur_lvl = 4
+					else:
+						upstream = []
+						for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+							nx, nz = x + dx, z + dz
+							nb_pos = (nx, y, nz)
+							nb_num = self.get_block_number(nb_pos)
+							if nb_num == 15:
+								upstream.append(0)
+							elif nb_num == 20:
+								nb_lvl = self.liquid_levels.get(nb_pos, 1)
+								if nb_lvl == 4:
+									if self.get_block_number((nx, y + 1, nz)) in (15, 20) and not self.is_downward_flow_open(nb_pos, is_water=False):
+										upstream.append(0)
+								elif nb_lvl < 3:
+									upstream.append(nb_lvl)
+
+						if not upstream:
+							self.set_block(pos, 0)
+							self.liquid_levels.pop(pos, None)
+							for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+								self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+							continue
+						else:
+							min_u = min(upstream)
+							new_lvl = min_u + 1
+							if new_lvl > 3:
+								self.set_block(pos, 0)
+								self.liquid_levels.pop(pos, None)
+								for dx, dy, dz in ((0,-1,0),(0,1,0),(1,0,0),(-1,0,0),(0,0,1),(0,0,-1)):
+									self.liquid_tick_queue.add((x + dx, y + dy, z + dz))
+								continue
+							self.liquid_levels[pos] = new_lvl
+							cur_lvl = new_lvl
+
+				# Spread Downward
 				down_pos = (x, y - 1, z)
-				if self.get_block_number(down_pos) == 0:
+				down_num = self.get_block_number(down_pos)
+				down_is_open = (down_num == 0 or down_num in (10, 12, 31, 33))
+
+				if down_is_open:
 					self.set_block(down_pos, 20)
 					self.liquid_levels[down_pos] = 4
 					self.liquid_tick_queue.add(down_pos)
+					self.liquid_tick_queue.add((x, y - 2, z))
+				elif down_num in (9, 19): # Lava flowing down onto water -> Stone
+					self.set_block(down_pos, 5)
 
-				if curr_lvl < 3:
-					for nx, ny, nz in [(x + 1, y, z), (x - 1, y, z), (x, y, z + 1), (x, y, z - 1)]:
-						n_pos = (nx, ny, nz)
-						if self.get_block_number(n_pos) == 0:
-							self.liquid_tick_queue.add(n_pos)
+				# Horizontal Spread:
+				# 1. Source blocks ALWAYS spread horizontally to open adjacent air blocks.
+				# 2. Flowing blocks spread horizontally on solid ground (not dropping down a hole) when level < 3 or lavafall base (level 4).
+				can_spread_horizontally = is_source or (not self.is_downward_flow_open(pos, is_water=False) and (cur_lvl < 3 or cur_lvl == 4))
+
+				if can_spread_horizontally:
+					flow_dirs = self.get_flow_directions(pos, is_water=False, is_source=is_source)
+					for dx, dz in flow_dirs:
+						nx, nz = x + dx, z + dz
+						n_pos = (nx, y, nz)
+						n_num = self.get_block_number(n_pos)
+						if n_num == 0 or n_num in (10, 12, 31, 33):
+							target_lvl = 1 if is_source or cur_lvl == 4 else cur_lvl + 1
+							if target_lvl <= 3:
+								self.set_block(n_pos, 20)
+								self.liquid_levels[n_pos] = target_lvl
+								self.liquid_tick_queue.add(n_pos)
+								self.liquid_tick_queue.add((nx, y - 1, nz))
+						elif n_num in (9, 19): # Lava flows into water -> Cobblestone
+							self.set_block(n_pos, 1)
+
+			# --- 3. AIR / PASSABLE BLOCK (Infinite Water Source Creation Check) ---
+			elif b_num == 0:
+				source_count = 0
+				for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+					if self.get_block_number((x + dx, y, z + dz)) == 9:
+						source_count += 1
+
+				down_num = self.get_block_number((x, y - 1, z))
+				is_solid_or_source = down_num in (9, 19) or (down_num != 0 and down_num not in (15, 20, 10, 12, 31, 33))
+
+				if source_count >= 2 and is_solid_or_source:
+					self.set_block(pos, 9)
+					self.water_levels[pos] = 0
+					self.liquid_tick_queue.add(pos)
+					for dx, dz in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+						self.liquid_tick_queue.add((x + dx, y, z + dz))
 
 	def set_block(self, position, number):
 		x, y, z = position
@@ -1387,17 +1615,18 @@ class World:
 		ly = int(y)
 		lz = int(z % chunk.CHUNK_LENGTH)
 
-		if chk.get_block_number(lx, ly, lz) == number:
+		old_num = chk.get_block_number(lx, ly, lz)
+		if old_num == number:
 			return
 
 		# Liquid quantity tracking
-		if number in (9, 15):
-			self.liquid_levels[position] = 5
+		if number == 9:
+			self.water_levels[position] = 0
+		elif number == 15:
+			self.liquid_levels[position] = 0
 		elif number == 0:
-			if position in self.liquid_levels:
-				del self.liquid_levels[position]
-			if position in self.water_levels:
-				del self.water_levels[position]
+			self.water_levels.pop(position, None)
+			self.liquid_levels.pop(position, None)
 			p_key = (int(x), int(y), int(z))
 			if p_key in self.furnaces:
 				f_data = self.furnaces[p_key]
@@ -1422,12 +1651,19 @@ class World:
 				del self.chests[p_key]
 
 		px, py, pz = position
-		for nx, ny, nz in [(px, py, pz), (px + 1, py, pz), (px - 1, py, pz), (px, py + 1, pz), (px, py - 1, pz), (px, py, pz + 1), (px, py, pz - 1)]:
-			if 0 <= ny < chunk.CHUNK_HEIGHT:
-				self.liquid_tick_queue.add((nx, ny, nz))
-
 		chk.set_block_number(lx, ly, lz, number)
 		self.dirty_chunks.add(c_pos)
+
+		for nx, ny, nz in [(px, py, pz), (px + 1, py, pz), (px - 1, py, pz), (px, py + 1, pz), (px, py - 1, pz), (px, py, pz + 1), (px, py, pz - 1)]:
+			if 0 <= ny < chunk.CHUNK_HEIGHT:
+				nb = self.get_block_number((nx, ny, nz))
+				if nb in (9, 19, 15, 20):
+					self.liquid_tick_queue.add((nx, ny, nz))
+				elif nb == 0:
+					for ddx, ddy, ddz in ((0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1), (1, 0, 0), (-1, 0, 0)):
+						if self.get_block_number((nx + ddx, ny + ddy, nz + ddz)) in (9, 19, 15, 20):
+							self.liquid_tick_queue.add((nx, ny, nz))
+							break
 
 		sy = ly // 16
 		self.section_mesh_queue.add((c_pos[0], c_pos[2], sy))

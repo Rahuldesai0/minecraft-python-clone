@@ -528,7 +528,6 @@ class Window(pyglet.window.Window):
 		self.mob_manager.update(delta_time, self.camera.position, self.item_drop_manager)
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
-		self.world.tick_liquids()
 		self.invalid = True
 		
 		self.time_of_day += self.cycle_speed * delta_time
