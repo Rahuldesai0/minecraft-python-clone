@@ -116,7 +116,7 @@ class ChunkSection:
 
 
 class Chunk:
-	def __init__(self, world, chunk_position, blocks=None):
+	def __init__(self, world, chunk_position, blocks=None, block_states=None):
 		self.world = world
 		self.chunk_position = chunk_position
 
@@ -125,15 +125,41 @@ class Chunk:
 			self.chunk_position[1] * CHUNK_HEIGHT,
 			self.chunk_position[2] * CHUNK_LENGTH)
 
+		self.sections = {}
+		self.block_states = dict(block_states) if block_states else {}
+		self.active_opaque_sections = []
+		self.active_translucent_sections = []
+		self.had_missing_neighbors = False
+
+		target_size = CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH  # 65536
+
 		# Store terrain blocks as a flat 1D bytearray (65536 bytes)
 		if blocks is not None:
 			if isinstance(blocks, (bytes, bytearray)):
-				if len(blocks) == CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH:
-					self.blocks = bytearray(blocks)
+				# Handle case where raw chunk data includes |STATE_DATA|
+				if b"|STATE_DATA|" in blocks:
+					parts = blocks.split(b"|STATE_DATA|", 1)
+					block_bytes = parts[0]
+					state_bytes = parts[1]
+					if state_bytes:
+						import json, block_state
+						try:
+							st_dict = json.loads(state_bytes.decode('utf-8'))
+							for key_str, s_data in st_dict.items():
+								lx, ly, lz = map(int, key_str.split(','))
+								self.block_states[(lx, ly, lz)] = block_state.BlockState.from_dict(s_data)
+						except Exception:
+							pass
 				else:
-					self.blocks = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
+					block_bytes = blocks
+
+				if len(block_bytes) >= target_size:
+					self.blocks = bytearray(block_bytes[:target_size])
+				else:
+					self.blocks = bytearray(target_size)
+					self.blocks[:len(block_bytes)] = block_bytes
 			elif isinstance(blocks, list):
-				b = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
+				b = bytearray(target_size)
 				idx = 0
 				for x in range(CHUNK_WIDTH):
 					col_x = blocks[x]
@@ -144,15 +170,9 @@ class Chunk:
 							idx += 1
 				self.blocks = b
 			else:
-				self.blocks = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
+				self.blocks = bytearray(target_size)
 		else:
-			self.blocks = bytearray(CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH)
-
-		self.sections = {}
-		self.block_states = {}
-		self.active_opaque_sections = []
-		self.active_translucent_sections = []
-		self.had_missing_neighbors = False
+			self.blocks = bytearray(target_size)
 
 	def get_block_number(self, x, y, z):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:

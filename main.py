@@ -269,9 +269,10 @@ class Window(pyglet.window.Window):
 
 	def save_and_quit_to_title(self):
 		if hasattr(self, 'world') and self.active_world_folder:
-			# Save modified dirty chunks to disk
+			# Save modified dirty chunks synchronously so they are completely flushed to disk
 			for cpos in list(self.world.dirty_chunks):
-				self.world._save_chunk_to_file(cpos)
+				self.world._save_chunk_to_file(cpos, synchronous=True)
+			self.world.dirty_chunks.clear()
 
 			player_data = {
 				'position': list(self.camera.position),

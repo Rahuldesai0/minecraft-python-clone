@@ -1410,7 +1410,7 @@ class World:
 		c_pos = (math.floor(x / chunk.CHUNK_WIDTH), 0, math.floor(z / chunk.CHUNK_LENGTH))
 		if c_pos not in self.chunks:
 			if state is None: return
-			self.chunks[c_pos] = chunk.Chunk(self, c_pos)
+			self.chunks[c_pos] = self.generate_chunk(c_pos[0], c_pos[2])
 		chk = self.chunks[c_pos]
 		lx = int(x % chunk.CHUNK_WIDTH)
 		ly = int(y)
@@ -1970,7 +1970,7 @@ class World:
 		c_pos = (math.floor(x / chunk.CHUNK_WIDTH), 0, math.floor(z / chunk.CHUNK_LENGTH))
 		if c_pos not in self.chunks:
 			if number == 0: return
-			self.chunks[c_pos] = chunk.Chunk(self, c_pos)
+			self.chunks[c_pos] = self.generate_chunk(c_pos[0], c_pos[2])
 
 		chk = self.chunks[c_pos]
 		lx = int(x % chunk.CHUNK_WIDTH)
@@ -2049,7 +2049,7 @@ class World:
 
 		self.notify_neighbor_block_change(position)
 
-	def _save_chunk_to_file(self, chunk_position):
+	def _save_chunk_to_file(self, chunk_position, synchronous=False):
 		if chunk_position not in self.chunks:
 			return
 		import json
@@ -2065,14 +2065,17 @@ class World:
 		state_bytes = json.dumps(state_map).encode('utf-8')
 		data = bytes(chk.blocks) + b"|STATE_DATA|" + state_bytes
 
-		def async_write(path, content):
+		def write_content(path, content):
 			try:
 				with gzip.open(path, 'wb', compresslevel=1) as f:
 					f.write(content)
 			except Exception as e:
-				print(f"Async chunk save failed: {e}")
+				print(f"Chunk save failed: {e}")
 
-		self._save_executor.submit(async_write, save_path, data)
+		if synchronous:
+			write_content(save_path, data)
+		else:
+			self._save_executor.submit(write_content, save_path, data)
 
 	def _collect_generated_chunks(self, player_cx, player_cz):
 		for chunk_position in list(self.chunk_generation_futures.keys()):
