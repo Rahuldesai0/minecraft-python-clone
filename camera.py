@@ -40,12 +40,16 @@ class Camera:
 		self.max_air = 10.0
 		self.drown_damage_timer = 0.0
 
+		self.fov_zoom = 0.0
+		self.absorption = 0.0
 		self.gui = None
 
-	def eat_food(self, hunger_points, saturation_points):
-		"""Restores hunger and saturation (saturation is capped at current hunger level)."""
+	def eat_food(self, hunger_points, saturation_points, absorption_points=0.0):
+		"""Restores hunger and saturation (saturation is capped at current hunger level) and grants absorption hearts."""
 		self.hunger = min(self.max_hunger, self.hunger + hunger_points)
 		self.saturation = min(float(self.hunger), self.saturation + saturation_points)
+		if absorption_points > 0:
+			self.absorption = max(getattr(self, "absorption", 0.0), float(absorption_points))
 
 	def add_exhaustion(self, amount):
 		"""Adds exhaustion and processes hunger/saturation depletion when reaching 4.0."""
@@ -69,7 +73,17 @@ class Camera:
 				reduction = min(0.80, defense * 0.04)
 				damage = max(1.0, damage * (1.0 - reduction))
 		
-		self.health = max(0, self.health - damage)
+		# Absorption hearts absorb damage first
+		if getattr(self, "absorption", 0.0) > 0:
+			if damage <= self.absorption:
+				self.absorption -= damage
+				damage = 0.0
+			else:
+				damage -= self.absorption
+				self.absorption = 0.0
+
+		if damage > 0:
+			self.health = max(0, self.health - damage)
 		self.hurt_time = 0.4
 		self.last_damage_time = time.time()
 
@@ -89,6 +103,7 @@ class Camera:
 		self.hunger = self.max_hunger
 		self.saturation = 5.0
 		self.exhaustion = 0.0
+		self.absorption = 0.0
 
 		spawn_y = None
 		if world:
@@ -581,9 +596,10 @@ class Camera:
 	def update_matrices(self, perspective=0, world=None):
 		cam_pos, cam_rot = self.get_view_position_and_rotation(perspective, world)
 
-		# Projection matrix
+		# Projection matrix (with dynamic FOV zoom when drawing bow)
+		fov = 90.0 * (1.0 - getattr(self, "fov_zoom", 0.0))
 		self.p_matrix.load_identity()
-		self.p_matrix.perspective(90, float(self.width) / self.height, 0.1, 500)
+		self.p_matrix.perspective(fov, float(self.width) / self.height, 0.1, 500)
 
 		# Modelview matrix
 		self.mv_matrix.load_identity()

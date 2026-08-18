@@ -114,19 +114,33 @@ def calculate_stair_shape(world, pos, facing, half):
 	return "STRAIGHT"
 
 
+def _get_world_info(world):
+	if hasattr(world, "get_block_types_info"):
+		return world.get_block_types_info()
+	return getattr(world, "block_types_info", {})
+
+
+NON_CONNECTABLE_BLOCKS = {0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81}
+
+
 def is_connectable_fence(nb_b, my_b, world_info):
-	if nb_b == 0 or nb_b in (9, 19, 15, 20): return False
+	if nb_b in NON_CONNECTABLE_BLOCKS:
+		return False
 	if my_b == 51 and nb_b in (51, 75, 76): return True
 	if my_b == 52 and nb_b in (52, 53, 75, 76): return True
-	if my_b == 53 and nb_b in (53, 52): return True
-	info = world_info.get(nb_b, {})
-	return info.get("is_cube", False) and not info.get("transparent", False)
+	if my_b == 53:
+		# Glass panes connect to other panes (53), glass blocks (21), walls (52), fences (51), gates (75, 76), and all solid blocks/stairs/slabs
+		return True
+	info = world_info.get(nb_b, {}) if world_info else {}
+	if info:
+		return info.get("is_cube", False) and not info.get("transparent", False)
+	return 1 <= nb_b <= 84
 
 
 def calculate_fence_connections(world, pos, my_b):
 	x, y, z = pos
 	res = {}
-	info_map = getattr(world, "block_types_info", {})
+	info_map = _get_world_info(world)
 	for dir_name, (dx, dy, dz) in OFFSET_BY_DIR.items():
 		nb_pos = (x + dx, y + dy, z + dz)
 		nb_b = world.get_block_number(nb_pos)
@@ -137,7 +151,7 @@ def calculate_fence_connections(world, pos, my_b):
 def calculate_wall_connections(world, pos, my_b):
 	x, y, z = pos
 	res = {}
-	info_map = getattr(world, "block_types_info", {})
+	info_map = _get_world_info(world)
 	for dir_name, (dx, dy, dz) in OFFSET_BY_DIR.items():
 		nb_pos = (x + dx, y + dy, z + dz)
 		nb_b = world.get_block_number(nb_pos)
@@ -148,11 +162,11 @@ def calculate_wall_connections(world, pos, my_b):
 def calculate_pane_connections(world, pos, my_b):
 	x, y, z = pos
 	res = {}
-	info_map = getattr(world, "block_types_info", {})
+	info_map = _get_world_info(world)
 	for dir_name, (dx, dy, dz) in OFFSET_BY_DIR.items():
 		nb_pos = (x + dx, y + dy, z + dz)
 		nb_b = world.get_block_number(nb_pos)
-		res[dir_name.lower()] = is_connectable_fence(nb_b, my_b, info_map)
+		res[dir_name.lower()] = is_connectable_fence(nb_b, 53, info_map)
 	return res
 
 

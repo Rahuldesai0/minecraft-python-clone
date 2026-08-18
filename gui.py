@@ -54,6 +54,11 @@ PALETTE_ITEMS = [
 	(52, "Cobblestone Wall", "items/cobblestone_wall"),
 	(53, "Glass Pane", "items/glass_pane"),
 	(56, "Oak Fence Gate", "items/oak_fence_gate"),
+	(77, "Gravel", "gravel"),
+	(79, "Torch", "torch"),
+	(80, "Farmland", "dirt"),
+	(81, "Wheat Crops", "crops"),
+	(82, "Mossy Cobblestone", "mossy_cobblestone"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
@@ -113,6 +118,16 @@ TOOL_ITEMS = [
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
 	(151, "Flint and Steel", "items/flint_and_steel"),
+	(152, "Bread", "items/bread"),
+	(153, "Apple", "items/apple"),
+	(154, "Wheat", "items/wheat"),
+	(155, "Seeds", "items/seeds_wheat"),
+	(156, "Oak Sapling", "sapling"),
+	(157, "Bow", "items/bow_standby"),
+	(158, "Arrow", "items/arrow"),
+	(159, "String", "items/string"),
+	(160, "Feather", "items/feather"),
+	(161, "Golden Apple", "items/apple_golden"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -137,8 +152,8 @@ ARMOR_DEFENSE_POINTS = {
 }
 
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools, Armor, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets stack to 16."""
-	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151):
+	"""Returns the maximum stack size for an item ID. Tools, Armor, Bow, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets stack to 16. Arrows stack to 64."""
+	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151, 157):
 		return 1
 	if item_id == 147:
 		return 16
@@ -184,12 +199,15 @@ def get_item_attack_damage(item_id):
 	"""Returns the attack damage for a given item or weapon ID (default 1.0 for fist)."""
 	return ITEM_ATTACK_DAMAGE.get(item_id, 1.0)
 
-# Minecraft Food Values: item_id -> (hunger_restored, saturation_restored)
+# Minecraft Food Values: item_id -> (hunger_restored, saturation_restored, absorption_points)
 FOOD_VALUES = {
-	125: (3, 1.8),    # Raw Porkchop (+3 Hunger, +1.8 Saturation)
-	128: (8, 12.8),   # Cooked Porkchop (+8 Hunger, +12.8 Saturation)
-	127: (3, 1.8),    # Raw Beef (+3 Hunger, +1.8 Saturation)
-	129: (8, 12.8),   # Steak / Cooked Beef (+8 Hunger, +12.8 Saturation)
+	125: (3, 1.8, 0.0),    # Raw Porkchop (+3 Hunger, +1.8 Saturation)
+	128: (8, 12.8, 0.0),   # Cooked Porkchop (+8 Hunger, +12.8 Saturation)
+	127: (3, 1.8, 0.0),    # Raw Beef (+3 Hunger, +1.8 Saturation)
+	129: (8, 12.8, 0.0),   # Steak / Cooked Beef (+8 Hunger, +12.8 Saturation)
+	152: (5, 6.0, 0.0),    # Bread (+5 Hunger, +6.0 Saturation)
+	153: (4, 2.4, 0.0),    # Apple (+4 Hunger, +2.4 Saturation)
+	161: (4, 9.6, 4.0),    # Golden Apple (+4 Hunger, +9.6 Saturation, +4.0 Absorption = 2 extra yellow hearts)
 }
 
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
@@ -361,9 +379,12 @@ _heart_tri = None
 _heart_in_c1 = None
 _heart_in_c2 = None
 _heart_in_tri = None
+_heart_abs_c1 = None
+_heart_abs_c2 = None
+_heart_abs_tri = None
 
-def draw_vector_heart(x, y, is_full=True, is_half=False):
-	global _heart_c1, _heart_c2, _heart_tri, _heart_in_c1, _heart_in_c2, _heart_in_tri
+def draw_vector_heart(x, y, is_full=True, is_half=False, is_absorption=False):
+	global _heart_c1, _heart_c2, _heart_tri, _heart_in_c1, _heart_in_c2, _heart_in_tri, _heart_abs_c1, _heart_abs_c2, _heart_abs_tri
 	if _heart_c1 is None:
 		_heart_c1 = pyglet.shapes.Circle(0, 0, 4, color=(30, 0, 0, 220))
 		_heart_c2 = pyglet.shapes.Circle(0, 0, 4, color=(30, 0, 0, 220))
@@ -371,6 +392,13 @@ def draw_vector_heart(x, y, is_full=True, is_half=False):
 		_heart_in_c1 = pyglet.shapes.Circle(0, 0, 3, color=(230, 25, 25, 255))
 		_heart_in_c2 = pyglet.shapes.Circle(0, 0, 3, color=(230, 25, 25, 255))
 		_heart_in_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(230, 25, 25, 255))
+		_heart_abs_c1 = pyglet.shapes.Circle(0, 0, 3, color=(255, 215, 0, 255))
+		_heart_abs_c2 = pyglet.shapes.Circle(0, 0, 3, color=(255, 215, 0, 255))
+		_heart_abs_tri = pyglet.shapes.Triangle(0, 0, 0, 0, 0, 0, color=(255, 215, 0, 255))
+
+	in_c1 = _heart_abs_c1 if is_absorption else _heart_in_c1
+	in_c2 = _heart_abs_c2 if is_absorption else _heart_in_c2
+	in_tri = _heart_abs_tri if is_absorption else _heart_in_tri
 
 	_heart_c1.x, _heart_c1.y = x + 4, y + 10
 	_heart_c2.x, _heart_c2.y = x + 11, y + 10
@@ -386,21 +414,21 @@ def draw_vector_heart(x, y, is_full=True, is_half=False):
 		return
 
 	if is_full:
-		_heart_in_c1.x, _heart_in_c1.y = x + 4, y + 10
-		_heart_in_c2.x, _heart_in_c2.y = x + 11, y + 10
-		_heart_in_tri.x, _heart_in_tri.y = x + 1, y + 9
-		_heart_in_tri.x2, _heart_in_tri.y2 = x + 14, y + 9
-		_heart_in_tri.x3, _heart_in_tri.y3 = x + 7.5, y + 2
-		_heart_in_c1.draw()
-		_heart_in_c2.draw()
-		_heart_in_tri.draw()
+		in_c1.x, in_c1.y = x + 4, y + 10
+		in_c2.x, in_c2.y = x + 11, y + 10
+		in_tri.x, in_tri.y = x + 1, y + 9
+		in_tri.x2, in_tri.y2 = x + 14, y + 9
+		in_tri.x3, in_tri.y3 = x + 7.5, y + 2
+		in_c1.draw()
+		in_c2.draw()
+		in_tri.draw()
 	elif is_half:
-		_heart_in_c1.x, _heart_in_c1.y = x + 4, y + 10
-		_heart_in_tri.x, _heart_in_tri.y = x + 1, y + 9
-		_heart_in_tri.x2, _heart_in_tri.y2 = x + 7.5, y + 9
-		_heart_in_tri.x3, _heart_in_tri.y3 = x + 7.5, y + 2
-		_heart_in_c1.draw()
-		_heart_in_tri.draw()
+		in_c1.x, in_c1.y = x + 4, y + 10
+		in_tri.x, in_tri.y = x + 1, y + 9
+		in_tri.x2, in_tri.y2 = x + 7.5, y + 9
+		in_tri.x3, in_tri.y3 = x + 7.5, y + 2
+		in_c1.draw()
+		in_tri.draw()
 
 _shield_out = None
 _shield_out_tri = None
@@ -624,6 +652,18 @@ class InventoryGUI:
 				except Exception:
 					pass
 
+		# Load bow pulling animation stages
+		self.bow_pulling_textures = []
+		for stage in range(3):
+			stage_path = os.path.join("textures", "items", f"bow_pulling_{stage}.png")
+			if os.path.exists(stage_path):
+				try:
+					self.bow_pulling_textures.append(pyglet.image.load(stage_path))
+				except Exception:
+					self.bow_pulling_textures.append(None)
+			else:
+				self.bow_pulling_textures.append(None)
+
 	@property
 	def hotbar_slots(self):
 		return self.creative_hotbar if getattr(self.window, "flying", False) else self.survival_hotbar
@@ -641,6 +681,24 @@ class InventoryGUI:
 			slot[1] -= 1
 			if slot[1] == 0:
 				slot[0] = 0
+
+	def consume_item(self, item_id, count=1):
+		"""Consumes count of item_id from hotbar or inventory slots. Returns True if consumed."""
+		if getattr(self.window, "flying", False):
+			return True # Creative mode: unlimited arrows
+		for slot in self.survival_hotbar + self.survival_inventory:
+			if slot[0] == item_id and slot[1] > 0:
+				take = min(count, slot[1])
+				slot[1] -= take
+				count -= take
+				if slot[1] == 0:
+					slot[0] = 0
+				if count <= 0:
+					return True
+		return False
+
+	def add_item_to_inventory(self, item_id, count=1):
+		return self.add_item(item_id, count)
 
 	def add_item(self, block_id, count=1):
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
@@ -1402,6 +1460,38 @@ class InventoryGUI:
 			self.crafting_result = [151, 1]  # Flint and Steel (151)
 			return
 
+		# Recipe 20: Bow (3 Sticks 100 + 3 Strings 159 in 3x3 crafting grid)
+		if h == 3 and w == 3:
+			# Right-facing string / Left-facing sticks
+			if matrix[0][2] == 159 and matrix[1][2] == 159 and matrix[2][2] == 159:
+				if matrix[0][1] == 100 and matrix[1][0] == 100 and matrix[2][1] == 100:
+					self.crafting_result = [157, 1]  # Bow (157)
+					return
+			# Left-facing string / Right-facing sticks
+			if matrix[0][0] == 159 and matrix[1][0] == 159 and matrix[2][0] == 159:
+				if matrix[0][1] == 100 and matrix[1][2] == 100 and matrix[2][1] == 100:
+					self.crafting_result = [157, 1]  # Bow (157)
+					return
+
+		# Recipe 21: Arrow (1 Flint 146 + 1 Stick 100 + 1 Feather 160 or Sapling 156 in 1x3 vertical column) -> 4 Arrows
+		if h == 3 and w == 1:
+			if matrix[0][0] == 146 and matrix[1][0] == 100 and matrix[2][0] in (160, 156):
+				self.crafting_result = [158, 4]  # 4 Arrows (158)
+				return
+
+		# Recipe 22: Bread (3 Wheat 154 in a 1x3 horizontal row) -> 1 Bread (152)
+		if h == 1 and w == 3:
+			if matrix[0][0] == 154 and matrix[0][1] == 154 and matrix[0][2] == 154:
+				self.crafting_result = [152, 1]  # Bread (152)
+				return
+
+		# Recipe 23: Golden Apple (1 Apple 153 in center surrounded by 8 Gold Ingots 124 in 3x3) -> 1 Golden Apple (161)
+		if h == 3 and w == 3:
+			if matrix[1][1] == 153:
+				if all(matrix[r][c] == 124 for r in range(3) for c in range(3) if (r, c) != (1, 1)):
+					self.crafting_result = [161, 1]  # Golden Apple (161)
+					return
+
 		self.crafting_result = [0, 0]
 
 	def set_selected_slot(self, slot_idx):
@@ -1504,6 +1594,7 @@ class InventoryGUI:
 
 		health = self.window.camera.health
 
+		# 1. Base 10 Health Hearts
 		for i in range(10):
 			hx = start_x + i * 18
 			hy = start_y
@@ -1515,6 +1606,21 @@ class InventoryGUI:
 				draw_vector_heart(hx, hy, is_full=False, is_half=True)
 			else:
 				draw_vector_heart(hx, hy, is_full=False, is_half=False)
+
+		# 2. Golden Absorption Hearts (Extra yellow hearts that disappear when lost)
+		absorption = getattr(self.window.camera, "absorption", 0.0)
+		if absorption > 0:
+			total_def = self.get_total_armor_protection()
+			abs_y = start_y + 18 if total_def <= 0 else start_y + 36
+			num_hearts = int(math.ceil(absorption / 2.0))
+			for i in range(num_hearts):
+				hx = start_x + i * 18
+				hy = abs_y
+				abs_val = i * 2
+				if absorption >= abs_val + 2:
+					draw_vector_heart(hx, hy, is_full=True, is_half=False, is_absorption=True)
+				elif absorption >= abs_val + 1:
+					draw_vector_heart(hx, hy, is_full=False, is_half=True, is_absorption=True)
 
 	def _draw_armor_bar(self):
 		total_def = self.get_total_armor_protection()
@@ -1609,6 +1715,13 @@ class InventoryGUI:
 
 			if b_id in self.icon_textures and cnt > 0:
 				img = self.icon_textures[b_id]
+				# Dynamic bow pulling stage texture
+				if b_id == 157 and is_selected and getattr(self.window, "bow_charging", False) and hasattr(self, "bow_pulling_textures"):
+					charge_ticks = int(getattr(self.window, "bow_charge_time", 0.0) * 20.0)
+					stage = 2 if charge_ticks >= 14 else (1 if charge_ticks >= 6 else 0)
+					if stage < len(self.bow_pulling_textures) and self.bow_pulling_textures[stage]:
+						img = self.bow_pulling_textures[stage]
+
 				self.slot_sprite.image = img
 				self.slot_sprite.x = sx + 6
 				self.slot_sprite.y = sy + 6

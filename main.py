@@ -26,6 +26,7 @@ import noise
 import gui
 import item_drop
 import mob_manager
+import arrow
 import world_save
 
 class Window(pyglet.window.Window):
@@ -38,6 +39,9 @@ class Window(pyglet.window.Window):
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
+		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.bow_charging = False
+		self.bow_charge_time = 0.0
 		
 		# create shader
 
@@ -133,12 +137,16 @@ class Window(pyglet.window.Window):
 		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.mob_manager = mob_manager.MobManager(self.world)
+		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.bow_charging = False
+		self.bow_charge_time = 0.0
 
 		# Reset camera, player attributes & inventory for fresh world
 		self.camera.position = [0, 81.5, 0]
 		self.camera.rotation = [0, 0]
 		self.camera.velocity_y = 0.0
 		self.camera.health = 20
+		self.camera.fov_zoom = 0.0
 		self.flying = False
 		self.sprinting = False
 
@@ -164,6 +172,9 @@ class Window(pyglet.window.Window):
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
+		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.bow_charging = False
+		self.bow_charge_time = 0.0
 
 		# Restore player attributes & flying state
 		p_data = w_data.get('player', {})
@@ -171,6 +182,7 @@ class Window(pyglet.window.Window):
 		self.camera.rotation = p_data.get('rotation', [0.0, 0.0])
 		self.camera.velocity_y = p_data.get('velocity_y', 0.0)
 		self.camera.health = p_data.get('health', 20)
+		self.camera.absorption = p_data.get('absorption', 0.0)
 		self.camera.hunger = p_data.get('hunger', 20)
 		self.camera.saturation = p_data.get('saturation', 5.0)
 		self.camera.exhaustion = p_data.get('exhaustion', 0.0)
@@ -223,6 +235,22 @@ class Window(pyglet.window.Window):
 		player_cx = math.floor(self.camera.position[0] / chunk.CHUNK_WIDTH)
 		player_cz = math.floor(self.camera.position[2] / chunk.CHUNK_LENGTH)
 
+		# Debug: print top 3 closest villages to spawn in terminal
+		try:
+			import village
+			closest = village.find_closest_villages_to_spawn(self.world.seed, count=3, max_region_radius=8)
+			print(f"\n=======================================================")
+			print(f" [VILLAGE LOCATOR] Seed: {self.world.seed}")
+			print(f" Top 3 Closest Villages to Spawn (0, 0):")
+			if closest:
+				for idx, v in enumerate(closest, 1):
+					print(f"   {idx}. Village Center: X={v['x']}, Y={v['y']}, Z={v['z']} | Distance: {v['distance']:.1f} blocks | Buildings: {v['buildings']}")
+			else:
+				print("   No villages found within immediate search radius.")
+			print(f"=======================================================\n")
+		except Exception as e:
+			print(f"[Village Debug Error]: {e}")
+
 		self.spawn_chunk_queue = []
 		for cx in range(player_cx - spawn_r, player_cx + spawn_r + 1):
 			for cz in range(player_cz - spawn_r, player_cz + spawn_r + 1):
@@ -250,6 +278,7 @@ class Window(pyglet.window.Window):
 				'rotation': list(self.camera.rotation),
 				'velocity_y': self.camera.velocity_y,
 				'health': self.camera.health,
+				'absorption': getattr(self.camera, 'absorption', 0.0),
 				'hunger': getattr(self.camera, 'hunger', 20),
 				'saturation': getattr(self.camera, 'saturation', 5.0),
 				'exhaustion': getattr(self.camera, 'exhaustion', 0.0),
@@ -482,11 +511,21 @@ class Window(pyglet.window.Window):
 									actual_drop_id = 146  # 10% chance to drop Flint item (146)
 								else:
 									actual_drop_id = 77   # 90% chance to drop Gravel block (77)
+							elif b_num == 14:  # Oak Leaves
+								import random
+								roll = random.random()
+								if roll < 0.05:
+									actual_drop_id = 156  # 5% chance Oak Sapling (156)
+								elif roll < 0.07:
+									actual_drop_id = 153  # 2% chance Apple (153)
+								else:
+									actual_drop_id = None
 
-							self.item_drop_manager.spawn_drop(
-								actual_drop_id, 1,
-								[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
-							)
+							if actual_drop_id is not None:
+								self.item_drop_manager.spawn_drop(
+									actual_drop_id, 1,
+									[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+								)
 
 						# Check 2-block door breaking synchronization
 						st_curr = self.world.get_block_state(target_block)
@@ -540,6 +579,23 @@ class Window(pyglet.window.Window):
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
 		self.mob_manager.update(delta_time, self.camera.position, self.item_drop_manager)
+		
+		# Bow drawing state & dynamic FOV zoom
+		if getattr(self, "bow_charging", False):
+			if self.gui.get_current_block_id() != 157:
+				self.bow_charging = False
+				self.bow_charge_time = 0.0
+				self.camera.fov_zoom = 0.0
+			else:
+				self.bow_charge_time += delta_time
+				charge_ticks = int(self.bow_charge_time * 20.0)
+				self.camera.fov_zoom = min(1.0, charge_ticks / 20.0) * 0.15
+		else:
+			self.camera.fov_zoom = 0.0
+
+		if hasattr(self, "arrow_manager"):
+			self.arrow_manager.update(delta_time, self.world, self.mob_manager, self.camera, self.gui)
+
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
 		self.invalid = True
@@ -594,6 +650,10 @@ class Window(pyglet.window.Window):
 
 		# Render 3D Pig and Cow Passive Mobs in overworld
 		self.mob_manager.draw(self.camera)
+
+		# Render 3D Flying & Embedded Arrows
+		if hasattr(self, "arrow_manager"):
+			self.arrow_manager.draw(self.camera)
 
 		# If 3rd Person View (Back or Front), render Steve 3D Player Model!
 		if self.perspective != 0:
@@ -1142,9 +1202,18 @@ class Window(pyglet.window.Window):
 					return
 		elif button == pyglet.window.mouse.RIGHT:
 			held_id = self.gui.get_current_block_id()
-			if held_id in gui.FOOD_VALUES and self.camera.hunger < 20:
-				h_pts, s_pts = gui.FOOD_VALUES[held_id]
-				self.camera.eat_food(h_pts, s_pts)
+			if held_id == 157:  # Bow
+				has_arrow = getattr(self, "flying", False) or any(slot[0] == 158 and slot[1] > 0 for slot in self.gui.hotbar_slots + self.gui.survival_inventory)
+				if has_arrow:
+					self.bow_charging = True
+					self.bow_charge_time = 0.0
+					return
+			elif held_id in gui.FOOD_VALUES and (self.camera.hunger < 20 or held_id == 161):
+				food_info = gui.FOOD_VALUES[held_id]
+				h_pts = food_info[0]
+				s_pts = food_info[1]
+				abs_pts = food_info[2] if len(food_info) > 2 else 0.0
+				self.camera.eat_food(h_pts, s_pts, abs_pts)
 				self.gui.consume_active_item()
 				self.holding = self.gui.get_current_block_id()
 				return
@@ -1494,6 +1563,24 @@ class Window(pyglet.window.Window):
 			self.left_mouse_down = False
 			self.breaking_block = None
 			self.break_progress = 0.0
+		elif button == pyglet.window.mouse.RIGHT:
+			if getattr(self, "bow_charging", False):
+				self.bow_charging = False
+				charge_ticks = int(self.bow_charge_time * 20.0)
+				self.bow_charge_time = 0.0
+				self.camera.fov_zoom = 0.0
+
+				# Exact Minecraft Java pull progress formula:
+				f = charge_ticks / 20.0
+				f = (f * f + f * 2.0) / 3.0
+				f = min(1.0, f)
+
+				if f >= 0.1:  # Min 3 ticks to fire
+					if not getattr(self, "flying", False):
+						self.gui.consume_item(158, 1)  # Consume 1 Arrow in Survival mode
+					is_crit = (f >= 1.0)
+					if hasattr(self, "arrow_manager"):
+						self.arrow_manager.shoot_arrow(self.camera, f, is_critical=is_crit)
 	
 	def on_mouse_motion(self, x, y, delta_x, delta_y):
 		self.gui.mouse_x = x

@@ -322,23 +322,42 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		gy = surface_heights[tree_x * 16 + tree_z]
 
 		if (62 <= gy < 85 and gy + 8 < chunk.CHUNK_HEIGHT and get_b(tree_x, gy, tree_z) == 2):
-			has_adjacent_tree = any((tree_x + dx, gy, tree_z + dz) in trees for dx in range(-2, 3) for dz in range(-2, 3))
-			if not has_adjacent_tree:
-				trunk_y = gy + 1
-				for n in range(5):
-					set_b(tree_x, trunk_y + n, tree_z, 8)
+			# Do not plant trees inside village perimeter
+			import village
+			if not village.is_in_village(chunk_offset_x + tree_x, chunk_offset_z + tree_z, seed):
+				has_adjacent_tree = any((tree_x + dx, gy, tree_z + dz) in trees for dx in range(-2, 3) for dz in range(-2, 3))
+				if not has_adjacent_tree:
+					trunk_y = gy + 1
+					for n in range(5):
+						set_b(tree_x, trunk_y + n, tree_z, 8)
 
-				leaves_height = trunk_y + 3
-				for dx in range(-2, 3):
-					for dz in range(-2, 3):
-						if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
-							set_b(tree_x + dx, leaves_height, tree_z + dz, 13)
-							set_b(tree_x + dx, leaves_height + 1, tree_z + dz, 13)
-				for dx in range(-1, 2):
-					for dz in range(-1, 2):
-						if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
-							set_b(tree_x + dx, leaves_height + 2, tree_z + dz, 13)
-				trees.append((tree_x, gy, tree_z))
+					leaves_height = trunk_y + 3
+					for dx in range(-2, 3):
+						for dz in range(-2, 3):
+							if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
+								set_b(tree_x + dx, leaves_height, tree_z + dz, 13)
+								set_b(tree_x + dx, leaves_height + 1, tree_z + dz, 13)
+					for dx in range(-1, 2):
+						for dz in range(-1, 2):
+							if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
+								set_b(tree_x + dx, leaves_height + 2, tree_z + dz, 13)
+					trees.append((tree_x, gy, tree_z))
+
+	# 8. Village Structures Generation (High Priority: Overwrite terrain & trees)
+	try:
+		import village
+		v_blocks, v_air, _ = village.get_village_blocks_for_chunk(x, z, seed)
+		if v_blocks or v_air:
+			# 1. Clear air volumes above/inside structures, roads, and wells
+			for (lx, ly, lz) in v_air:
+				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
+					set_b(lx, ly, lz, 0)
+			# 2. Place structure blocks (cobblestone, wood, doors, crops, chests, etc.)
+			for (lx, ly, lz), b_id in v_blocks.items():
+				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
+					set_b(lx, ly, lz, b_id)
+	except Exception as e:
+		print(f"[Village Error in chunk {x}, {z}]: {e}")
 
 	return bytes(flat_bytes)
 
@@ -700,13 +719,15 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						def can_conn(nb, d_key):
 							if conns and d_key in conns: return conns[d_key]
-							if nb == 0 or nb in (9, 19, 15, 20): return False
+							if nb in (0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81):
+								return False
 							if b_num == 51:
 								return nb in (51, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 52:
 								return nb in (52, 53, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 53:
-								return nb in (53, 52) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+								# Glass panes connect to other panes (53), glass blocks (21), walls (52), fences (51), gates (75, 76), stairs, slabs, and all solid blocks!
+								return True
 							return False
 
 						c_n = can_conn(nb_n, 'north')
@@ -742,11 +763,15 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							if c_e: add_custom_box((0.25 if has_post else 0.0, -0.5, -0.15), (0.5, 0.35, 0.15), [0, 0, 0, 0, 0, 0])
 
 						elif b_num == 53:
-							add_custom_box((-0.03125, -0.5, -0.03125), (0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
-							if c_n: add_custom_box((-0.03125, -0.5, -0.5), (0.03125, 0.5, -0.03125), [0, 0, 0, 0, 0, 0])
-							if c_s: add_custom_box((-0.03125, -0.5, 0.03125), (0.03125, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
-							if c_w: add_custom_box((-0.5, -0.5, -0.03125), (-0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
-							if c_e: add_custom_box((0.03125, -0.5, -0.03125), (0.5, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+							if not (c_n or c_s or c_w or c_e):
+								add_custom_box((-0.03125, -0.5, -0.125), (0.03125, 0.5, 0.125), [0, 0, 0, 0, 0, 0])
+								add_custom_box((-0.125, -0.5, -0.03125), (0.125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+							else:
+								add_custom_box((-0.03125, -0.5, -0.03125), (0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+								if c_n: add_custom_box((-0.03125, -0.5, -0.5), (0.03125, 0.5, -0.03125), [0, 0, 0, 0, 0, 0])
+								if c_s: add_custom_box((-0.03125, -0.5, 0.03125), (0.03125, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
+								if c_w: add_custom_box((-0.5, -0.5, -0.03125), (-0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+								if c_e: add_custom_box((0.03125, -0.5, -0.03125), (0.5, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
 					else:
 						for face_idx in range(len(b_info['vertex_positions'])):
 							add_face(face_idx, is_translucent)
@@ -981,6 +1006,10 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_fence_gate_open", block_face_textures={"all": "planks"}, model=models.fence_gate_open, transparent=True, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="gravel", block_face_textures={"all": "gravel"}, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="fire", block_face_textures={"all": "fire"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="torch", block_face_textures={"top": "torch_top", "bottom": "torch", "sides": "torch"}, model=models.torch, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="farmland", block_face_textures={"top": "soil", "bottom": "dirt", "sides": "dirt"}, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="crops", block_face_textures={"all": "crops"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_cobblestone", block_face_textures={"all": "mossy_cobblestone"}, break_time=1.5, requires_tool=True))
 
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
@@ -1202,6 +1231,20 @@ class World:
 		blocks = build_chunk_blocks_process(
 			x, z, self.scale, self.octaves, self.persistence, self.lacunarity,
 			self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
+
+		# Register any village chests generated in this chunk
+		try:
+			import village
+			_, _, v_chests = village.get_village_blocks_for_chunk(x, z, self.seed)
+			if v_chests:
+				for pos_key, slots in v_chests.items():
+					if pos_key not in self.chests:
+						c_obj = ChestData()
+						c_obj.slots = [list(s) for s in slots]
+						self.chests[pos_key] = c_obj
+		except Exception:
+			pass
+
 		if blocks_only:
 			return blocks
 		return chunk.Chunk(self, chunk_position, blocks=blocks)
@@ -2064,10 +2107,23 @@ class World:
 					for key_str, s_data in st_dict.items():
 						lx, ly, lz = map(int, key_str.split(','))
 						chk.block_states[(lx, ly, lz)] = block_state.BlockState.from_dict(s_data)
-				except Exception as e:
+				except Exception:
 					pass
-
 			self.chunks[chunk_position] = chk
+
+			# Register any village chests generated in this chunk
+			try:
+				import village
+				_, _, v_chests = village.get_village_blocks_for_chunk(chunk_position[0], chunk_position[2], self.seed)
+				if v_chests:
+					for pos_key, slots in v_chests.items():
+						if pos_key not in self.chests:
+							c_obj = ChestData()
+							c_obj.slots = [list(s) for s in slots]
+							self.chests[pos_key] = c_obj
+			except Exception:
+				pass
+
 			self.queue_chunk_sections_for_meshing(chunk_position[0], chunk_position[2])
 
 			# Trigger border section re-meshing ONLY for neighbors that were missing this chunk
