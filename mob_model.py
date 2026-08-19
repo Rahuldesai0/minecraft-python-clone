@@ -1017,3 +1017,102 @@ class SpiderModel(BaseMobModel):
 
 		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
 
+
+class CreeperModel(BaseMobModel):
+	"""3D Creeper Model with 4-legged diagonal walking, head pitch, and swelling fuse pulse."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "creeper", "creeper.png"))
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		self.uv_head = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tw, th)
+		self.uv_body = build_cuboid_uv_atlas(16, 16, 8, 12, 4, tw, th)
+		self.uv_leg  = build_cuboid_uv_atlas(0, 16, 4, 6, 4, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, fuse_progress=0.0, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		# Walking leg swing
+		swing = math.sin(walk_time) * 0.65 if is_moving else 0.0
+		leg_fl = swing
+		leg_br = swing
+		leg_fr = -swing
+		leg_bl = -swing
+
+		# Swell effect when fuse is charging (expands up to +25%)
+		swell = 1.0 + max(0.0, min(1.0, fuse_progress)) * 0.25
+
+		# White flashing overlay during fuse
+		is_flashing = False
+		if fuse_progress > 0.0:
+			if fuse_progress > 0.80 or int(fuse_progress * 16.0) % 2 == 1:
+				is_flashing = True
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY / TORSO (8x12x4 px = 0.50 x 0.75 x 0.25 units, center y = 0.75)
+		body_size = (0.50 * swell, 0.75 * swell, 0.25 * swell)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.75, 0.0), body_size, self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 0.75, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (8x8x8 px = 0.50 x 0.50 x 0.50 units, center y = 1.375, pivot y = 1.125)
+		head_size = (0.50 * swell, 0.50 * swell, 0.50 * swell)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.375, 0.0), head_size, self.uv_head,
+			local_rot=(pitch, 0.0, 0.0), local_pivot=(0.0, 1.125, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. FOUR LEGS (4x6x4 px = 0.25 x 0.375 x 0.25 units, pivot y = 0.375, center y = 0.1875)
+		leg_size = (0.25, 0.375, 0.25)
+		leg_pivot_y = 0.375
+		leg_y_center = 0.1875
+		lx = 0.125
+		lz = 0.1875
+
+		# Front-Left Leg (-X, -Z)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-lx, leg_y_center, -lz), leg_size, self.uv_leg,
+			local_rot=(leg_fl, 0.0, 0.0), local_pivot=(-lx, leg_pivot_y, -lz),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Front-Right Leg (+X, -Z)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(lx, leg_y_center, -lz), leg_size, self.uv_leg,
+			local_rot=(leg_fr, 0.0, 0.0), local_pivot=(lx, leg_pivot_y, -lz),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Back-Left Leg (-X, +Z)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-lx, leg_y_center, lz), leg_size, self.uv_leg,
+			local_rot=(leg_bl, 0.0, 0.0), local_pivot=(-lx, leg_pivot_y, lz),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Back-Right Leg (+X, +Z)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(lx, leg_y_center, lz), leg_size, self.uv_leg,
+			local_rot=(leg_br, 0.0, 0.0), local_pivot=(lx, leg_pivot_y, lz),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		if not pos_data:
+			return
+
+		# Apply white flash shading if hissing
+		if is_flashing:
+			shd_data = [s * 1.6 for s in shd_data]
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+

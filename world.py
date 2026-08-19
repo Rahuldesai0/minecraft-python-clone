@@ -1231,6 +1231,16 @@ class World:
 				self.active_fires.pop(pos, None)
 			else:
 				self.active_fires[pos] = new_time
+				# Ignite adjacent TNT blocks (25)
+				px, py, pz = pos
+				for n_pos in ((px+1, py, pz), (px-1, py, pz), (px, py-1, pz), (px, py+1, pz), (px, py, pz+1), (px, py, pz-1)):
+					if self.get_block_number(n_pos) == 25:
+						self.set_block(n_pos, 0)
+						if hasattr(self, "tnt_manager") and self.tnt_manager:
+							self.tnt_manager.spawn_primed_tnt(
+								(n_pos[0] + 0.5, n_pos[1], n_pos[2] + 0.5),
+								fuse_ticks=random.randint(10, 30)
+							)
 
 		# Update burning block side overlays - disappear after 8-10s
 		for pos, data in list(self.burning_blocks.items()):

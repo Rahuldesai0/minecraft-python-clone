@@ -192,6 +192,17 @@ class ArrowEntity:
 			return
 
 		elif hit_block_pos:
+			b_hit = world.get_block_number(hit_block_pos)
+			if b_hit == 25 and (getattr(self, "fire_timer", 0.0) > 0 or getattr(self, "is_critical", False)):
+				world.set_block(hit_block_pos, 0)
+				if hasattr(world, "tnt_manager") and world.tnt_manager:
+					world.tnt_manager.spawn_primed_tnt(
+						(hit_block_pos[0] + 0.5, hit_block_pos[1], hit_block_pos[2] + 0.5),
+						fuse_ticks=80
+					)
+				self.despawn = True
+				return
+
 			self.position[0] += step_vx * min_block_dist
 			self.position[1] += step_vy * min_block_dist
 			self.position[2] += step_vz * min_block_dist

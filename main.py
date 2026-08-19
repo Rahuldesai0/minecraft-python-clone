@@ -28,6 +28,8 @@ import item_drop
 import mob_manager
 import arrow
 import world_save
+import tnt_manager
+import explosion
 
 class Window(pyglet.window.Window):
 	def __init__(self, **args):
@@ -40,6 +42,8 @@ class Window(pyglet.window.Window):
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
 		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.tnt_manager = tnt_manager.TNTManager(self.world)
+		self.world.tnt_manager = self.tnt_manager
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 		
@@ -136,8 +140,11 @@ class Window(pyglet.window.Window):
 		# Initialize fresh World, ItemDropManager & MobManager
 		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
+		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
 		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.tnt_manager = tnt_manager.TNTManager(self.world)
+		self.world.tnt_manager = self.tnt_manager
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 
@@ -173,6 +180,8 @@ class Window(pyglet.window.Window):
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
 		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.tnt_manager = tnt_manager.TNTManager(self.world)
+		self.world.tnt_manager = self.tnt_manager
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 
@@ -586,9 +595,15 @@ class Window(pyglet.window.Window):
 
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
+		if hasattr(self, "tnt_manager"):
+			self.tnt_manager.update(
+				delta_time, mob_manager=self.mob_manager, camera=self.camera,
+				gui=self.gui, item_drop_manager=self.item_drop_manager
+			)
 		self.mob_manager.update(
 			delta_time, self.camera.position,
-			camera=self.camera, gui=self.gui, item_drop_manager=self.item_drop_manager,
+			camera=self.camera, gui=self.gui, tnt_manager=getattr(self, "tnt_manager", None),
+			item_drop_manager=self.item_drop_manager,
 			arrow_manager=getattr(self, "arrow_manager", None),
 			time_of_day=self.time_of_day, flying=self.flying
 		)
@@ -661,8 +676,16 @@ class Window(pyglet.window.Window):
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
 
-		# Render 3D Passive Mobs (Cow, Pig, Sheep, Chicken) in overworld
+		# Render 3D Passive & Hostile Mobs in overworld
 		self.mob_manager.draw(self.camera)
+
+		# Render 3D Primed TNT Entities
+		if hasattr(self, "tnt_manager"):
+			self.shader.use()
+			gl.glActiveTexture(gl.GL_TEXTURE0)
+			gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
+			gl.glUniform1i(self.shader_sampler_location, 0)
+			self.tnt_manager.draw(self.shader)
 
 		# Render 3D Flying & Embedded Arrows
 		if hasattr(self, "arrow_manager"):
@@ -1478,7 +1501,12 @@ class Window(pyglet.window.Window):
 
 					# 2. Flint and Steel interactions (151)
 					elif self.holding == 151:
-						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+						if target_b == 25:  # Right-click placed TNT to prime it!
+							self.world.set_block(next_block, 0)
+							if hasattr(self, "tnt_manager"):
+								self.tnt_manager.spawn_primed_tnt((next_block[0] + 0.5, next_block[1], next_block[2] + 0.5), fuse_ticks=80)
+							return
+						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
 							pass  # Fall through to interactive block GUI/toggle below
 						else:
 							import random

@@ -18,7 +18,7 @@ class MobManager:
 		self.mobs = []
 		self.next_entity_id = 1
 
-		# Render Models for all 7 passive & hostile mobs
+		# Render Models for all 8 passive & hostile mobs
 		self.pig_model = mob_model.PigModel()
 		self.cow_model = mob_model.CowModel()
 		self.sheep_model = mob_model.SheepModel()
@@ -26,6 +26,7 @@ class MobManager:
 		self.zombie_model = mob_model.ZombieModel()
 		self.skeleton_model = mob_model.SkeletonModel()
 		self.spider_model = mob_model.SpiderModel()
+		self.creeper_model = mob_model.CreeperModel()
 
 		# Spawning Parameters
 		self.passive_spawn_timer = 0.0
@@ -53,6 +54,8 @@ class MobManager:
 			mob = mob_entity.SkeletonEntity(eid, position)
 		elif mob_type == "spider":
 			mob = mob_entity.SpiderEntity(eid, position)
+		elif mob_type == "creeper":
+			mob = mob_entity.CreeperEntity(eid, position)
 		else:
 			mob = mob_entity.CowEntity(eid, position)
 
@@ -71,7 +74,7 @@ class MobManager:
 
 	def get_balanced_hostile_type(self):
 		"""Returns the hostile mob type that is currently least populated."""
-		counts = {"zombie": 0, "skeleton": 0, "spider": 0}
+		counts = {"zombie": 0, "skeleton": 0, "spider": 0, "creeper": 0}
 		for m in self.mobs:
 			if m.mob_type in counts:
 				counts[m.mob_type] += 1
@@ -107,43 +110,41 @@ class MobManager:
 							break
 
 				if sy is not None:
-					group_size = random.randint(2, 3)
-					for _ in range(group_size):
+					pack = random.randint(2, 4)
+					for _ in range(pack):
 						if len(self.mobs) >= self.max_passive_mobs:
 							break
-						ox = sx + random.uniform(-1.8, 1.8)
-						oz = sz + random.uniform(-1.8, 1.8)
-						self.spawn_mob(mtype, (ox, sy, oz))
+						off_x = sx + random.uniform(-1.5, 1.5)
+						off_z = sz + random.uniform(-1.5, 1.5)
+						self.spawn_mob(mtype, (off_x, sy, off_z))
 					break
 
 	def try_natural_spawning(self, player_pos):
+		"""Spawns passive animal packs periodically near the player if below cap."""
 		passive_count = sum(1 for m in self.mobs if m.mob_type in ("cow", "pig", "sheep", "chicken"))
 		if passive_count >= self.max_passive_mobs:
 			return
 
 		px, py, pz = player_pos
-		# Check multiple candidate positions around player (16 to 52 blocks)
-		for _ in range(8):
-			if passive_count >= self.max_passive_mobs:
-				break
+		mob_type = self.get_balanced_spawn_type()
 
+		for _ in range(10):
 			angle = random.uniform(0, math.tau)
-			dist = random.uniform(16.0, 52.0)
+			dist = random.uniform(20.0, 52.0)
 			sx = int(round(px + math.cos(angle) * dist))
 			sz = int(round(pz + math.sin(angle) * dist))
 
 			sy = None
 			for y in range(120, 45, -1):
 				b_id = self.world.get_block_number((sx, y, sz))
-				if b_id in (2, 3):  # Grass Block or Dirt
-					if self.world.get_block_number((sx, y + 1, sz)) == 0:
+				if b_id in (2, 3):  # Grass block or Dirt
+					if self.world.get_block_number((sx, y + 1, sz)) == 0 and self.world.get_block_number((sx, y + 2, sz)) == 0:
 						sy = y + 1
 						break
 
 			if sy is not None:
-				mob_type = self.get_balanced_spawn_type()
-				group_size = random.randint(2, 4)
-				for _ in range(group_size):
+				pack = random.randint(1, 3)
+				for _ in range(pack):
 					if passive_count >= self.max_passive_mobs:
 						break
 					off_x = sx + random.uniform(-2.2, 2.2)
@@ -161,8 +162,8 @@ class MobManager:
 		tod = time_of_day % 1.0
 		is_night = (tod <= 0.25 or tod >= 0.73)
 
-		surface_hostiles = sum(1 for m in self.mobs if m.mob_type in ("zombie", "skeleton", "spider") and m.position[1] >= 55)
-		cave_hostiles = sum(1 for m in self.mobs if m.mob_type in ("zombie", "skeleton", "spider") and m.position[1] < 55)
+		surface_hostiles = sum(1 for m in self.mobs if m.mob_type in ("zombie", "skeleton", "spider", "creeper") and m.position[1] >= 55)
+		cave_hostiles = sum(1 for m in self.mobs if m.mob_type in ("zombie", "skeleton", "spider", "creeper") and m.position[1] < 55)
 		total_hostiles = surface_hostiles + cave_hostiles
 
 		if total_hostiles >= self.max_hostile_mobs:
@@ -235,7 +236,7 @@ class MobManager:
 					self.spawn_mob(mob_type, (sx, spawn_y, sz))
 					cave_hostiles += 1
 
-	def update(self, dt, player_pos, camera=None, gui=None, item_drop_manager=None, arrow_manager=None, time_of_day=0.5, flying=False):
+	def update(self, dt, player_pos, camera=None, gui=None, tnt_manager=None, item_drop_manager=None, arrow_manager=None, time_of_day=0.5, flying=False):
 		# Throttled passive and hostile mob spawning
 		self.passive_spawn_timer += dt
 		if self.passive_spawn_timer >= 2.0:
@@ -258,7 +259,7 @@ class MobManager:
 			dist_sq = dx * dx + dy * dy + dz * dz
 
 			# Despawn distant mobs (Hostiles beyond 56 blocks, Passives beyond 96 blocks)
-			is_hostile = mob.mob_type in ("zombie", "skeleton", "spider")
+			is_hostile = mob.mob_type in ("zombie", "skeleton", "spider", "creeper")
 			despawn_dist_sq = 3136.0 if is_hostile else 9216.0  # 56m for hostiles, 96m for passives
 			if dist_sq > despawn_dist_sq:
 				self.mobs.pop(i)
@@ -268,7 +269,8 @@ class MobManager:
 			if dist_sq <= 4096.0:
 				mob.update(
 					dt, self.world, player_pos,
-					camera=camera, gui=gui, arrow_manager=arrow_manager,
+					camera=camera, gui=gui, tnt_manager=tnt_manager, mob_manager=self,
+					item_drop_manager=item_drop_manager, arrow_manager=arrow_manager,
 					time_of_day=time_of_day, flying=flying
 				)
 
@@ -323,7 +325,7 @@ class MobManager:
 		return False
 
 	def draw(self, camera):
-		"""Render active 3D models for all 7 passive and hostile mobs."""
+		"""Render active 3D models for all 8 passive and hostile mobs."""
 		if not self.mobs:
 			return
 
@@ -367,4 +369,10 @@ class MobManager:
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
 					is_climbing=getattr(mob, "is_climbing", False)
+				)
+			elif mob.mob_type == "creeper":
+				self.creeper_model.render(
+					camera, mob.position, mob.yaw, mob.pitch,
+					mob.walk_time, mob.is_moving, mob.hurt_time,
+					fuse_progress=getattr(mob, "fuse_progress", 0.0)
 				)

@@ -136,6 +136,7 @@ TOOL_ITEMS = [
 	(166, "Rotten Flesh", "items/rotten_flesh"),
 	(167, "Bone", "items/bone"),
 	(168, "Spider Eye", "items/spider_eye"),
+	(169, "Gunpowder", "items/gunpowder"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -1513,6 +1514,14 @@ class InventoryGUI:
 		if h == 2 and w == 2:
 			if matrix[0][0] == 159 and matrix[0][1] == 159 and matrix[1][0] == 159 and matrix[1][1] == 159:
 				self.crafting_result = [83, 1]  # White Wool (83)
+				return
+
+		# Recipe 25: TNT (5 Gunpowder 169 + 4 Sand 6 in 3x3 X-pattern) -> 1 TNT Block (25)
+		if h == 3 and w == 3:
+			if (matrix[0][0] == 169 and matrix[0][1] == 6 and matrix[0][2] == 169 and
+				matrix[1][0] == 6 and matrix[1][1] == 169 and matrix[1][2] == 6 and
+				matrix[2][0] == 169 and matrix[2][1] == 6 and matrix[2][2] == 169):
+				self.crafting_result = [25, 1]  # TNT Block (25)
 				return
 
 		self.crafting_result = [0, 0]

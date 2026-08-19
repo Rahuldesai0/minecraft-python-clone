@@ -700,8 +700,8 @@ class ChickenEntity(MobEntity):
 	def __init__(self, entity_id, position):
 		super().__init__(entity_id, position, mob_type="chicken", max_health=4, speed=0.25, width=0.4, height=0.7)
 
-	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False):
-		super().update(dt, world, player_pos)
+	def update(self, dt, world, player_pos, *args, **kwargs):
+		super().update(dt, world, player_pos, *args, **kwargs)
 		if not self.on_ground:
 			self.wing_flap += dt * 18.0
 		elif self.is_moving:
@@ -1043,7 +1043,7 @@ class HostileEntity(MobEntity):
 		self.shelter_goal = FindShelterGoal(self)
 		self.sunlight_goal = SunlightBurnGoal(self)
 
-	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False):
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
 		if self.is_dead:
 			return
 
@@ -1060,7 +1060,7 @@ class HostileEntity(MobEntity):
 				self.shelter_goal.update(dt, world, time_of_day=time_of_day)
 
 		# 3. Base movement, physics, and damage handling
-		super().update(dt, world, player_pos)
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 
 
 class ZombieEntity(HostileEntity):
@@ -1069,8 +1069,8 @@ class ZombieEntity(HostileEntity):
 		super().__init__(entity_id, position, mob_type="zombie", max_health=20, speed=0.23, width=0.6, height=1.95)
 		self.melee_goal = MeleeAttackGoal(self, attack_range=1.8, damage=3, cooldown=1.0)
 
-	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False):
-		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying)
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 		if not self.is_dead:
 			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
 
@@ -1089,8 +1089,8 @@ class SkeletonEntity(HostileEntity):
 		super().__init__(entity_id, position, mob_type="skeleton", max_health=20, speed=0.24, width=0.6, height=1.98)
 		self.ranged_goal = RangedBowAttackGoal(self, min_range=5.0, max_range=15.0, attack_cooldown=1.8)
 
-	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False):
-		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying)
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 		if not self.is_dead:
 			self.ranged_goal.update(dt, world, player_pos, camera=camera, arrow_manager=arrow_manager, flying=flying)
 
@@ -1113,7 +1113,7 @@ class SpiderEntity(HostileEntity):
 		self.is_climbing = False
 		self.melee_goal = MeleeAttackGoal(self, attack_range=1.6, damage=3, cooldown=0.8)
 
-	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False):
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
 		# Spider Wall Climbing Surface Detection
 		reach = (self.width / 2.0) + 0.3
 		yaw = self.yaw
@@ -1138,7 +1138,7 @@ class SpiderEntity(HostileEntity):
 			if self.target_pitch < -0.5:
 				self.target_pitch = 0.0
 
-		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying)
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 		if not self.is_dead:
 			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
 
@@ -1151,6 +1151,118 @@ class SpiderEntity(HostileEntity):
 			drops.append((159, string_count))  # String (159)
 		if eye_count > 0:
 			drops.append((168, eye_count))     # Spider Eye (168)
+		return drops, xp
+
+
+class CreeperAttackGoal:
+	"""AI Goal: Approaching player, swelling/hissing countdown at <=3m, and explosion detonation at 30 ticks."""
+	def __init__(self, mob, fuse_max=30, explosion_power=3.0, trigger_distance=3.0, abort_distance=7.0):
+		self.mob = mob
+		self.fuse_max = float(fuse_max)  # 30 ticks = 1.5s
+		self.fuse_time = 0.0
+		self.explosion_power = explosion_power
+		self.trigger_distance = trigger_distance
+		self.abort_distance = abort_distance
+		self.repath_timer = 0.0
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, tnt_manager=None, mob_manager=None, item_drop_manager=None, flying=False):
+		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
+		if is_creative or is_dead or not player_pos:
+			self.fuse_time = max(0.0, self.fuse_time - dt * 20.0)
+			self.mob.fuse_progress = self.fuse_time / self.fuse_max
+			self.mob.is_hissing = False
+			return
+
+		px, py, pz = player_pos
+		mx, my, mz = self.mob.position
+		dx = px - mx
+		dy = py - my
+		dz = pz - mz
+		dist = math.sqrt(dx * dx + dz * dz)
+
+		self.mob.target_yaw = math.atan2(dx, dz)
+
+		if dist <= self.trigger_distance and abs(dy) <= 3.0:
+			# Player in close range! Stop movement and hiss/swell
+			self.mob.is_moving = False
+			self.mob.velocity[0] = 0.0
+			self.mob.velocity[2] = 0.0
+			self.mob.target_dest = None
+			self.mob.is_hissing = True
+
+			self.fuse_time += dt * 20.0
+			self.mob.fuse_progress = min(1.0, self.fuse_time / self.fuse_max)
+
+			if self.fuse_time >= self.fuse_max:
+				# Detonate Creeper Explosion!
+				self.mob.is_dead = True
+				import explosion
+				ex_pos = (mx, my + 0.85, mz)
+				explosion.create_explosion(
+					world, ex_pos, power=self.explosion_power, source_entity=self.mob,
+					tnt_manager=tnt_manager, mob_manager=mob_manager,
+					camera=camera, gui=gui, item_drop_manager=item_drop_manager
+				)
+				return
+
+		elif dist > self.abort_distance or abs(dy) > 4.0:
+			# Player fled beyond abort distance! Cool down fuse
+			self.fuse_time = max(0.0, self.fuse_time - dt * 20.0)
+			self.mob.fuse_progress = self.fuse_time / self.fuse_max
+			self.mob.is_hissing = False
+
+			self.repath_timer -= dt
+			if self.repath_timer <= 0 or self.mob.target_dest is None:
+				self.repath_timer = 0.3
+				self.mob.set_target_destination(px, pz, speed_mult=1.15)
+
+		else:
+			# Medium distance: continue fuse if already swelling, otherwise pursue
+			if self.fuse_time > 0.0:
+				self.fuse_time += dt * 20.0
+				self.mob.fuse_progress = min(1.0, self.fuse_time / self.fuse_max)
+				if self.fuse_time >= self.fuse_max:
+					self.mob.is_dead = True
+					import explosion
+					ex_pos = (mx, my + 0.85, mz)
+					explosion.create_explosion(
+						world, ex_pos, power=self.explosion_power, source_entity=self.mob,
+						tnt_manager=tnt_manager, mob_manager=mob_manager,
+						camera=camera, gui=gui, item_drop_manager=item_drop_manager
+					)
+					return
+			else:
+				self.mob.is_hissing = False
+				self.repath_timer -= dt
+				if self.repath_timer <= 0 or self.mob.target_dest is None:
+					self.repath_timer = 0.3
+					self.mob.set_target_destination(px, pz, speed_mult=1.15)
+
+
+class CreeperEntity(HostileEntity):
+	"""Minecraft Creeper Entity: 20 HP (10 hearts), speed 0.25, drops 0-2 Gunpowder, detonates 3.0 power explosion."""
+	def __init__(self, entity_id, position):
+		super().__init__(entity_id, position, mob_type="creeper", max_health=20, speed=0.25, width=0.6, height=1.7)
+		self.fuse_progress = 0.0
+		self.is_hissing = False
+		self.attack_goal = CreeperAttackGoal(self, fuse_max=30, explosion_power=3.0)
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, tnt_manager=None, mob_manager=None, item_drop_manager=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
+		if not self.is_dead:
+			self.attack_goal.update(
+				dt, world, player_pos, camera=camera, gui=gui,
+				tnt_manager=tnt_manager, mob_manager=mob_manager,
+				item_drop_manager=item_drop_manager, flying=flying
+			)
+
+	def get_loot_drops(self, is_on_fire=False):
+		gunpowder_count = random.randint(0, 2)
+		xp = 5
+		drops = []
+		if gunpowder_count > 0:
+			drops.append((169, gunpowder_count))  # Gunpowder (169)
 		return drops, xp
 
 
