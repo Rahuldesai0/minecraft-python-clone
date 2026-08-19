@@ -55,7 +55,7 @@ class ArrowEntity:
 		self.ticks_alive = 0
 		self.in_ground_ticks = 0
 		self.despawn = False
-		self.pickup_allowed = True
+		self.pickup_allowed = (shooter == "player")  # Skeleton arrows cannot be picked up by player
 		self.trail_particles = []           # [[x, y, z, life], ...]
 
 		# Orientation angles (in degrees)
@@ -76,7 +76,8 @@ class ArrowEntity:
 		# 1. Embedded in ground behavior
 		if self.in_ground:
 			self.in_ground_ticks += dt_ticks
-			if self.in_ground_ticks >= 1200:
+			# Despawn embedded arrows after 2 minutes (2400 ticks = 120 seconds)
+			if self.in_ground_ticks >= 2400:
 				self.despawn = True
 				return
 
@@ -87,7 +88,7 @@ class ArrowEntity:
 					self.embedded_block = None
 					self.velocity = [0.0, -0.05, 0.0]
 
-			# Player Pickup Check (within 1.2 blocks of arrow)
+			# Player Pickup Check (within 1.2 blocks of arrow, only for player-shot arrows)
 			if self.pickup_allowed and camera:
 				px, py, pz = camera.position
 				dist_sq = (self.position[0] - px)**2 + (self.position[1] - (py - 0.8))**2 + (self.position[2] - pz)**2
@@ -101,7 +102,7 @@ class ArrowEntity:
 
 		# 2. In-Flight Physics & Continuous Swept Collision
 		self.ticks_alive += dt_ticks
-		if self.ticks_alive >= 1200:
+		if self.ticks_alive >= 2400:
 			self.despawn = True
 			return
 
@@ -116,7 +117,7 @@ class ArrowEntity:
 
 		if mob_manager and hasattr(mob_manager, "mobs"):
 			for mob in mob_manager.mobs:
-				if mob.is_dead:
+				if mob.is_dead or mob is self.shooter:
 					continue
 				mx, my, mz = mob.position
 				half_w = (mob.width / 2.0) + 0.3
@@ -128,6 +129,18 @@ class ArrowEntity:
 					if t < min_mob_dist:
 						min_mob_dist = t
 						hit_mob = mob
+
+		# Check Player Collision along segment if arrow was fired by a hostile mob
+		hit_player = False
+		min_player_dist = float('inf')
+		if self.shooter != "player" and camera and not getattr(camera, 'flying', False):
+			px, py, pz = camera.position
+			half_w = 0.4
+			player_box = (px - half_w, px + half_w, py - 1.65, py + 0.2, pz - half_w, pz + half_w)
+			t_p = self._ray_intersect_box(self.position, (step_vx, step_vy, step_vz), player_box)
+			if t_p is not None and 0.0 <= t_p <= 1.0:
+				min_player_dist = t_p
+				hit_player = True
 
 		# Check Block Collisions along segment
 		hit_block_pos = None
@@ -150,8 +163,16 @@ class ArrowEntity:
 				min_block_dist = frac
 				break
 
-		# Resolve Closest Collision (Mob vs Block)
-		if hit_mob and min_mob_dist <= min_block_dist:
+		# Resolve Closest Collision (Player vs Mob vs Block)
+		if hit_player and min_player_dist <= min_block_dist and (not hit_mob or min_player_dist <= min_mob_dist):
+			impact_speed = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2 + self.velocity[2]**2)
+			base_damage = int(math.ceil(impact_speed * 2.0))
+			total_damage = base_damage
+			camera.take_damage(total_damage, flying=getattr(camera, 'flying', False), gui=gui, world=world)
+			self.despawn = True
+			return
+
+		elif hit_mob and min_mob_dist <= min_block_dist:
 			impact_speed = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2 + self.velocity[2]**2)
 			base_damage = int(math.ceil(impact_speed * 2.0))
 			if self.is_critical:
@@ -298,6 +319,12 @@ class ArrowManager:
 		vel = (dir_x * speed, dir_y * speed, dir_z * speed)
 
 		arrow = ArrowEntity(spawn_pos, vel, is_critical=is_critical, shooter="player")
+		self.arrows.append(arrow)
+		return arrow
+
+	def spawn_arrow(self, position, velocity, is_critical=False, shooter="skeleton"):
+		"""Spawns an arrow projectile from hostile mobs (e.g. Skeletons)."""
+		arrow = ArrowEntity(position, velocity, is_critical=is_critical, shooter=shooter)
 		self.arrows.append(arrow)
 		return arrow
 

@@ -101,6 +101,9 @@ out vec4 fragment_colour;
 uniform sampler2D mob_sampler;
 uniform vec4 hurt_color;
 
+in vec2 interpolated_tex_coords;
+in float interpolated_shading_value;
+
 void main(void) {
 	vec4 col = texture(mob_sampler, interpolated_tex_coords);
 	if (col.a < 0.1) discard;
@@ -134,9 +137,25 @@ class BaseMobModel:
 			self.init_shader()
 
 	def load_texture(self, texture_path):
-		if os.path.exists(texture_path):
+		candidates = [texture_path]
+		if not os.path.exists(texture_path):
+			base = os.path.basename(texture_path)
+			candidates.extend([
+				os.path.join("textures", "entity", os.path.splitext(base)[0], base),
+				os.path.join("textures", "entity", base),
+				os.path.join("textures", base),
+				os.path.join("textures", "entities", base)
+			])
+
+		valid_path = None
+		for cand in candidates:
+			if os.path.exists(cand):
+				valid_path = cand
+				break
+
+		if valid_path:
 			try:
-				img = pyglet.image.load(texture_path)
+				img = pyglet.image.load(valid_path)
 				raw_data = img.get_image_data().get_data("RGBA", img.width * 4)
 				c_data = (gl.GLubyte * len(raw_data)).from_buffer_copy(raw_data)
 
@@ -157,28 +176,44 @@ class BaseMobModel:
 				)
 				self.texture_id = tex_id.value
 			except Exception as e:
-				print(f"Error loading mob texture {texture_path}: {e}")
+				print(f"Error loading mob texture {valid_path}: {e}")
 
 	def init_shader(self):
 		try:
+			def compile_shader_stage(target, source_code):
+				b_code = source_code.encode('utf-8')
+				s_len = ctypes.c_int(len(b_code))
+				s_buf = ctypes.create_string_buffer(b_code)
+				ptr = ctypes.cast(ctypes.pointer(ctypes.pointer(s_buf)), ctypes.POINTER(ctypes.POINTER(ctypes.c_char)))
+				gl.glShaderSource(target, 1, ptr, ctypes.byref(s_len))
+				gl.glCompileShader(target)
+
+				log_len = gl.GLint(0)
+				gl.glGetShaderiv(target, gl.GL_INFO_LOG_LENGTH, ctypes.byref(log_len))
+				if log_len.value > 1:
+					log_buf = ctypes.create_string_buffer(log_len.value)
+					gl.glGetShaderInfoLog(target, log_len, None, log_buf)
+					print(f"Mob Shader Stage Log: {log_buf.value.decode('utf-8', errors='ignore')}")
+
 			v_shader = gl.glCreateShader(gl.GL_VERTEX_SHADER)
-			v_src = ctypes.create_string_buffer(MOB_VERT_SHADER.encode('utf-8'))
-			v_len = ctypes.c_int(len(v_src.value) + 1)
-			v_ptr = ctypes.cast(ctypes.pointer(ctypes.pointer(v_src)), ctypes.POINTER(ctypes.POINTER(ctypes.c_char)))
-			gl.glShaderSource(v_shader, 1, v_ptr, ctypes.byref(v_len))
-			gl.glCompileShader(v_shader)
+			compile_shader_stage(v_shader, MOB_VERT_SHADER)
 
 			f_shader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
-			f_src = ctypes.create_string_buffer(MOB_FRAG_SHADER.encode('utf-8'))
-			f_len = ctypes.c_int(len(f_src.value) + 1)
-			f_ptr = ctypes.cast(ctypes.pointer(ctypes.pointer(f_src)), ctypes.POINTER(ctypes.POINTER(ctypes.c_char)))
-			gl.glShaderSource(f_shader, 1, f_ptr, ctypes.byref(f_len))
-			gl.glCompileShader(f_shader)
+			compile_shader_stage(f_shader, MOB_FRAG_SHADER)
 
 			prog = gl.glCreateProgram()
 			gl.glAttachShader(prog, v_shader)
 			gl.glAttachShader(prog, f_shader)
 			gl.glLinkProgram(prog)
+
+			link_status = gl.GLint(0)
+			gl.glGetProgramiv(prog, gl.GL_LINK_STATUS, ctypes.byref(link_status))
+			if link_status.value != gl.GL_TRUE:
+				log_len = gl.GLint(0)
+				gl.glGetProgramiv(prog, gl.GL_INFO_LOG_LENGTH, ctypes.byref(log_len))
+				log_buf = ctypes.create_string_buffer(log_len.value)
+				gl.glGetProgramInfoLog(prog, log_len, None, log_buf)
+				print(f"Mob Shader Link Error: {log_buf.value.decode('utf-8', errors='ignore')}")
 
 			self.shader_program = prog
 			self.matrix_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"matrix"))
@@ -281,7 +316,7 @@ class BaseMobModel:
 
 class PigModel(BaseMobModel):
 	def __init__(self):
-		super().__init__(os.path.join("textures", "entities", "pig.png"))
+		super().__init__(os.path.join("textures", "entity", "pig", "pig.png"))
 		self.build_uv_atlas()
 
 	def build_uv_atlas(self):
@@ -292,7 +327,7 @@ class PigModel(BaseMobModel):
 		self.uv_body  = build_cuboid_uv_atlas(28, 8, 10, 16, 8, tw, th)
 		self.uv_leg   = build_cuboid_uv_atlas(0, 16, 4, 6, 4, tw, th)
 
-	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0):
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, **kwargs):
 		self.ensure_initialized()
 		if not self.texture_id or not self.shader_program:
 			return
@@ -358,7 +393,7 @@ class PigModel(BaseMobModel):
 
 class CowModel(BaseMobModel):
 	def __init__(self):
-		super().__init__(os.path.join("textures", "entities", "cow.png"))
+		super().__init__(os.path.join("textures", "entity", "cow", "cow.png"))
 		self.build_uv_atlas()
 
 	def build_uv_atlas(self):
@@ -370,7 +405,7 @@ class CowModel(BaseMobModel):
 		self.uv_body   = build_cuboid_uv_atlas(18, 4, 12, 18, 10, tw, th)
 		self.uv_leg    = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
 
-	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0):
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, **kwargs):
 		self.ensure_initialized()
 		if not self.texture_id or not self.shader_program:
 			return
@@ -447,3 +482,538 @@ class CowModel(BaseMobModel):
 			return
 
 		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class SheepModel(BaseMobModel):
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "sheep", "sheep.png"))
+		self.build_uv_atlas()
+
+	def load_texture(self, texture_path):
+		super().load_texture(texture_path)
+		# Also composite sheep_fur.png on top for fluffy white wool coat
+		fur_path = os.path.join("textures", "entity", "sheep", "sheep_fur.png")
+		if os.path.exists(fur_path) and self.texture_id:
+			try:
+				base_img = pyglet.image.load(texture_path if os.path.exists(texture_path) else os.path.join("textures", "entity", "sheep", "sheep.png"))
+				fur_img = pyglet.image.load(fur_path)
+				raw1 = bytearray(base_img.get_image_data().get_data("RGBA", base_img.width * 4))
+				raw2 = bytearray(fur_img.get_image_data().get_data("RGBA", fur_img.width * 4))
+
+				for i in range(0, len(raw1), 4):
+					if raw2[i + 3] > 10:
+						raw1[i] = raw2[i]
+						raw1[i + 1] = raw2[i + 1]
+						raw1[i + 2] = raw2[i + 2]
+						raw1[i + 3] = 255
+
+				c_data = (gl.GLubyte * len(raw1)).from_buffer_copy(raw1)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+				gl.glTexImage2D(
+					gl.GL_TEXTURE_2D, 0, gl.GL_RGBA,
+					base_img.width, base_img.height, 0,
+					gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, c_data
+				)
+			except Exception as e:
+				print(f"Error compositing sheep fur texture: {e}")
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		# Canonical Minecraft Sheep UV Rectangles
+		self.uv_head = build_cuboid_uv_atlas(0, 0, 6, 6, 8, tw, th)
+		self.uv_body = build_cuboid_uv_atlas(28, 8, 12, 16, 10, tw, th)
+		self.uv_leg  = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_grazing=False, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		swing = math.sin(walk_time) * 0.65 if is_moving else 0.0
+		leg_fl = swing
+		leg_fr = -swing
+		leg_bl = -swing
+		leg_br = swing
+
+		# Grazing head tilt animation
+		effective_pitch = pitch + (0.75 if is_grazing else 0.0)
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY (12 wide, 16 long, 10 tall. Center y = 14 px = 0.875)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.875, 0.0), (0.75, 0.625, 1.0), self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 0.875, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (Pivot at neck y = 14 px = 0.875, z = -8 px = -0.5)
+		head_pivot = (0.0, 0.875, -0.5)
+		head_rot = (effective_pitch, 0.0, 0.0)
+
+		# Head: 6x6x8 px (0.375 x 0.375 x 0.5 units), Center (0, 14 px, -9 px) -> (0, 0.875, -0.5625)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.875, -0.5625), (0.375, 0.375, 0.5), self.uv_head,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. LEGS (4x12x4 px, height = 0.75 units, center y = 0.375)
+		leg_h = 0.75
+		leg_y_center = 0.375
+		leg_x = 0.1875        # ±3 px
+		leg_z_front = -0.3125 # -5 px
+		leg_z_back = 0.3125   # +5 px
+
+		# Front Left Leg
+		self._add_cuboid(pos_data, tex_data, shd_data, (-leg_x, leg_y_center, leg_z_front), (0.25, leg_h, 0.25), self.uv_leg, local_rot=(leg_fl, 0, 0), local_pivot=(-leg_x, leg_h, leg_z_front), body_pos=pos, body_yaw=yaw)
+		# Front Right Leg
+		self._add_cuboid(pos_data, tex_data, shd_data, (leg_x, leg_y_center, leg_z_front), (0.25, leg_h, 0.25), self.uv_leg, local_rot=(leg_fr, 0, 0), local_pivot=(leg_x, leg_h, leg_z_front), body_pos=pos, body_yaw=yaw)
+		# Back Left Leg
+		self._add_cuboid(pos_data, tex_data, shd_data, (-leg_x, leg_y_center, leg_z_back), (0.25, leg_h, 0.25), self.uv_leg, local_rot=(leg_bl, 0, 0), local_pivot=(-leg_x, leg_h, leg_z_back), body_pos=pos, body_yaw=yaw)
+		# Back Right Leg
+		self._add_cuboid(pos_data, tex_data, shd_data, (leg_x, leg_y_center, leg_z_back), (0.25, leg_h, 0.25), self.uv_leg, local_rot=(leg_br, 0, 0), local_pivot=(leg_x, leg_h, leg_z_back), body_pos=pos, body_yaw=yaw)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class ChickenModel(BaseMobModel):
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "chicken.png"))
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		# Canonical Minecraft Chicken UV Rectangles
+		self.uv_head   = build_cuboid_uv_atlas(0, 0, 4, 6, 3, tw, th)
+		self.uv_bill   = build_cuboid_uv_atlas(14, 0, 4, 2, 2, tw, th)
+		self.uv_chin   = build_cuboid_uv_atlas(14, 4, 2, 2, 2, tw, th)
+		self.uv_body   = build_cuboid_uv_atlas(0, 9, 6, 8, 6, tw, th)
+		self.uv_wing_l = build_cuboid_uv_atlas(24, 13, 1, 4, 6, tw, th)
+		self.uv_wing_r = build_cuboid_uv_atlas(24, 13, 1, 4, 6, tw, th, mirror=True)
+		self.uv_leg    = build_cuboid_uv_atlas(26, 0, 3, 5, 3, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, wing_flap=0.0, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		# Bipedal leg swing
+		leg_swing = math.sin(walk_time * 1.4) * 0.7 if is_moving else 0.0
+		leg_l = leg_swing
+		leg_r = -leg_swing
+
+		# Wing flapping (flaps outward when gliding or walking fast)
+		flap_angle = math.sin(wing_flap) * 0.55 if wing_flap > 0 else 0.0
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY (6 wide, 8 long, 6 tall. Center y = 6 px = 0.375, size = 0.375, 0.375, 0.5)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.375, 0.0), (0.375, 0.375, 0.5), self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 0.375, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD, BILL & WATTLE (Pivot at neck y = 9 px = 0.5625, z = -4 px = -0.25)
+		head_pivot = (0.0, 0.5625, -0.25)
+		head_rot = (pitch, 0.0, 0.0)
+
+		# Head: 4x6x3 px (0.25 x 0.375 x 0.1875 units), Center (0, 0.5625, -0.25)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.5625, -0.25), (0.25, 0.375, 0.1875), self.uv_head,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Bill (Beak): 4x2x2 px (0.25 x 0.125 x 0.125 units), Center (0, 0.50, -0.375)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.50, -0.375), (0.25, 0.125, 0.125), self.uv_bill,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Chin (Wattle): 2x2x2 px (0.125 x 0.125 x 0.125 units), Center (0, 0.375, -0.3125)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.375, -0.3125), (0.125, 0.125, 0.125), self.uv_chin,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. WINGS (1x4x6 px = 0.0625 x 0.25 x 0.375 units)
+		wing_pivot_y = 0.4375
+		wing_center_y = 0.375
+
+		# Left Wing
+		wing_l_pivot = (-0.1875, wing_pivot_y, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-0.21875, wing_center_y, 0.0), (0.0625, 0.25, 0.375), self.uv_wing_l,
+			local_rot=(0.0, 0.0, -flap_angle), local_pivot=wing_l_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Right Wing
+		wing_r_pivot = (0.1875, wing_pivot_y, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.21875, wing_center_y, 0.0), (0.0625, 0.25, 0.375), self.uv_wing_r,
+			local_rot=(0.0, 0.0, flap_angle), local_pivot=wing_r_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. LEGS (3x5x3 px = 0.1875 x 0.3125 x 0.1875 units, pivot y = 5 px = 0.3125)
+		leg_h = 0.3125
+		leg_y_center = 0.15625
+		leg_x = 0.09375
+		leg_z = 0.0625
+
+		# Left Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-leg_x, leg_y_center, leg_z), (0.1875, leg_h, 0.1875), self.uv_leg,
+			local_rot=(leg_l, 0, 0), local_pivot=(-leg_x, leg_h, leg_z),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Right Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(leg_x, leg_y_center, leg_z), (0.1875, leg_h, 0.1875), self.uv_leg,
+			local_rot=(leg_r, 0, 0), local_pivot=(leg_x, leg_h, leg_z),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class ZombieModel(BaseMobModel):
+	"""3D Bipedal Zombie Model with forward-reaching arms and canonical 64x64 texture atlas."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "zombie", "zombie.png"))
+		self.tex_w = 64
+		self.tex_h = 64
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 64
+		self.uv_head  = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tw, th)
+		self.uv_body  = build_cuboid_uv_atlas(16, 16, 8, 12, 4, tw, th)
+		self.uv_arm_l = build_cuboid_uv_atlas(40, 16, 4, 12, 4, tw, th, mirror=True)
+		self.uv_arm_r = build_cuboid_uv_atlas(40, 16, 4, 12, 4, tw, th)
+		self.uv_leg_l = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th, mirror=True)
+		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, attack_anim_time=0.0, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		swing = math.sin(walk_time) * 0.65 if is_moving else 0.0
+		leg_l = swing
+		leg_r = -swing
+
+		# Classic Zombie Forward Arm Pose
+		base_arm_pitch = -1.50
+		if is_moving:
+			base_arm_pitch += math.sin(walk_time * 2.0) * 0.08
+		if attack_anim_time > 0.0:
+			base_arm_pitch -= 0.25
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY (8x12x4 px = 0.5 x 0.75 x 0.25 units, center y = 18 px = 1.125)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.125, 0.0), (0.50, 0.75, 0.25), self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 1.125, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (8x8x8 px = 0.5 x 0.5 x 0.5 units, pivot y = 24 px = 1.50)
+		head_pivot = (0.0, 1.50, 0.0)
+		head_rot = (pitch, 0.0, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.75, 0.0), (0.50, 0.50, 0.50), self.uv_head,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. ARMS (4x12x4 px = 0.25 x 0.75 x 0.25 units, pivot y = 23 px = 1.4375)
+		arm_pivot_y = 1.4375
+		arm_y_center = 1.0625
+		arm_x = 0.375
+
+		# Left Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-arm_x, arm_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_arm_l,
+			local_rot=(base_arm_pitch, 0.0, -0.05), local_pivot=(-arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(arm_x, arm_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_arm_r,
+			local_rot=(base_arm_pitch, 0.0, 0.05), local_pivot=(arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. LEGS (4x12x4 px = 0.25 x 0.75 x 0.25 units, pivot y = 12 px = 0.75)
+		leg_pivot_y = 0.75
+		leg_y_center = 0.375
+		leg_x = 0.125
+
+		# Left Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-leg_x, leg_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_leg_l,
+			local_rot=(leg_l, 0.0, 0.0), local_pivot=(-leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(leg_x, leg_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_leg_r,
+			local_rot=(leg_r, 0.0, 0.0), local_pivot=(leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class SkeletonModel(BaseMobModel):
+	"""3D Bipedal Skeleton Model with thin 2x2 bone limbs and bow aiming arm pose."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "skeleton", "skeleton.png"))
+		self.tex_w = 64
+		self.tex_h = 32
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		self.uv_head  = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tw, th)
+		self.uv_body  = build_cuboid_uv_atlas(16, 16, 8, 12, 4, tw, th)
+		self.uv_arm_l = build_cuboid_uv_atlas(40, 16, 2, 12, 2, tw, th, mirror=True)
+		self.uv_arm_r = build_cuboid_uv_atlas(40, 16, 2, 12, 2, tw, th)
+		self.uv_leg_l = build_cuboid_uv_atlas(0, 16, 2, 12, 2, tw, th, mirror=True)
+		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 2, 12, 2, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_aiming=False, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		swing = math.sin(walk_time) * 0.65 if is_moving else 0.0
+		leg_l = swing
+		leg_r = -swing
+
+		# Skeleton Arm Aiming vs Walking Pose
+		if is_aiming:
+			arm_l_rot = (-1.45, 0.20, 0.0)
+			arm_r_rot = (-1.45, -0.20, 0.0)
+		else:
+			arm_l_rot = (-swing, 0.0, 0.0)
+			arm_r_rot = (swing, 0.0, 0.0)
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY (8x12x4 px = 0.5 x 0.75 x 0.25 units, center y = 1.125)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.125, 0.0), (0.50, 0.75, 0.25), self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 1.125, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (8x8x8 px = 0.5 x 0.5 x 0.5 units, pivot y = 1.50)
+		head_pivot = (0.0, 1.50, 0.0)
+		head_rot = (pitch, 0.0, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.75, 0.0), (0.50, 0.50, 0.50), self.uv_head,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. ARMS (2x12x2 px = 0.125 x 0.75 x 0.125 units, pivot y = 1.4375)
+		arm_pivot_y = 1.4375
+		arm_y_center = 1.0625
+		arm_x = 0.3125
+
+		# Left Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-arm_x, arm_y_center, 0.0), (0.125, 0.75, 0.125), self.uv_arm_l,
+			local_rot=arm_l_rot, local_pivot=(-arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(arm_x, arm_y_center, 0.0), (0.125, 0.75, 0.125), self.uv_arm_r,
+			local_rot=arm_r_rot, local_pivot=(arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. LEGS (2x12x2 px = 0.125 x 0.75 x 0.125 units, pivot y = 12 px = 0.75)
+		leg_pivot_y = 0.75
+		leg_y_center = 0.375
+		leg_x = 0.125
+
+		# Left Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-leg_x, leg_y_center, 0.0), (0.125, 0.75, 0.125), self.uv_leg_l,
+			local_rot=(leg_l, 0.0, 0.0), local_pivot=(-leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(leg_x, leg_y_center, 0.0), (0.125, 0.75, 0.125), self.uv_leg_r,
+			local_rot=(leg_r, 0.0, 0.0), local_pivot=(leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 5. 3D HELD BOW MODEL
+		bow_uv = self.uv_arm_l
+		if is_aiming:
+			bow_pivot = (-0.20, 1.35, 0.0)
+			bow_rot = (-1.45, 0.20, 0.0)
+			bow_offset = (-0.20, 1.35, 0.55)
+		else:
+			bow_pivot = (-arm_x, arm_pivot_y, 0.0)
+			bow_rot = arm_l_rot
+			bow_offset = (-arm_x, 0.72, 0.10)
+
+		# Center Grip (1x5x1 px = 0.0625 x 0.3125 x 0.0625)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			bow_offset, (0.0625, 0.3125, 0.0625), bow_uv,
+			local_rot=bow_rot, local_pivot=bow_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+		# Upper Limb (1x4x2 px = 0.0625 x 0.25 x 0.08)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(bow_offset[0], bow_offset[1] + 0.22, bow_offset[2] - 0.05), (0.0625, 0.25, 0.08), bow_uv,
+			local_rot=bow_rot, local_pivot=bow_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+		# Lower Limb (1x4x2 px = 0.0625 x 0.25 x 0.08)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(bow_offset[0], bow_offset[1] - 0.22, bow_offset[2] - 0.05), (0.0625, 0.25, 0.08), bow_uv,
+			local_rot=bow_rot, local_pivot=bow_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+		# Bowstring (thin line = 0.02 x 0.60 x 0.02)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(bow_offset[0], bow_offset[1], bow_offset[2] - 0.09), (0.02, 0.60, 0.02), self.uv_leg_l,
+			local_rot=bow_rot, local_pivot=bow_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+class SpiderModel(BaseMobModel):
+	"""3D Spider Model with 8 multi-jointed crawling legs, thorax, abdomen, and wall climb tilt."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "spider", "spider.png"))
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		self.uv_head    = build_cuboid_uv_atlas(32, 4, 8, 8, 8, tw, th)
+		self.uv_thorax  = build_cuboid_uv_atlas(0, 0, 6, 6, 6, tw, th)
+		self.uv_abdomen = build_cuboid_uv_atlas(0, 12, 10, 12, 8, tw, th)
+		self.uv_leg     = build_cuboid_uv_atlas(18, 0, 16, 2, 2, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_climbing=False, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		crawl = math.sin(walk_time * 1.5) * 0.45 if is_moving else 0.0
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. THORAX (6x6x6 px = 0.375 x 0.375 x 0.375 units, center y = 0.45)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.45, 0.0), (0.375, 0.375, 0.375), self.uv_thorax,
+			local_rot=(pitch, 0.0, 0.0), local_pivot=(0.0, 0.45, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (8x8x8 px = 0.5 x 0.5 x 0.5 units, center y = 0.45, z = -0.4375)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.45, -0.4375), (0.50, 0.50, 0.50), self.uv_head,
+			local_rot=(pitch, 0.0, 0.0), local_pivot=(0.0, 0.45, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. ABDOMEN (10x8x12 px = 0.625 x 0.50 x 0.75 units, center y = 0.50, z = 0.50)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 0.50, 0.50), (0.625, 0.50, 0.75), self.uv_abdomen,
+			local_rot=(pitch, 0.0, 0.0), local_pivot=(0.0, 0.45, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. EIGHT LEGS (16x2x2 px = 1.0 x 0.125 x 0.125 units)
+		# 4 left legs & 4 right legs spread across thorax
+		leg_z_offsets = [-0.15, -0.05, 0.05, 0.15]
+		leg_yaw_spreads = [0.70, 0.25, -0.25, -0.70]
+		leg_phases = [1.0, -1.0, 1.0, -1.0]
+
+		for i in range(4):
+			lz = leg_z_offsets[i]
+			base_leg_yaw = leg_yaw_spreads[i]
+			l_crawl = crawl * leg_phases[i]
+
+			# Left Leg (extends to negative X)
+			pivot_l = (-0.1875, 0.45, lz)
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(-0.6875, 0.45, lz), (1.0, 0.125, 0.125), self.uv_leg,
+				local_rot=(pitch, base_leg_yaw + l_crawl, -0.35), local_pivot=pivot_l,
+				body_pos=pos, body_yaw=yaw
+			)
+
+			# Right Leg (extends to positive X)
+			pivot_r = (0.1875, 0.45, lz)
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(0.6875, 0.45, lz), (1.0, 0.125, 0.125), self.uv_leg,
+				local_rot=(pitch, -base_leg_yaw - l_crawl, 0.35), local_pivot=pivot_r,
+				body_pos=pos, body_yaw=yaw
+			)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+

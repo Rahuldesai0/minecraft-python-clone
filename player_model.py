@@ -222,7 +222,7 @@ class StevePlayerModel:
 
 	def load_skin(self, skin_path=None):
 		if skin_path is None:
-			skin_path = os.path.join("textures", "entities", "steve.png")
+			skin_path = os.path.join("textures", "entity", "steve.png")
 
 		if os.path.exists(skin_path):
 			try:

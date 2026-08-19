@@ -425,13 +425,20 @@ class Window(pyglet.window.Window):
 				# Position player safely on the surface if generating a fresh new world
 				if not self.is_saved_load:
 					spawn_y = self.get_surface_height(0, 0)
-					self.camera.position = [0.5, spawn_y + 1.0 + self.camera.eye_offset, 0.5]
+					self.camera.position = [0.5, spawn_y + 2.0 + self.camera.eye_offset, 0.5]
 					self.camera.velocity_y = 0.0
 					self.camera.fall_start_y = None
+
+				# Populate initial diverse passive animals (cows, pigs, sheep, chickens)
+				self.mob_manager.populate_initial_mobs(self.camera.position)
 			return
 
 		if delta_time > 0:
 			self.fps = 0.9 * self.fps + 0.1 * (1.0 / delta_time)
+
+		# If game is paused or in menus/settings, freeze all world and entity simulation completely
+		if self.game_state != "PLAYING":
+			return
 
 		# Clamp delta_time so player movement and physics remain smooth even during background tasks
 		delta_time = min(delta_time, 1.0 / 30.0)
@@ -579,7 +586,12 @@ class Window(pyglet.window.Window):
 
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
-		self.mob_manager.update(delta_time, self.camera.position, self.item_drop_manager)
+		self.mob_manager.update(
+			delta_time, self.camera.position,
+			camera=self.camera, gui=self.gui, item_drop_manager=self.item_drop_manager,
+			arrow_manager=getattr(self, "arrow_manager", None),
+			time_of_day=self.time_of_day, flying=self.flying
+		)
 		
 		# Bow drawing state & dynamic FOV zoom
 		if getattr(self, "bow_charging", False):
@@ -649,7 +661,7 @@ class Window(pyglet.window.Window):
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
 
-		# Render 3D Pig and Cow Passive Mobs in overworld
+		# Render 3D Passive Mobs (Cow, Pig, Sheep, Chicken) in overworld
 		self.mob_manager.draw(self.camera)
 
 		# Render 3D Flying & Embedded Arrows
@@ -661,6 +673,10 @@ class Window(pyglet.window.Window):
 			self.player_model.render_third_person(self.camera, self.perspective, self.world)
 
 		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
+		self.shader.use()
+		gl.glActiveTexture(gl.GL_TEXTURE0)
+		gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
+		gl.glUniform1i(self.shader_sampler_location, 0)
 		self.item_drop_manager.draw(self.shader, self.gui)
 
 		# 3. Render 3D Celestial Bodies (Sun & Moon) SECOND behind terrain blocks
@@ -1689,6 +1705,9 @@ class Window(pyglet.window.Window):
 				self.game_state = "PAUSED"
 				self.mouse_captured = False
 				self.set_exclusive_mouse(False)
+				self.left_mouse_down = False
+				self.breaking_block = None
+				self.break_progress = 0.0
 			return
 
 		# Number Keys 1 to 9

@@ -59,6 +59,7 @@ PALETTE_ITEMS = [
 	(80, "Farmland", "dirt"),
 	(81, "Wheat Crops", "crops"),
 	(82, "Mossy Cobblestone", "mossy_cobblestone"),
+	(83, "White Wool", "white_cloth"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
@@ -128,6 +129,13 @@ TOOL_ITEMS = [
 	(159, "String", "items/string"),
 	(160, "Feather", "items/feather"),
 	(161, "Golden Apple", "items/apple_golden"),
+	(162, "Raw Chicken", "items/chicken_raw"),
+	(163, "Cooked Chicken", "items/chicken_cooked"),
+	(164, "Raw Mutton", "items/mutton_raw"),
+	(165, "Cooked Mutton", "items/mutton_cooked"),
+	(166, "Rotten Flesh", "items/rotten_flesh"),
+	(167, "Bone", "items/bone"),
+	(168, "Spider Eye", "items/spider_eye"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -208,6 +216,12 @@ FOOD_VALUES = {
 	152: (5, 6.0, 0.0),    # Bread (+5 Hunger, +6.0 Saturation)
 	153: (4, 2.4, 0.0),    # Apple (+4 Hunger, +2.4 Saturation)
 	161: (4, 9.6, 4.0),    # Golden Apple (+4 Hunger, +9.6 Saturation, +4.0 Absorption = 2 extra yellow hearts)
+	162: (2, 1.2, 0.0),    # Raw Chicken (+2 Hunger, +1.2 Saturation)
+	163: (6, 7.2, 0.0),    # Cooked Chicken (+6 Hunger, +7.2 Saturation)
+	164: (2, 1.2, 0.0),    # Raw Mutton (+2 Hunger, +1.2 Saturation)
+	165: (6, 9.6, 0.0),    # Cooked Mutton (+6 Hunger, +9.6 Saturation)
+	166: (4, 0.8, 0.0),    # Rotten Flesh (+4 Hunger, +0.8 Saturation)
+	168: (2, 3.2, 0.0),    # Spider Eye (+2 Hunger, +3.2 Saturation)
 }
 
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
@@ -220,6 +234,8 @@ SMELTING_RECIPES = {
 	4:  (22, 1),    # Clay/Dirt -> Bricks
 	125: (128, 1),  # Raw Porkchop -> Cooked Porkchop
 	127: (129, 1),  # Raw Beef -> Steak (Cooked Beef)
+	162: (163, 1),  # Raw Chicken -> Cooked Chicken
+	164: (165, 1),  # Raw Mutton -> Cooked Mutton
 }
 
 # Fuel Durations (in seconds of burn time): item_id -> burn_time_seconds
@@ -345,6 +361,7 @@ BLOCK_MINING_PROPERTIES = {
 	75: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Closed)
 	76: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Open -> drops Closed item 75)
 	77: ("shovel", 0, 0.6, 77),    # Gravel (10% Flint drop handled on break)
+	83: (None, 0, 0.8, 83),        # White Wool
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -1491,6 +1508,12 @@ class InventoryGUI:
 				if all(matrix[r][c] == 124 for r in range(3) for c in range(3) if (r, c) != (1, 1)):
 					self.crafting_result = [161, 1]  # Golden Apple (161)
 					return
+
+		# Recipe 24: White Wool (4 Strings 159 in 2x2 grid) -> 1 White Wool (83)
+		if h == 2 and w == 2:
+			if matrix[0][0] == 159 and matrix[0][1] == 159 and matrix[1][0] == 159 and matrix[1][1] == 159:
+				self.crafting_result = [83, 1]  # White Wool (83)
+				return
 
 		self.crafting_result = [0, 0]
 

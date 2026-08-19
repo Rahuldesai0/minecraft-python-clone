@@ -79,7 +79,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	chunk_offset_x = x * chunk.CHUNK_WIDTH
 	chunk_offset_z = z * chunk.CHUNK_LENGTH
 
-	# 1. Heightmap Calculation
+	# 1. Heightmap Calculation (Minecraft Java Edition Mean Surface & Biome Scaling)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
 			wx = chunk_offset_x + i + seed_offset_x
@@ -89,24 +89,38 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			peaks_raw = pnoise2((wx + 1000.0) / 85.0, (wz + 1000.0) / 85.0, octaves=4, persistence=0.5, lacunarity=2.0)
 			ridge = 1.0 - abs(peaks_raw * 2.0)
 
-			if cont < 0.10:
-				t = max(0.0, min(1.0, (cont - (-0.25)) / 0.35))
+			if cont < -0.32:
+				# Deep Ocean & Ocean basin
+				t = max(0.0, min(1.0, (cont - (-0.50)) / 0.18))
 				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 48.0 + smooth_t * 14.0 + (peaks_raw * 1.5)
-			elif cont < 0.30:
-				t = (cont - 0.10) / 0.20
+				target_y = 38.0 + smooth_t * 16.0 + (peaks_raw * 1.5)
+			elif cont < -0.22:
+				# Narrow Coastal / Shoreline Transition & Beaches
+				t = (cont - (-0.32)) / 0.10
 				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 62.0 + smooth_t * 12.0 + (ridge * 4.0)
+				target_y = 54.0 + smooth_t * 10.0 + (ridge * 1.5)
 			else:
-				t = min(1.0, (cont - 0.30) / 0.50)
+				# Vast Continents: Plains, Forests & Lowlands (Mean Surface ~66-68)
+				t = min(1.0, (cont - (-0.22)) / 0.50)
 				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 74.0 + (smooth_t * 32.0 + (ridge * 6.0))
+				target_y = 65.0 + smooth_t * 6.0 + (ridge * 2.0)
+
+				# Occasional Standalone Mountain Clusters (3 to 4 Peaks & Semi-Ridges)
+				mtn_mask = pnoise2((wx + 5000.0) / 450.0, (wz + 5000.0) / 450.0, octaves=1)
+				if mtn_mask > 0.36:
+					t_mtn = min(1.0, (mtn_mask - 0.36) / 0.10)
+					smooth_mtn = 3.0 * t_mtn * t_mtn - 2.0 * t_mtn * t_mtn * t_mtn
+					peak_noise = pnoise2((wx + 1000.0) / 60.0, (wz + 1000.0) / 60.0, octaves=1)
+					semi_ridge = 1.0 - abs(peak_noise * 1.5)
+					summit = max(0.0, semi_ridge) ** 1.4
+					mtn_height = (smooth_mtn * 14.0) + (smooth_mtn * summit * 32.0)
+					target_y += mtn_height
 
 			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
-			if river_raw < 0.055:
-				t_r = 1.0 - (river_raw / 0.055)
-				r_blend = (t_r * t_r) * 3.5
-				target_y = min(target_y, 60.0 - r_blend)
+			if river_raw < 0.028:
+				t_r = 1.0 - (river_raw / 0.028)
+				r_blend = (t_r * t_r) * 3.0
+				target_y = min(target_y, 61.0 - r_blend)
 
 			sculpt = pnoise3(wx / 25.0, target_y / 15.0, wz / 25.0) * 2.0
 			final_y = math.floor(target_y + sculpt)
@@ -120,52 +134,52 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	def get_b(i, j, k):
 		return flat_bytes[i * 4096 + j * 16 + k]
 
-	# 2. Fill Solid Terrain, Surface Layers & Sea Water
+	# 2. Fill Solid Terrain, Surface Layers & Sea Water (Sea Level = 63)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
 			wx = chunk_offset_x + i
 			wz = chunk_offset_z + k
 			sy = surface_heights[i * 16 + k]
 
-			set_b(i, 0, k, 14)  # bedrock
+			set_b(i, 0, k, 14)  # Bedrock
 
 			sub_depth = max(1, sy - 3)
 			for j in range(1, sub_depth):
-				block_num = 5  # stone
+				block_num = 5  # Stone
 				if 30 <= j and rng.randrange(100) < 4:
-					block_num = 16  # coal
+					block_num = 16  # Coal Ore
 				elif 10 <= j <= 50 and rng.randrange(100) < 2:
-					block_num = 17  # iron
+					block_num = 17  # Iron Ore
 				elif 2 <= j <= 15 and rng.randrange(1000) < 3:
-					block_num = 18  # diamond
+					block_num = 18  # Diamond Ore
 				elif 15 <= j <= 65 and rng.randrange(100) < 3:
-					block_num = 77  # gravel pocket
+					block_num = 77  # Gravel pocket
 				set_b(i, j, k, block_num)
 
 			cont = pnoise2(wx / 350.0, wz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
 			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
-			is_river = river_raw < 0.055
+			is_river = river_raw < 0.028
 			gravel_noise = pnoise2((wx + 4500.0) / 22.0, (wz + 4500.0) / 22.0, octaves=2)
 
-			if sy > 110:
+			if sy > 105:
 				for j in range(sub_depth, sy):
 					set_b(i, j, k, 5)
 				set_b(i, sy, k, 2)
-			elif sy > 90:
+			elif sy > 85:
 				for j in range(sub_depth, sy + 1):
 					set_b(i, j, k, 5)
-			elif sy < 60:
-				# Ocean, deep sea, and riverbed generation with natural Gravel (77), Sand (6), and Dirt (4) patches
+			elif sy < 63:
+				# Ocean, deep sea, and riverbed generation with natural Gravel, Sand, and Dirt patches
 				if gravel_noise > 0.12:
-					underwater_mat = 77  # Gravel patch!
-				elif cont < 0.08 or (cont < 0.20 and sy < 56):
+					underwater_mat = 77  # Gravel patch
+				elif cont < -0.22 or (cont < -0.15 and sy < 58):
 					underwater_mat = 6   # Sand patch
 				else:
 					underwater_mat = 4   # Dirt floor
 
 				for j in range(sub_depth, sy + 1):
 					set_b(i, j, k, underwater_mat)
-			elif cont < 0.05 and not is_river:
+			elif cont < -0.15 and not is_river:
 				# Beach sand & occasional gravel beaches
 				beach_mat = 77 if gravel_noise > 0.38 else 6
 				for j in range(sub_depth, sy + 1):
@@ -175,43 +189,91 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 					set_b(i, j, k, 4)
 				set_b(i, sy, k, 2)
 
-			if sy < 60:
-				for water_y in range(sy + 1, 61):
+			if sy < 63:
+				for water_y in range(sy + 1, 64):
 					set_b(i, water_y, k, 9)
 
-	# 3. Carve 3D Caves
+	# 3. Carve 3D Caves (Worm tunnels, chambers, surface openings, and ravines)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
 			wx = chunk_offset_x + i
 			wz = chunk_offset_z + k
 			sy = surface_heights[i * 16 + k]
 
-			entrance_noise = pnoise2((wx + 8000.0) / 100.0, (wz + 8000.0) / 100.0)
-			allows_entrance = (entrance_noise > 0.28) and (sy >= 62)
+			entrance_noise = pnoise2((wx + 8000.0) / 90.0, (wz + 8000.0) / 90.0)
+			ravine_raw = abs(pnoise2((wx + 5500.0) / 60.0, (wz + 5500.0) / 60.0))
+			is_surface_open = (entrance_noise > 0.18) and (sy >= 64)
+			is_ravine = (ravine_raw < 0.020) and (entrance_noise > -0.05) and (sy >= 64)
 
-			max_cave_y = min(sy + 1 if allows_entrance else sy - 4, 115)
-			if sy <= 61:
-				max_cave_y = min(max_cave_y, 48)
+			if sy <= 63:
+				max_cave_y = min(sy - 5, 52)
+			else:
+				max_cave_y = min(sy + 1 if (is_surface_open or is_ravine) else sy - 4, 115)
 
 			for j in range(9, max_cave_y):
-				if get_b(i, j, k) == 14:
+				if get_b(i, j, k) == 14:  # Bedrock
 					continue
 
-				c1 = pnoise3(wx / 20.0, j / 12.0, wz / 20.0)
-				c2 = pnoise3((wx + 400.0) / 20.0, j / 12.0, (wz + 400.0) / 20.0)
-				cheese = pnoise3((wx - 200.0) / 35.0, j / 22.0, (wz - 200.0) / 35.0)
+				c1 = pnoise3(wx / 22.0, j / 12.0, wz / 22.0)
+				c2 = pnoise3((wx + 400.0) / 22.0, j / 12.0, (wz + 400.0) / 22.0)
+				cheese = pnoise3((wx - 200.0) / 32.0, j / 20.0, (wz - 200.0) / 32.0)
 
-				if (c1 * c1 + c2 * c2) < 0.0065 or (cheese > 0.54 and j < 52):
+				# Dynamic threshold expanding near surface opening
+				tunnel_thresh = 0.0070
+				if is_surface_open and j >= sy - 8:
+					tunnel_thresh = 0.0130  # Wider tunnel breaches out of hillside
+
+				is_tunnel = (c1 * c1 + c2 * c2) < tunnel_thresh
+				is_chamber = (cheese > 0.52 and j < 55)
+				is_ravine_cut = is_ravine and (22 <= j <= sy + 1)
+
+				if is_tunnel or is_chamber or is_ravine_cut:
 					set_b(i, j, k, 0)
 
-	# 4. Lava Levels in Caves (y <= 8)
+	# 4. Lava Oceans in Deep Caves (y <= 10)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
-			for j in range(1, 9):
+			for j in range(1, 11):
 				if get_b(i, j, k) == 0:
 					set_b(i, j, k, 15)
 
-	# 5. Surface Water Lakes (Carved & filled at a single uniform Y level, 100% bounded by solid dirt/stone retaining walls)
+	# 5. Underground Cave Lava Lakes & Water Pools (Probability of lava increases with lower Y)
+	if rng.randrange(100) < 65:
+		for _ in range(rng.randrange(1, 4)):
+			pool_lx = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
+			pool_lz = rng.randrange(3, chunk.CHUNK_LENGTH - 3)
+			
+			found_y = None
+			for check_y in range(11, 52):
+				if get_b(pool_lx, check_y, pool_lz) == 0 and get_b(pool_lx, check_y - 1, pool_lz) in (5, 1, 16, 17, 18, 77):
+					found_y = check_y
+					break
+
+			if found_y is not None:
+				pool_ly = found_y
+				# Probability of lava increases with lower Y:
+				# Y=11..18 -> ~90% lava. Y=25 -> ~65% lava. Y=40 -> ~28% lava. Y=50 -> ~5% lava.
+				lava_prob = max(0.05, min(0.92, 1.0 - ((pool_ly - 10.0) / 42.0)))
+				liquid_type = 15 if (rng.random() < lava_prob) else 9
+
+				lake_rad = rng.randrange(2, 5)
+				for dx in range(-lake_rad, lake_rad + 1):
+					for dz in range(-lake_rad, lake_rad + 1):
+						dist_sq = dx * dx + dz * dz
+						px = pool_lx + dx
+						pz = pool_lz + dz
+						if 0 <= px < chunk.CHUNK_WIDTH and 0 <= pz < chunk.CHUNK_LENGTH:
+							if dist_sq <= lake_rad * lake_rad:
+								set_b(px, pool_ly, pz, liquid_type)
+								set_b(px, pool_ly - 1, pz, liquid_type)
+								floor_mat = 24 if (liquid_type == 15 and rng.random() < 0.25) else 5
+								set_b(px, pool_ly - 2, pz, floor_mat)
+							elif dist_sq <= (lake_rad + 1) * (lake_rad + 1):
+								for ry in range(pool_ly - 1, pool_ly + 2):
+									if get_b(px, ry, pz) == 0:
+										set_b(px, ry, pz, 5)  # Regular stone (5) border
+
+	# 6. Surface Water Lakes (Carved & filled at a single uniform Y level, 100% bounded by solid dirt/stone retaining walls)
 	if rng.randrange(100) < 40:
 		lake_cx = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
 		lake_cz = rng.randrange(3, chunk.CHUNK_LENGTH - 3)
@@ -284,21 +346,22 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 									if b_curr == 0 or b_curr in (9, 19, 15, 20):
 										set_b(px, ry, pz, shore_block)
 
-	# 6. Surface Lava Pools (Carved & filled at a single uniform Y level, 100% bounded by solid stone retaining walls)
-	if rng.randrange(100) < 10:
-		pool_x = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
-		pool_z = rng.randrange(3, chunk.CHUNK_LENGTH - 3)
+	# 7. Surface Lava Pools (Slightly bigger, 100% bounded by regular STONE 5 retaining walls)
+	if rng.randrange(100) < 12:
+		pool_x = rng.randrange(4, chunk.CHUNK_WIDTH - 4)
+		pool_z = rng.randrange(4, chunk.CHUNK_LENGTH - 4)
 		pool_surface_y = surface_heights[pool_x * 16 + pool_z]  # Single uniform flat surface height for entire pool
 
-		if 62 <= pool_surface_y <= 80:
-			for dx in range(-3, 4):
-				for dz in range(-3, 4):
+		if 62 <= pool_surface_y <= 85:
+			lava_rad = rng.randrange(3, 5)  # Bigger radius (3 to 4 blocks = 7 to 9 block diameter)
+			for dx in range(-lava_rad - 1, lava_rad + 2):
+				for dz in range(-lava_rad - 1, lava_rad + 2):
 					dist_sq = dx * dx + dz * dz
 					px, pz = pool_x + dx, pool_z + dz
 					if 0 <= px < chunk.CHUNK_WIDTH and 0 <= pz < chunk.CHUNK_LENGTH:
 						col_h = surface_heights[px * 16 + pz]
 
-						if dist_sq <= 2:
+						if dist_sq <= lava_rad * lava_rad:
 							# Clear terrain blocks above pool
 							for cy in range(pool_surface_y + 1, col_h + 1):
 								set_b(px, cy, pz, 0)
@@ -306,13 +369,14 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 							# Perfectly flat lava surface
 							set_b(px, pool_surface_y, pz, 15)       # Lava source top
 							set_b(px, pool_surface_y - 1, pz, 15)   # Lava source in body
-							set_b(px, pool_surface_y - 2, pz, 1)    # Stone floor
-						elif dist_sq <= 5:
-							# Watertight stone retaining wall rim extending 1 block above lava level
+							floor_mat = 24 if rng.random() < 0.20 else 5  # Obsidian/Stone floor
+							set_b(px, pool_surface_y - 2, pz, floor_mat)
+						elif dist_sq <= (lava_rad + 1) * (lava_rad + 1):
+							# Watertight regular STONE (5) retaining wall rim extending 1 block above lava level
 							for ry in range(pool_surface_y - 2, pool_surface_y + 2):
 								b_curr = get_b(px, ry, pz)
 								if b_curr == 0 or b_curr in (9, 19, 15, 20):
-									set_b(px, ry, pz, 1)
+									set_b(px, ry, pz, 5)
 
 	# 7. Tree Generation
 	trees = []
@@ -1010,6 +1074,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="farmland", block_face_textures={"top": "soil", "bottom": "dirt", "sides": "dirt"}, break_time=0.4, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="crops", block_face_textures={"all": "crops"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_cobblestone", block_face_textures={"all": "mossy_cobblestone"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="white_wool", block_face_textures={"all": "white_cloth"}, break_time=0.8, requires_tool=False))
 
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
