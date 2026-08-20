@@ -38,6 +38,10 @@ class Window(pyglet.window.Window):
 		# create world
 
 		self.world = world.World()
+		self.dimension = "overworld"
+		self.overworld = self.world
+		self.nether_world = None
+		self.dimension_transitioning = False
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
@@ -139,10 +143,15 @@ class Window(pyglet.window.Window):
 
 		# Initialize fresh World, ItemDropManager & MobManager
 		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
+		self.dimension = "overworld"
+		self.overworld = self.world
+		self.nether_world = None
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
+		self.world.mob_manager = self.mob_manager
 		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.world.arrow_manager = self.arrow_manager
 		self.tnt_manager = tnt_manager.TNTManager(self.world)
 		self.world.tnt_manager = self.tnt_manager
 		self.bow_charging = False
@@ -175,11 +184,23 @@ class Window(pyglet.window.Window):
 		rd = w_data.get('world', {}).get('render_distance', self.global_render_distance)
 		self.global_render_distance = rd
 
-		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd)
+		saved_dim = w_data.get('world', {}).get('dimension', 'overworld')
+		self.dimension = saved_dim
+
+		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd, dimension=saved_dim)
+		if saved_dim == "nether":
+			self.nether_world = self.world
+			self.overworld = None
+		else:
+			self.overworld = self.world
+			self.nether_world = None
+
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
+		self.world.mob_manager = self.mob_manager
 		self.arrow_manager = arrow.ArrowManager(self.world)
+		self.world.arrow_manager = self.arrow_manager
 		self.tnt_manager = tnt_manager.TNTManager(self.world)
 		self.world.tnt_manager = self.tnt_manager
 		self.bow_charging = False
@@ -361,7 +382,112 @@ class Window(pyglet.window.Window):
 		self.time_of_day = 0.25  # World starts at Sunrise (0.25)
 		self.cycle_speed = 1.0 / 1200.0  # Exactly 20-minute full day/night cycle (1200 seconds)
 
+	def trigger_dimension_transition(self):
+		if getattr(self, "dimension_transitioning", False):
+			return
+		self.dimension_transitioning = True
+
+		# 1. Determine destination dimension
+		curr_dim = getattr(self, "dimension", "overworld")
+		dest_dim = "nether" if curr_dim == "overworld" else "overworld"
+
+		# Save current dimension dirty chunks
+		if hasattr(self, "world") and hasattr(self.world, "save_all_chunks"):
+			try:
+				self.world.save_all_chunks()
+			except Exception:
+				pass
+
+		# 2. Get or initialize destination world
+		if dest_dim == "nether":
+			if getattr(self, "nether_world", None) is None:
+				self.nether_world = world.World(
+					seed=self.world.seed,
+					save_folder=self.world.save_folder,
+					render_distance=self.global_render_distance,
+					dimension="nether"
+				)
+				self.nether_world.texture_manager = self.world.texture_manager
+				self.nether_world.block_types = self.world.block_types
+				self.nether_world.item_drop_manager = item_drop.ItemDropManager(self.nether_world)
+				self.nether_world.mob_manager = mob_manager.MobManager(self.nether_world)
+				self.nether_world.arrow_manager = arrow.ArrowManager(self.nether_world)
+				self.nether_world.tnt_manager = tnt_manager.TNTManager(self.nether_world)
+			dest_world = self.nether_world
+		else:
+			if getattr(self, "overworld", None) is None:
+				self.overworld = world.World(
+					seed=self.world.seed,
+					save_folder=self.world.save_folder,
+					render_distance=self.global_render_distance,
+					dimension="overworld"
+				)
+				self.overworld.texture_manager = self.world.texture_manager
+				self.overworld.block_types = self.world.block_types
+				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
+				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
+				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
+				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
+			dest_world = self.overworld
+
+		# 3. Calculate 1:8 converted target coordinates
+		px, py, pz = self.camera.position
+		if dest_dim == "nether":
+			target_x = px / 8.0
+			target_z = pz / 8.0
+		else:
+			target_x = px * 8.0
+			target_z = pz * 8.0
+
+		# 4. Search existing portal or generate new destination portal
+		import portal_manager
+		portal = portal_manager.portal_manager.find_closest_portal(dest_world, (target_x, target_z), max_dist=128)
+		if portal is None:
+			portal = portal_manager.portal_manager.generate_destination_portal(dest_world, (target_x, target_z))
+
+		spawn_x, spawn_y, spawn_z = portal.get_teleport_center()
+
+		# 5. Pre-generate and mesh spawn chunks around destination
+		spawn_cx = int(math.floor(spawn_x / 16.0))
+		spawn_cz = int(math.floor(spawn_z / 16.0))
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				cpos = (spawn_cx + dx, 0, spawn_cz + dz)
+				if cpos not in dest_world.chunks:
+					dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
+				dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+		# 6. Switch active world and entity managers
+		if not hasattr(dest_world, "item_drop_manager") or dest_world.item_drop_manager is None:
+			dest_world.item_drop_manager = item_drop.ItemDropManager(dest_world)
+		if not hasattr(dest_world, "mob_manager") or dest_world.mob_manager is None:
+			dest_world.mob_manager = mob_manager.MobManager(dest_world)
+		if not hasattr(dest_world, "arrow_manager") or dest_world.arrow_manager is None:
+			dest_world.arrow_manager = arrow.ArrowManager(dest_world)
+		if not hasattr(dest_world, "tnt_manager") or dest_world.tnt_manager is None:
+			dest_world.tnt_manager = tnt_manager.TNTManager(dest_world)
+
+		self.dimension = dest_dim
+		self.world = dest_world
+		self.item_drop_manager = dest_world.item_drop_manager
+		self.mob_manager = dest_world.mob_manager
+		self.arrow_manager = dest_world.arrow_manager
+		self.tnt_manager = dest_world.tnt_manager
+
+		# 7. Position player inside portal opening with 4.0s cooldown
+		self.camera.position = [spawn_x, spawn_y + self.camera.eye_offset, spawn_z]
+		self.camera.velocity_y = 0.0
+		self.camera.portal_timer = 0.0
+		self.camera.portal_cooldown = 4.0
+
+		self.dimension_transitioning = False
+
 	def update_sky_color(self):
+		if getattr(self, "dimension", "overworld") == "nether":
+			# Dark crimson Nether sky & fog
+			gl.glClearColor(0.18, 0.04, 0.04, 1.0)
+			return
+
 		tod = self.time_of_day % 1.0
 
 		night_c = (0.05, 0.05, 0.12)
@@ -522,12 +648,17 @@ class Window(pyglet.window.Window):
 						# Spawn 3D dropped item entity ONLY if harvested with proper tool tier!
 						if not self.flying and can_harvest and drop_id is not None:
 							actual_drop_id = drop_id
+							drop_qty = 1
 							if b_num == 77:
 								import random
 								if random.random() < 0.10:
 									actual_drop_id = 146  # 10% chance to drop Flint item (146)
 								else:
 									actual_drop_id = 77   # 90% chance to drop Gravel block (77)
+							elif b_num == 86:  # Glowstone -> drops 2-4 Glowstone Dust (171)
+								import random
+								actual_drop_id = 171
+								drop_qty = random.randint(2, 4)
 							elif b_num == 14:  # Oak Leaves
 								import random
 								roll = random.random()
@@ -540,7 +671,7 @@ class Window(pyglet.window.Window):
 
 							if actual_drop_id is not None:
 								self.item_drop_manager.spawn_drop(
-									actual_drop_id, 1,
+									actual_drop_id, drop_qty,
 									[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 								)
 
@@ -594,6 +725,12 @@ class Window(pyglet.window.Window):
 			self.camera.input = [0, 0, 0]
 
 		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
+
+		# Check Nether Portal Dimension Transition
+		trigger_time = 0.0 if self.flying else 4.0
+		if getattr(self.camera, "is_inside_portal", False) and self.camera.portal_timer >= trigger_time and self.camera.portal_cooldown <= 0.0 and not getattr(self, "dimension_transitioning", False):
+			self.trigger_dimension_transition()
+
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
 		if hasattr(self, "tnt_manager"):
 			self.tnt_manager.update(
@@ -722,6 +859,9 @@ class Window(pyglet.window.Window):
 		gl.glFlush()
 
 	def draw_celestial_bodies(self):
+		if getattr(self, "dimension", "overworld") == "nether":
+			return
+
 		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
 			self.celestial_vao = gl.GLuint(0)
 			gl.glGenVertexArrays(1, self.celestial_vao)
@@ -1506,7 +1646,13 @@ class Window(pyglet.window.Window):
 							if hasattr(self, "tnt_manager"):
 								self.tnt_manager.spawn_primed_tnt((next_block[0] + 0.5, next_block[1], next_block[2] + 0.5), fuse_ticks=80)
 							return
-						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+						elif target_b == 24 or (0 <= current_block[1] < 256 and any(self.world.get_block_number((current_block[0] + dx, current_block[1] + dy, current_block[2] + dz)) == 24 for dx, dy, dz in ((0, -1, 0), (0, 1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)))):
+							# Attempt Nether Portal Ignition inside Obsidian Frame!
+							import portal_manager
+							ignite_pos = current_block if self.world.get_block_number(current_block) in (0, 78) else next_block
+							if portal_manager.portal_manager.try_ignite_portal(self.world, ignite_pos):
+								return
+						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
 							pass  # Fall through to interactive block GUI/toggle below
 						else:
 							import random
@@ -1515,6 +1661,9 @@ class Window(pyglet.window.Window):
 								if 0 <= current_block[1] < 256:
 									cur_b = self.world.get_block_number(current_block)
 									if cur_b == 0 or cur_b in (10, 12, 31, 33):
+										import portal_manager
+										if portal_manager.portal_manager.try_ignite_portal(self.world, current_block):
+											return
 										self.world.set_fire(current_block, duration=random.uniform(8.0, 10.0))
 										return
 							elif face_vector in ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)):

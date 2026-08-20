@@ -36,6 +36,8 @@ import models.wall
 import models.glass_pane
 import models.fence_gate
 import models.fence_gate_open
+import models.portal_x
+import models.portal_z
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -422,6 +424,164 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 					set_b(lx, ly, lz, b_id)
 	except Exception as e:
 		print(f"[Village Error in chunk {x}, {z}]: {e}")
+
+	return bytes(flat_bytes)
+
+
+def build_nether_chunk_blocks_process(x, z, save_dir, seed=0):
+	"""Independent worker function for ProcessPoolExecutor/ThreadPoolExecutor.
+	Generates authentic Minecraft Java Edition 3D Nether terrain into a flat 1D bytearray (65536 bytes)."""
+	save_path = os.path.join(save_dir, f"{x}_{z}.chunk")
+	if os.path.exists(save_path):
+		try:
+			with gzip.open(save_path, 'rb') as f:
+				data = f.read()
+			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				return data
+		except Exception:
+			pass
+
+	flat_bytes = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
+
+	seed_offset_x = float((seed * 10007) % 50000)
+	seed_offset_z = float((seed * 16007) % 50000)
+
+	rng = Random((x * 341873128712 + z * 132897987541 + seed + 99991) & ((1 << 64) - 1))
+
+	chunk_offset_x = x * chunk.CHUNK_WIDTH
+	chunk_offset_z = z * chunk.CHUNK_LENGTH
+
+	# 1. 3D Noise Density Sampling on a 5x5x33 Grid (Spacing: 4 blocks in X/Z, 4 blocks in Y up to Y=128)
+	grid = {}
+	for gx in range(5):
+		wx = (chunk_offset_x + gx * 4 + seed_offset_x) / 36.0
+		for gz in range(5):
+			wz = (chunk_offset_z + gz * 4 + seed_offset_z) / 36.0
+			for gy in range(33):
+				y = gy * 4
+				wy = y / 30.0
+				n = pnoise3(wx, wy, wz, octaves=3, persistence=0.5)
+				t = y / 128.0
+
+				# Height bias curve: solid foundation floor (Y=0..40), open caverns (Y=44..84), ceiling crust (Y=88..128)
+				if t < 0.32:
+					bias = (0.28 - t) * 1.6 - 0.02
+				elif t > 0.68:
+					bias = (t - 0.68) * 2.5 - 0.02
+				else:
+					bias = -0.30
+
+				grid[(gx, gz, gy)] = n + bias
+
+	# 2. Block Generation with Trilinear Interpolation
+	def set_b(lx, ly, lz, b_id):
+		flat_bytes[lx * 4096 + ly * 16 + lz] = b_id
+
+	for i in range(16):
+		gx0 = i // 4
+		gx1 = min(4, gx0 + 1)
+		tx = (i % 4) / 4.0
+
+		for k in range(16):
+			gz0 = k // 4
+			gz1 = min(4, gz0 + 1)
+			tz = (k % 4) / 4.0
+
+			wx = chunk_offset_x + i + seed_offset_x
+			wz = chunk_offset_z + k + seed_offset_z
+
+			# Bedrock Floor: Y=0 (100%), Y=1..4 (probabilistic)
+			set_b(i, 0, k, 14)  # Bedrock
+			for by in range(1, 5):
+				if rng.random() < (5 - by) / 5.0:
+					set_b(i, by, k, 14)
+				else:
+					set_b(i, by, k, 84) # Netherrack
+
+			# Bedrock Ceiling: Y=127 (100%), Y=124..126 (probabilistic)
+			set_b(i, 127, k, 14) # Bedrock
+			for by in range(124, 127):
+				if rng.random() < (by - 123) / 4.0:
+					set_b(i, by, k, 14)
+				else:
+					set_b(i, by, k, 84) # Netherrack
+
+			# Nether Terrain: Y=5 to 123
+			for y in range(5, 124):
+				gy0 = y // 4
+				gy1 = min(32, gy0 + 1)
+				ty = (y % 4) / 4.0
+
+				# Trilinear interpolation
+				c000 = grid[(gx0, gz0, gy0)]
+				c100 = grid[(gx1, gz0, gy0)]
+				c010 = grid[(gx0, gz1, gy0)]
+				c110 = grid[(gx1, gz1, gy0)]
+				c001 = grid[(gx0, gz0, gy1)]
+				c101 = grid[(gx1, gz0, gy1)]
+				c011 = grid[(gx0, gz1, gy1)]
+				c111 = grid[(gx1, gz1, gy1)]
+
+				c00 = c000 * (1 - tx) + c100 * tx
+				c10 = c010 * (1 - tx) + c110 * tx
+				c01 = c001 * (1 - tx) + c101 * tx
+				c11 = c011 * (1 - tx) + c111 * tx
+
+				c0 = c00 * (1 - tz) + c10 * tz
+				c1 = c01 * (1 - tz) + c11 * tz
+
+				density = c0 * (1 - ty) + c1 * ty
+
+				# Large Netherrack pillars & columns in middle caverns
+				if 32 <= y <= 90:
+					if abs(pnoise2(wx / 30.0, wz / 30.0)) < 0.07 and pnoise2((wx + 300) / 16.0, (wz + 300) / 16.0) > 0.12:
+						density = max(density, 0.25)
+
+				if density > 0.0:
+					# Solid Block
+					# Soul Sand valleys & shores near lava sea (Y=25..42)
+					if 25 <= y <= 42 and (pnoise2(wx / 20.0, wz / 20.0, octaves=2) > 0.05):
+						set_b(i, y, k, 85) # Soul Sand
+					elif pnoise3((wx + 500) / 7.0, y / 7.0, (wz + 500) / 7.0) > 0.58:
+						set_b(i, y, k, 87) # Nether Quartz Ore
+					else:
+						set_b(i, y, k, 84) # Netherrack
+				else:
+					# Cavity: Lava Sea at Y <= 31
+					if y <= 31:
+						set_b(i, y, k, 15) # Lava
+					else:
+						set_b(i, y, k, 0)  # Air
+
+			# Glowstone Ceiling Clusters (Y=60..120)
+			for y in range(60, 120):
+				idx = i * 4096 + y * 16 + k
+				idx_above = i * 4096 + (y + 1) * 16 + k
+				if flat_bytes[idx] == 0 and flat_bytes[idx_above] == 84:
+					# Ceiling detected! Check cluster probability
+					if pnoise3(wx / 14.0, y / 14.0, wz / 14.0) > 0.45:
+						hang_len = rng.randint(1, 4)
+						for hy in range(y, max(5, y - hang_len), -1):
+							h_idx = i * 4096 + hy * 16 + k
+							if flat_bytes[h_idx] == 0:
+								flat_bytes[h_idx] = 86 # Glowstone
+							else:
+								break
+
+			# Ambient Fire on top of exposed Netherrack (Y=32..110)
+			for y in range(32, 110):
+				idx = i * 4096 + y * 16 + k
+				idx_below = i * 4096 + (y - 1) * 16 + k
+				if flat_bytes[idx] == 0 and flat_bytes[idx_below] == 84:
+					if rng.random() < 0.02:
+						flat_bytes[idx] = 78 # Fire
+
+	# Save to disk
+	try:
+		with gzip.open(save_path, 'wb', compresslevel=1) as f:
+			f.write(bytes(flat_bytes))
+	except Exception:
+		pass
 
 	return bytes(flat_bytes)
 
@@ -968,10 +1128,12 @@ class ChestData:
 
 
 class World:
-	def __init__(self, seed=None, save_folder=None, render_distance=6):
+	def __init__(self, seed=None, save_folder=None, render_distance=6, dimension="overworld"):
+		self.dimension = dimension  # "overworld" or "nether"
 		self.furnaces = {}  # (x, y, z) -> FurnaceData
 		self.chests = {}    # (x, y, z) -> ChestData
 		self.item_drop_manager = None
+		self.tnt_manager = None
 		if seed is None or seed == "":
 			self.seed = Random().randint(100000, 999999999)
 		elif isinstance(seed, str):
@@ -984,7 +1146,8 @@ class World:
 
 		self.save_folder = save_folder or "default"
 		import world_save
-		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, 'chunks')
+		subfolder = 'chunks_nether' if self.dimension == 'nether' else 'chunks'
+		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, subfolder)
 		os.makedirs(self.save_dir, exist_ok=True)
 
 		self.texture_manager = texture_manager.Texture_manager(16, 16, 256)
@@ -1076,11 +1239,24 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_cobblestone", block_face_textures={"all": "mossy_cobblestone"}, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="white_wool", block_face_textures={"all": "white_cloth"}, break_time=0.8, requires_tool=False))
 
+		# Nether Blocks & Nether Portal (84-89)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="netherrack", block_face_textures={"all": "netherrack"}, break_time=0.4, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="soul_sand", block_face_textures={"all": "soul_sand"}, break_time=0.5, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="glowstone", block_face_textures={"all": "glowstone"}, break_time=0.3, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_quartz_ore", block_face_textures={"all": "quartz_ore"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_portal_x", block_face_textures={"all": "portal"}, model=models.portal_x, transparent=True, break_time=float('inf'), requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_portal_z", block_face_textures={"all": "portal"}, model=models.portal_z, transparent=True, break_time=float('inf'), requires_tool=False))
+
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
 
 		self.texture_manager.add_texture("fire")
+		self.texture_manager.add_texture("portal")
+		self.texture_manager.add_texture("netherrack")
+		self.texture_manager.add_texture("soul_sand")
+		self.texture_manager.add_texture("glowstone")
+		self.texture_manager.add_texture("quartz_ore")
 		self.texture_manager.add_texture("sun")
 		self.texture_manager.add_texture("moon")
 		self.texture_manager.generate_mipmaps()
@@ -1303,22 +1479,26 @@ class World:
 
 	def generate_chunk(self, x, z, blocks_only=False):
 		chunk_position = (x, 0, z)
-		blocks = build_chunk_blocks_process(
-			x, z, self.scale, self.octaves, self.persistence, self.lacunarity,
-			self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
+		if self.dimension == "nether":
+			blocks = build_nether_chunk_blocks_process(x, z, self.save_dir, self.seed)
+		else:
+			blocks = build_chunk_blocks_process(
+				x, z, self.scale, self.octaves, self.persistence, self.lacunarity,
+				self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
 
-		# Register any village chests generated in this chunk
-		try:
-			import village
-			_, _, v_chests = village.get_village_blocks_for_chunk(x, z, self.seed)
-			if v_chests:
-				for pos_key, slots in v_chests.items():
-					if pos_key not in self.chests:
-						c_obj = ChestData()
-						c_obj.slots = [list(s) for s in slots]
-						self.chests[pos_key] = c_obj
-		except Exception:
-			pass
+		if self.dimension != "nether":
+			# Register any village chests generated in this chunk
+			try:
+				import village
+				_, _, v_chests = village.get_village_blocks_for_chunk(x, z, self.seed)
+				if v_chests:
+					for pos_key, slots in v_chests.items():
+						if pos_key not in self.chests:
+							c_obj = ChestData()
+							c_obj.slots = [list(s) for s in slots]
+							self.chests[pos_key] = c_obj
+			except Exception:
+				pass
 
 		if blocks_only:
 			return blocks
@@ -2091,6 +2271,13 @@ class World:
 		chk.set_block_number(lx, ly, lz, number)
 		self.dirty_chunks.add(c_pos)
 
+		if old_num in (24, 88, 89) or number == 0:
+			try:
+				import portal_manager
+				portal_manager.portal_manager.on_block_broken(self, position)
+			except Exception:
+				pass
+
 		for nx, ny, nz in [(px, py, pz), (px + 1, py, pz), (px - 1, py, pz), (px, py + 1, pz), (px, py - 1, pz), (px, py, pz + 1), (px, py, pz - 1)]:
 			if 0 <= ny < chunk.CHUNK_HEIGHT:
 				nb = self.get_block_number((nx, ny, nz))
@@ -2232,11 +2419,17 @@ class World:
 				chunk_pos = self._load_queue.pop(0)
 				if chunk_pos in self.chunks or chunk_pos in self.chunk_generation_futures:
 					continue
-				self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
-					build_chunk_blocks_process,
-					chunk_pos[0], chunk_pos[2],
-					self.scale, self.octaves, self.persistence, self.lacunarity,
-					self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
+				if self.dimension == "nether":
+					self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
+						build_nether_chunk_blocks_process,
+						chunk_pos[0], chunk_pos[2],
+						self.save_dir, self.seed)
+				else:
+					self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
+						build_chunk_blocks_process,
+						chunk_pos[0], chunk_pos[2],
+						self.scale, self.octaves, self.persistence, self.lacunarity,
+						self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
 				return
 
 	def update_chunks(self, player_position):

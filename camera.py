@@ -44,6 +44,11 @@ class Camera:
 		self.absorption = 0.0
 		self.gui = None
 
+		# Nether Portal Transition Tracking
+		self.portal_timer = 0.0
+		self.portal_cooldown = 0.0
+		self.is_inside_portal = False
+
 	def eat_food(self, hunger_points, saturation_points, absorption_points=0.0):
 		"""Restores hunger and saturation (saturation is capped at current hunger level) and grants absorption hearts."""
 		self.hunger = min(self.max_hunger, self.hunger + hunger_points)
@@ -228,6 +233,34 @@ class Camera:
 		feet_b = world.get_block_number((bx, by - 1, bz))
 		return eye_b in (9, 19, 15, 20) or feet_b in (9, 19, 15, 20)
 
+	def is_in_portal(self, world):
+		"""Checks if the player's bounding box intersects Nether Portal blocks (88 or 89)."""
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num in (88, 89):
+						return True
+		return False
+
 	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
 		import time
 		import random
@@ -335,6 +368,22 @@ class Camera:
 			sprint_multiplier = 1.3 if sprinting else 1.0
 			speed = base_speed * sprint_multiplier
 
+		# Soul Sand Slowdown (Block 85 under player reduces walking speed by 60%)
+		if self.on_ground and not flying and not in_liquid:
+			bx = int(math.floor(self.position[0]))
+			by = int(math.floor(self.position[1] - self.eye_offset - 0.1))
+			bz = int(math.floor(self.position[2]))
+			if world.get_block_number((bx, by, bz)) == 85:
+				speed *= 0.40
+
+		# Nether Portal Timer & Cooldown Tracking
+		self.portal_cooldown = max(0.0, self.portal_cooldown - delta_time)
+		self.is_inside_portal = self.is_in_portal(world)
+		if self.is_inside_portal:
+			self.portal_timer += delta_time
+		else:
+			self.portal_timer = 0.0
+
 		movement_vector = [0.0, 0.0, 0.0]
 
 		if flying:
@@ -441,7 +490,7 @@ class Camera:
 
 	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
 		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
-		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78):
+		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89):
 			return []
 
 		# Oak Fence (51) & Stone Wall (52) & Closed Fence Gate (75) - 1.5 blocks tall collision height for jumping

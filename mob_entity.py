@@ -11,8 +11,8 @@ import random
 
 
 def is_liquid_or_fire_block(block_id):
-	"""Returns True if the block is water, lava, or fire."""
-	return block_id in (9, 19, 15, 20, 78)
+	"""Returns True if the block is water, lava, fire, or portal (passable without collision)."""
+	return block_id in (9, 19, 15, 20, 78, 88, 89)
 
 
 def is_water_block(block_id):
@@ -559,7 +559,7 @@ class MobEntity:
 					if blocked_x:
 						break
 
-			if blocked_x and self.on_ground:
+			if blocked_x:
 				self.velocity[0] = 0.0
 			else:
 				self.position[0] = nx
@@ -578,15 +578,13 @@ class MobEntity:
 					if blocked_z:
 						break
 
-			if blocked_z and self.on_ground:
+			if blocked_z:
 				self.velocity[2] = 0.0
 			else:
 				self.position[2] = nz
 
 			# Vertical movement (Y-axis)
 			ny = self.position[1] + self.velocity[1] * dt
-			bx = int(math.floor(self.position[0]))
-			bz = int(math.floor(self.position[2]))
 
 			if self.velocity[1] > 0.0:
 				# Upward swept ceiling check (check overhead across mob AABB)
@@ -611,18 +609,33 @@ class MobEntity:
 				self.position[1] = ny
 				self.on_ground = False
 			else:
-				# Downward floor collision check
+				# Downward swept 4-corner floor collision check across full AABB footprint
+				bx_min = int(math.floor(self.position[0] - hw + 0.02))
+				bx_max = int(math.floor(self.position[0] + hw - 0.02))
+				bz_min = int(math.floor(self.position[2] - hw + 0.02))
+				bz_max = int(math.floor(self.position[2] + hw - 0.02))
+
 				check_top_y = int(math.floor(self.position[1] + 0.1))
 				check_bot_y = int(math.floor(ny - 0.2))
 				hit_floor = None
-				for fy in range(check_top_y - 1, check_bot_y - 1, -1):
-					b = world.get_block_number((bx, fy, bz))
-					if b != 0 and not is_liquid_or_fire_block(b):
+
+				for fy in range(check_top_y, check_bot_y - 1, -1):
+					is_solid = False
+					for fbx in range(bx_min, bx_max + 1):
+						for fbz in range(bz_min, bz_max + 1):
+							b = world.get_block_number((fbx, fy, fbz))
+							if b != 0 and not is_liquid_or_fire_block(b):
+								is_solid = True
+								break
+						if is_solid:
+							break
+					if is_solid and (fy + 1.0) <= (self.position[1] + 0.5):
 						hit_floor = fy
 						break
+
 				if hit_floor is not None:
 					self.velocity[1] = 0.0
-					self.position[1] = hit_floor + 1.0
+					self.position[1] = float(hit_floor + 1.0)
 
 					# Landing event: calculate fall damage
 					if self.fall_start_y is not None:

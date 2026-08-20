@@ -60,6 +60,10 @@ PALETTE_ITEMS = [
 	(81, "Wheat Crops", "crops"),
 	(82, "Mossy Cobblestone", "mossy_cobblestone"),
 	(83, "White Wool", "white_cloth"),
+	(84, "Netherrack", "netherrack"),
+	(85, "Soul Sand", "soul_sand"),
+	(86, "Glowstone", "glowstone"),
+	(87, "Nether Quartz Ore", "quartz_ore"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
@@ -137,10 +141,14 @@ TOOL_ITEMS = [
 	(167, "Bone", "items/bone"),
 	(168, "Spider Eye", "items/spider_eye"),
 	(169, "Gunpowder", "items/gunpowder"),
+	(170, "Nether Quartz", "items/quartz"),
+	(171, "Glowstone Dust", "items/glowstone_dust"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
 BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
+BLOCK_INFO[88] = ("Nether Portal", "portal")
+BLOCK_INFO[89] = ("Nether Portal", "portal")
 
 ARMOR_SLOT_TYPES = {
 	130: 0, 134: 0, 138: 0, 142: 0,  # Helmets -> Slot 0
@@ -363,6 +371,12 @@ BLOCK_MINING_PROPERTIES = {
 	76: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Open -> drops Closed item 75)
 	77: ("shovel", 0, 0.6, 77),    # Gravel (10% Flint drop handled on break)
 	83: (None, 0, 0.8, 83),        # White Wool
+	84: ("pickaxe", 1, 0.4, 84),   # Netherrack (Requires Wood Pickaxe+)
+	85: ("shovel", 0, 0.5, 85),    # Soul Sand
+	86: (None, 0, 0.3, 171),       # Glowstone (Drops Glowstone Dust 171)
+	87: ("pickaxe", 1, 1.5, 170),  # Nether Quartz Ore (Drops Nether Quartz 170)
+	88: (None, 0, 0.0, None),      # Nether Portal X
+	89: (None, 0, 0.0, None),      # Nether Portal Z
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -1522,6 +1536,12 @@ class InventoryGUI:
 				matrix[1][0] == 6 and matrix[1][1] == 169 and matrix[1][2] == 6 and
 				matrix[2][0] == 169 and matrix[2][1] == 6 and matrix[2][2] == 169):
 				self.crafting_result = [25, 1]  # TNT Block (25)
+				return
+
+		# Recipe 26: Glowstone (4 Glowstone Dust 171 in 2x2 grid) -> 1 Glowstone Block (86)
+		if h == 2 and w == 2:
+			if matrix[0][0] == 171 and matrix[0][1] == 171 and matrix[1][0] == 171 and matrix[1][1] == 171:
+				self.crafting_result = [86, 1]  # Glowstone (86)
 				return
 
 		self.crafting_result = [0, 0]
