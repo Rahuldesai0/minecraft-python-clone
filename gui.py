@@ -65,16 +65,16 @@ PALETTE_ITEMS = [
 	(86, "Glowstone", "glowstone"),
 	(87, "Nether Quartz Ore", "quartz_ore"),
 	(90, "Nether Brick", "nether_brick"),
-	(91, "Nether Brick Fence", "nether_brick"),
-	(92, "Nether Brick Stairs", "nether_brick"),
+	(91, "Nether Brick Fence", "items/nether_brick_fence"),
+	(92, "Nether Brick Stairs", "items/nether_brick_stairs"),
 	(94, "Nether Wart", "nether_wart_stage_2"),
-	(95, "Nether Brick Slab", "nether_brick"),
+	(95, "Nether Brick Slab", "items/nether_brick_slab"),
 	(96, "Stone Bricks", "stonebrick"),
-	(97, "Mossy Stone Bricks", "stonebrick"),
+	(97, "Mossy Stone Bricks", "stonebrick_mossy"),
 	(98, "Cracked Stone Bricks", "stonebrick_cracked"),
-	(99, "Iron Bars", "iron_trapdoor"),
-	(178, "Stone Brick Stairs", "stonebrick"),
-	(180, "Stone Brick Slab", "stonebrick"),
+	(99, "Iron Bars", "items/iron_bars"),
+	(178, "Stone Brick Stairs", "items/stone_brick_stairs"),
+	(180, "Stone Brick Slab", "items/stone_brick_slab"),
 	(181, "End Portal Frame", "endframe_top"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
@@ -168,23 +168,23 @@ BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
 BLOCK_INFO[88] = ("Nether Portal", "portal")
 BLOCK_INFO[89] = ("Nether Portal", "portal")
 BLOCK_INFO[90] = ("Nether Brick", "nether_brick")
-BLOCK_INFO[91] = ("Nether Brick Fence", "nether_brick")
-BLOCK_INFO[92] = ("Nether Brick Stairs", "nether_brick")
-BLOCK_INFO[93] = ("Nether Brick Stairs", "nether_brick")
+BLOCK_INFO[91] = ("Nether Brick Fence", "items/nether_brick_fence")
+BLOCK_INFO[92] = ("Nether Brick Stairs", "items/nether_brick_stairs")
+BLOCK_INFO[93] = ("Nether Brick Stairs", "items/nether_brick_stairs")
 BLOCK_INFO[94] = ("Nether Wart", "nether_wart_stage_2")
-BLOCK_INFO[95] = ("Nether Brick Slab", "nether_brick")
+BLOCK_INFO[95] = ("Nether Brick Slab", "items/nether_brick_slab")
 BLOCK_INFO[96] = ("Stone Bricks", "stonebrick")
-BLOCK_INFO[97] = ("Mossy Stone Bricks", "stonebrick")
+BLOCK_INFO[97] = ("Mossy Stone Bricks", "stonebrick_mossy")
 BLOCK_INFO[98] = ("Cracked Stone Bricks", "stonebrick_cracked")
-BLOCK_INFO[99] = ("Iron Bars", "iron_trapdoor")
-BLOCK_INFO[178] = ("Stone Brick Stairs", "stonebrick")
-BLOCK_INFO[179] = ("Stone Brick Stairs", "stonebrick")
-BLOCK_INFO[180] = ("Stone Brick Slab", "stonebrick")
+BLOCK_INFO[99] = ("Iron Bars", "items/iron_bars")
+BLOCK_INFO[178] = ("Stone Brick Stairs", "items/stone_brick_stairs")
+BLOCK_INFO[179] = ("Stone Brick Stairs", "items/stone_brick_stairs")
+BLOCK_INFO[180] = ("Stone Brick Slab", "items/stone_brick_slab")
 BLOCK_INFO[181] = ("End Portal Frame", "endframe_top")
 BLOCK_INFO[182] = ("End Portal Frame (Filled)", "endframe_eye")
 BLOCK_INFO[183] = ("End Portal", "portal")
 BLOCK_INFO[184] = ("Infested Stone Bricks", "stonebrick")
-BLOCK_INFO[185] = ("Infested Mossy Stone Bricks", "stonebrick")
+BLOCK_INFO[185] = ("Infested Mossy Stone Bricks", "stonebrick_mossy")
 BLOCK_INFO[186] = ("Infested Cracked Stone Bricks", "stonebrick_cracked")
 BLOCK_INFO[187] = ("Infested Stone", "stone")
 BLOCK_INFO[188] = ("End Stone", "end_stone")
@@ -722,7 +722,7 @@ class InventoryGUI:
 		self.window.set_exclusive_mouse(False)
 
 	def _load_icons(self):
-		for b_id, name, tex_name in ALL_ITEMS:
+		for b_id, (name, tex_name) in BLOCK_INFO.items():
 			img_path = os.path.join("textures", f"{tex_name}.png")
 			if os.path.exists(img_path):
 				try:

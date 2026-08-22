@@ -1316,9 +1316,9 @@ class World:
 
 		# Stronghold Blocks (96-99)
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick", block_face_textures={"all": "stonebrick"}, break_time=1.5, requires_tool=True))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_stone_brick", block_face_textures={"all": "stonebrick_mossy"}, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=1.5, requires_tool=True))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_bars", block_face_textures={"all": "iron_trapdoor"}, model=models.iron_bars, transparent=True, break_time=5.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_bars", block_face_textures={"all": "iron_bars"}, model=models.iron_bars, transparent=True, break_time=5.0, requires_tool=True))
 
 		# Pad slots 100..177 with placeholder Block_types so block_id index lookups are always valid
 		while len(self.block_types) < 178:
@@ -1333,7 +1333,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_portal_frame_filled", block_face_textures={"top": "endframe_top", "bottom": "end_stone", "sides": "endframe_side", "eye": "endframe_eye"}, model=models.end_portal_frame, transparent=True, break_time=float('inf'), requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_portal", block_face_textures={"all": "portal"}, model=models.end_portal, transparent=True, break_time=float('inf'), requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=0.75, requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_mossy_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=0.75, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_mossy_stone_brick", block_face_textures={"all": "stonebrick_mossy"}, break_time=0.75, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=0.75, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_stone", block_face_textures={"all": "stone"}, break_time=0.75, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_stone", block_face_textures={"all": "end_stone"}, break_time=3.0, requires_tool=True))
@@ -1352,7 +1352,9 @@ class World:
 		self.texture_manager.add_texture("nether_brick")
 		self.texture_manager.add_texture("nether_wart_stage_2")
 		self.texture_manager.add_texture("stonebrick")
+		self.texture_manager.add_texture("stonebrick_mossy")
 		self.texture_manager.add_texture("stonebrick_cracked")
+		self.texture_manager.add_texture("iron_bars")
 		self.texture_manager.add_texture("endframe_top")
 		self.texture_manager.add_texture("endframe_side")
 		self.texture_manager.add_texture("endframe_eye")
