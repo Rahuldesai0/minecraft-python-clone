@@ -30,6 +30,8 @@ import arrow
 import world_save
 import tnt_manager
 import explosion
+import ender_eye
+import ender_pearl
 
 class Window(pyglet.window.Window):
 	def __init__(self, **args):
@@ -48,6 +50,10 @@ class Window(pyglet.window.Window):
 		self.arrow_manager = arrow.ArrowManager(self.world)
 		self.tnt_manager = tnt_manager.TNTManager(self.world)
 		self.world.tnt_manager = self.tnt_manager
+		self.ender_eye_manager = ender_eye.EnderEyeManager(self.world)
+		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
+		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 		
@@ -103,6 +109,7 @@ class Window(pyglet.window.Window):
 		# Inventory & Hotbar GUI System
 		self.gui = gui.InventoryGUI(self)
 		self.camera.gui = self.gui
+		self.camera.window = self
 		self.holding = self.gui.get_current_block_id()
 
 		# F3 Debug Overlay & Key Tracking stuff
@@ -141,6 +148,10 @@ class Window(pyglet.window.Window):
 		self.world_seed = seed_val
 		self.is_saved_load = False
 
+		# Fresh worlds ALWAYS start at Sunrise (0.25)
+		self.time_of_day = 0.25
+		self.update_sky_color()
+
 		# Initialize fresh World, ItemDropManager & MobManager
 		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
 		self.dimension = "overworld"
@@ -154,6 +165,11 @@ class Window(pyglet.window.Window):
 		self.world.arrow_manager = self.arrow_manager
 		self.tnt_manager = tnt_manager.TNTManager(self.world)
 		self.world.tnt_manager = self.tnt_manager
+		self.ender_eye_manager = ender_eye.EnderEyeManager(self.world)
+		self.world.ender_eye_manager = self.ender_eye_manager
+		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
+		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 
@@ -184,7 +200,10 @@ class Window(pyglet.window.Window):
 		rd = w_data.get('world', {}).get('render_distance', self.global_render_distance)
 		self.global_render_distance = rd
 
-		saved_dim = w_data.get('world', {}).get('dimension', 'overworld')
+		p_data = w_data.get('player', {})
+		w_info = w_data.get('world', {})
+
+		saved_dim = p_data.get('dimension', w_info.get('dimension', 'overworld'))
 		self.dimension = saved_dim
 
 		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd, dimension=saved_dim)
@@ -203,11 +222,15 @@ class Window(pyglet.window.Window):
 		self.world.arrow_manager = self.arrow_manager
 		self.tnt_manager = tnt_manager.TNTManager(self.world)
 		self.world.tnt_manager = self.tnt_manager
+		self.ender_eye_manager = ender_eye.EnderEyeManager(self.world)
+		self.world.ender_eye_manager = self.ender_eye_manager
+		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
+		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
 
 		# Restore player attributes & flying state
-		p_data = w_data.get('player', {})
 		self.camera.position = p_data.get('position', [0.5, 80.0, 0.5])
 		self.camera.rotation = p_data.get('rotation', [0.0, 0.0])
 		self.camera.velocity_y = p_data.get('velocity_y', 0.0)
@@ -220,8 +243,20 @@ class Window(pyglet.window.Window):
 		self.sprinting = p_data.get('sprinting', False)
 
 		# Restore world attributes
-		w_info = w_data.get('world', {})
-		self.time_of_day = w_info.get('time_of_day', 0.0)
+		self.time_of_day = w_info.get('time_of_day', 0.25)
+		self.update_sky_color()
+
+		if saved_dim == "nether":
+			try:
+				import fortress_manager
+				nearest = fortress_manager.get_nearest_fortresses(self.camera.position, seed=self.world_seed, count=3)
+				print("\n=======================================================")
+				print(" [NETHER FORTRESS LOCATOR] 3 Nearest Fortresses:")
+				for idx, (fx, fy, fz, dist) in enumerate(nearest, 1):
+					print(f"   {idx}. Coordinates: (X={fx}, Y={fy}, Z={fz}) | Distance: {dist:.1f} blocks")
+				print("=======================================================\n")
+			except Exception:
+				pass
 
 		# Reset & restore inventory for this specific saved world
 		self.gui.reset_inventory()
@@ -299,10 +334,14 @@ class Window(pyglet.window.Window):
 
 	def save_and_quit_to_title(self):
 		if hasattr(self, 'world') and self.active_world_folder:
-			# Save modified dirty chunks synchronously so they are completely flushed to disk
-			for cpos in list(self.world.dirty_chunks):
-				self.world._save_chunk_to_file(cpos, synchronous=True)
-			self.world.dirty_chunks.clear()
+			# Save modified dirty chunks synchronously across all initialized dimension worlds
+			for w_inst in (self.world, getattr(self, "overworld", None), getattr(self, "nether_world", None)):
+				if w_inst is not None and hasattr(w_inst, "dirty_chunks"):
+					for cpos in list(w_inst.dirty_chunks):
+						w_inst._save_chunk_to_file(cpos, synchronous=True)
+					w_inst.dirty_chunks.clear()
+
+			curr_dim = getattr(self, 'dimension', 'overworld')
 
 			player_data = {
 				'position': list(self.camera.position),
@@ -314,12 +353,14 @@ class Window(pyglet.window.Window):
 				'saturation': getattr(self.camera, 'saturation', 5.0),
 				'exhaustion': getattr(self.camera, 'exhaustion', 0.0),
 				'flying': self.flying,
-				'sprinting': self.sprinting
+				'sprinting': self.sprinting,
+				'dimension': curr_dim
 			}
 
 			world_data = {
 				'time_of_day': self.time_of_day,
-				'render_distance': self.world.render_distance
+				'render_distance': self.world.render_distance,
+				'dimension': curr_dim
 			}
 
 			inventory_data = self.gui.serialize_inventory()
@@ -473,19 +514,197 @@ class Window(pyglet.window.Window):
 		self.mob_manager = dest_world.mob_manager
 		self.arrow_manager = dest_world.arrow_manager
 		self.tnt_manager = dest_world.tnt_manager
+		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
+			self.ender_pearl_manager.world = dest_world
+			dest_world.ender_pearl_manager = self.ender_pearl_manager
 
 		# 7. Position player inside portal opening with 4.0s cooldown
 		self.camera.position = [spawn_x, spawn_y + self.camera.eye_offset, spawn_z]
 		self.camera.velocity_y = 0.0
+		self.camera.fall_start_y = None
+		self.camera.fire_damage_timer = 0.0
 		self.camera.portal_timer = 0.0
 		self.camera.portal_cooldown = 4.0
 
+		if dest_dim == "nether":
+			try:
+				import fortress_manager
+				nearest = fortress_manager.get_nearest_fortresses((spawn_x, spawn_y, spawn_z), seed=self.world_seed, count=3)
+				print("\n=======================================================")
+				print(" [NETHER FORTRESS LOCATOR] 3 Nearest Fortresses:")
+				for idx, (fx, fy, fz, dist) in enumerate(nearest, 1):
+					print(f"   {idx}. Coordinates: (X={fx}, Y={fy}, Z={fz}) | Distance: {dist:.1f} blocks")
+				print("=======================================================\n")
+			except Exception:
+				pass
+
 		self.dimension_transitioning = False
+
+	def trigger_end_dimension_transition(self, to_dimension="end"):
+		if getattr(self, "dimension_transitioning", False):
+			return
+		self.dimension_transitioning = True
+
+		# Save current dimension dirty chunks
+		if hasattr(self, "world") and hasattr(self.world, "save_all_chunks"):
+			try:
+				self.world.save_all_chunks()
+			except Exception:
+				pass
+
+		if to_dimension == "end":
+			if getattr(self, "end_world", None) is None:
+				self.end_world = world.World(
+					seed=self.world_seed,
+					save_folder=self.world.save_folder,
+					render_distance=self.global_render_distance,
+					dimension="end"
+				)
+				self.end_world.texture_manager = self.world.texture_manager
+				self.end_world.block_types = self.world.block_types
+				self.end_world.item_drop_manager = item_drop.ItemDropManager(self.end_world)
+				self.end_world.mob_manager = mob_manager.MobManager(self.end_world)
+				self.end_world.arrow_manager = arrow.ArrowManager(self.end_world)
+				self.end_world.tnt_manager = tnt_manager.TNTManager(self.end_world)
+
+			dest_world = self.end_world
+
+			# Initialize Ender Dragon and End Crystals if not present
+			if getattr(self, "ender_dragon", None) is None:
+				import ender_dragon
+				self.ender_dragon = ender_dragon.EnderDragonEntity((0.0, 75.0, 0.0))
+				self.ender_dragon_renderer = ender_dragon.EnderDragonRenderer(self.world.texture_manager)
+				dest_world.ender_dragon = self.ender_dragon
+
+			if getattr(self, "end_crystal_manager", None) is None:
+				import end_crystal
+				import end_generator
+				self.end_crystal_manager = end_crystal.EndCrystalManager(dest_world)
+				self.end_crystal_manager.initialize_crystals_for_pillars(end_generator.get_pillar_definitions())
+				dest_world.end_crystal_manager = self.end_crystal_manager
+
+			if getattr(self, "dragon_fireball_manager", None) is None:
+				import dragon_fireball
+				self.dragon_fireball_manager = dragon_fireball.DragonFireballManager(dest_world)
+				dest_world.dragon_fireball_manager = self.dragon_fireball_manager
+
+			if getattr(self, "end_portal_renderer", None) is None:
+				import end_portal_shader
+				self.end_portal_renderer = end_portal_shader.EndPortalRenderer(dest_world)
+
+			# Pre-generate chunks around Obsidian Spawn Platform (X=100, Z=0)
+			spawn_cx = 6
+			spawn_cz = 0
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					cpos = (spawn_cx + dx, 0, spawn_cz + dz)
+					if cpos not in dest_world.chunks:
+						dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
+					dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+			import end_generator
+			plat_y = end_generator.get_spawn_platform_y(self.world_seed)
+			spawn_pos = [100.5, plat_y + 1.0 + self.camera.eye_offset, 0.5]
+
+		else:
+			# Returning to Overworld Spawn from End
+			if getattr(self, "overworld", None) is None:
+				self.overworld = world.World(
+					seed=self.world_seed,
+					save_folder=self.world.save_folder,
+					render_distance=self.global_render_distance,
+					dimension="overworld"
+				)
+				self.overworld.texture_manager = self.world.texture_manager
+				self.overworld.block_types = self.world.block_types
+				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
+				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
+				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
+				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
+
+			dest_world = self.overworld
+
+			# Pre-generate chunks around (0, 0)
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					cpos = (dx, 0, dz)
+					if cpos not in dest_world.chunks:
+						dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
+					dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+			spawn_y = 64
+			for y in range(255, 0, -1):
+				b = dest_world.get_block_number((0, y, 0))
+				if b != 0 and b not in (9, 19, 15, 20):
+					spawn_y = y + 1
+					break
+
+			spawn_pos = [0.5, spawn_y + self.camera.eye_offset, 0.5]
+
+		self.dimension = to_dimension
+		self.world = dest_world
+		self.item_drop_manager = dest_world.item_drop_manager
+		self.mob_manager = dest_world.mob_manager
+		self.arrow_manager = dest_world.arrow_manager
+		self.tnt_manager = dest_world.tnt_manager
+		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
+			self.ender_pearl_manager.world = dest_world
+			dest_world.ender_pearl_manager = self.ender_pearl_manager
+		self.update_sky_color()
+
+		self.camera.position = spawn_pos
+		self.camera.velocity_y = 0.0
+		self.camera.fall_start_y = None
+		self.camera.fire_damage_timer = 0.0
+		self.camera.portal_timer = 0.0
+		self.camera.portal_cooldown = 4.0
+		self.dimension_transitioning = False
+
+	def respawn_player(self):
+		"""Handles player respawn on death, ensuring Nether/End deaths return to Overworld (0, 0)."""
+		# If currently in the Nether or End, switch active dimension back to Overworld
+		if getattr(self, "dimension", "overworld") in ("nether", "end"):
+			if getattr(self, "overworld", None) is None:
+				self.overworld = world.World(
+					seed=self.world_seed,
+					save_folder=self.world.save_folder,
+					render_distance=self.global_render_distance,
+					dimension="overworld"
+				)
+				self.overworld.texture_manager = self.world.texture_manager
+				self.overworld.block_types = self.world.block_types
+				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
+				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
+				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
+				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
+
+			self.dimension = "overworld"
+			self.world = self.overworld
+			self.item_drop_manager = self.overworld.item_drop_manager
+			self.mob_manager = self.overworld.mob_manager
+			self.arrow_manager = self.overworld.arrow_manager
+			self.tnt_manager = self.overworld.tnt_manager
+			self.update_sky_color()
+
+		# Ensure Overworld spawn chunks around (0, 0) are loaded and meshed
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				cpos = (dx, 0, dz)
+				if cpos not in self.world.chunks:
+					self.world.chunks[cpos] = self.world.generate_chunk(cpos[0], cpos[2])
+				self.world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+		# Reset camera state and position at Overworld (0, 0)
+		self.camera.respawn(self.world)
 
 	def update_sky_color(self):
 		if getattr(self, "dimension", "overworld") == "nether":
 			# Dark crimson Nether sky & fog
 			gl.glClearColor(0.18, 0.04, 0.04, 1.0)
+			return
+		elif getattr(self, "dimension", "overworld") == "end":
+			# Dark void purple End sky
+			gl.glClearColor(0.035, 0.010, 0.055, 1.0)
 			return
 
 		tod = self.time_of_day % 1.0
@@ -668,6 +887,10 @@ class Window(pyglet.window.Window):
 									actual_drop_id = 153  # 2% chance Apple (153)
 								else:
 									actual_drop_id = None
+							elif b_num in (184, 185, 186, 187):  # Infested Blocks (Monster Egg)
+								actual_drop_id = None
+								if hasattr(self, "mob_manager") and self.mob_manager:
+									self.mob_manager.spawn_mob("silverfish", (target_block[0] + 0.5, target_block[1] + 0.1, target_block[2] + 0.5))
 
 							if actual_drop_id is not None:
 								self.item_drop_manager.spawn_drop(
@@ -731,6 +954,45 @@ class Window(pyglet.window.Window):
 		if getattr(self.camera, "is_inside_portal", False) and self.camera.portal_timer >= trigger_time and self.camera.portal_cooldown <= 0.0 and not getattr(self, "dimension_transitioning", False):
 			self.trigger_dimension_transition()
 
+		# Check End Portal Dimension Transition (instant transition in Minecraft)
+		if getattr(self.camera, "is_inside_end_portal", False) and self.camera.portal_cooldown <= 0.0 and not getattr(self, "dimension_transitioning", False):
+			if getattr(self, "dimension", "overworld") == "overworld":
+				self.trigger_end_dimension_transition("end")
+			elif getattr(self, "dimension", "overworld") == "end":
+				self.trigger_end_dimension_transition("overworld")
+
+		# Update Ender Dragon & End Crystals when in the End
+		if getattr(self, "dimension", "overworld") == "end":
+			if hasattr(self, "ender_dragon") and self.ender_dragon:
+				self.ender_dragon.update(delta_time, end_world=self.world, camera=self.camera, gui=self.gui)
+				# Check if dragon just died -> activate central exit fountain
+				if self.ender_dragon.is_dead:
+					import end_generator
+					if not end_generator.end_generator.dragon_defeated:
+						end_generator.end_generator.dragon_defeated = True
+						fount_y = end_generator.get_fountain_y(self.world_seed)
+						for fx in (-1, 0, 1):
+							for fz in (-1, 0, 1):
+								if not (fx == 0 and fz == 0):
+									self.world.set_block((fx, fount_y + 1, fz), 183)
+								else:
+									self.world.set_block((0, fount_y + 1, 0), 14)
+						self.world.set_block((0, fount_y + 4, 0), 189)
+
+			if hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
+				self.end_crystal_manager.update(
+					delta_time,
+					dragon=getattr(self, "ender_dragon", None),
+					mob_manager=self.mob_manager,
+					item_drop_manager=self.item_drop_manager
+				)
+
+			if hasattr(self, "dragon_fireball_manager") and self.dragon_fireball_manager:
+				self.dragon_fireball_manager.update(delta_time, camera=self.camera, gui=self.gui)
+
+		if hasattr(self, "end_portal_renderer") and self.end_portal_renderer:
+			self.end_portal_renderer.update(delta_time)
+
 		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
 		if hasattr(self, "tnt_manager"):
 			self.tnt_manager.update(
@@ -760,6 +1022,13 @@ class Window(pyglet.window.Window):
 
 		if hasattr(self, "arrow_manager"):
 			self.arrow_manager.update(delta_time, self.world, self.mob_manager, self.camera, self.gui)
+
+		if hasattr(self, "ender_eye_manager"):
+			self.ender_eye_manager.update(delta_time, item_drop_manager=self.item_drop_manager)
+
+		self.ender_pearl_cooldown = max(0.0, getattr(self, "ender_pearl_cooldown", 0.0) - delta_time)
+		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
+			self.ender_pearl_manager.update(delta_time, camera=self.camera, gui=self.gui, mob_manager=self.mob_manager)
 
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
@@ -828,6 +1097,41 @@ class Window(pyglet.window.Window):
 		if hasattr(self, "arrow_manager"):
 			self.arrow_manager.draw(self.camera)
 
+		# Render 3D Ender Eye projectiles & particle trails
+		if hasattr(self, "ender_eye_manager"):
+			self.ender_eye_manager.draw(self.camera)
+
+		# Render 3D Ender Pearl projectiles & particle trails
+		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
+			self.ender_pearl_manager.draw(self.camera)
+
+		# Render 3D End Crystals & Healing Beams in End Dimension
+		if getattr(self, "dimension", "overworld") == "end" and hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
+			self.end_crystal_manager.draw(self.camera)
+
+		# Render 3D Ender Dragon Boss in End Dimension
+		if getattr(self, "dimension", "overworld") == "end" and hasattr(self, "ender_dragon") and self.ender_dragon:
+			if hasattr(self, "ender_dragon_renderer") and self.ender_dragon_renderer:
+				self.ender_dragon_renderer.draw(self.camera, self.ender_dragon)
+
+		# Render 3D Dragon Fireballs & Dragon's Breath Effect Clouds
+		if getattr(self, "dimension", "overworld") == "end" and hasattr(self, "dragon_fireball_manager") and self.dragon_fireball_manager:
+			self.dragon_fireball_manager.draw(self.camera)
+
+		# Render 3D End Portal Infinite Void Planes
+		if hasattr(self, "end_portal_renderer") and self.end_portal_renderer:
+			portal_blocks = []
+			for chk in self.world.chunks.values():
+				cx, _, cz = chk.chunk_position
+				if 183 in chk.blocks:
+					for lx in range(16):
+						for ly in range(256):
+							for lz in range(16):
+								if chk.blocks[lx * 4096 + ly * 16 + lz] == 183:
+									portal_blocks.append((cx * 16 + lx, ly, cz * 16 + lz))
+			if portal_blocks:
+				self.end_portal_renderer.draw(self.camera, portal_blocks)
+
 		# If 3rd Person View (Back or Front), render Steve 3D Player Model!
 		if self.perspective != 0:
 			self.player_model.render_third_person(self.camera, self.perspective, self.world)
@@ -859,7 +1163,7 @@ class Window(pyglet.window.Window):
 		gl.glFlush()
 
 	def draw_celestial_bodies(self):
-		if getattr(self, "dimension", "overworld") == "nether":
+		if getattr(self, "dimension", "overworld") in ("nether", "end"):
 			return
 
 		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
@@ -1362,6 +1666,29 @@ class Window(pyglet.window.Window):
 			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage):
 				return
 
+			# Check End Crystal and Ender Dragon attack in End dimension
+			if getattr(self, "dimension", "overworld") == "end":
+				yaw, pitch = self.camera.rotation
+				ray_dir = (
+					math.cos(yaw) * math.cos(pitch),
+					math.sin(pitch),
+					math.sin(yaw) * math.cos(pitch)
+				)
+				if hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
+					if self.end_crystal_manager.check_attack_hit(
+						self.camera.position, ray_dir, max_dist=6.5, damage=damage,
+						dragon=getattr(self, "ender_dragon", None), mob_manager=self.mob_manager,
+						camera=self.camera, gui=self.gui,
+						tnt_manager=getattr(self, "tnt_manager", None),
+						item_drop_manager=self.item_drop_manager
+					):
+						return
+				if hasattr(self, "ender_dragon") and self.ender_dragon:
+					dragon_hit, dragon_part = self.ender_dragon.check_ray_hit(self.camera.position, ray_dir, max_dist=14.0)
+					if dragon_hit:
+						self.ender_dragon.take_damage(damage, part=dragon_part, attacker_pos=self.camera.position)
+						return
+
 			# Check if hitting a Fire block (78) or burning block side overlay to extinguish it immediately
 			target_block = None
 			def find_target(current_block, next_block, face_vector=None, hit_pos=None):
@@ -1416,10 +1743,52 @@ class Window(pyglet.window.Window):
 
 				self.holding = self.gui.get_current_block_id()
 				return
+			elif held_id == 177: # Eye of Ender
+				# 1. Check if clicking directly on an Empty End Portal Frame (181)
+				target_block = None
+				def find_frame(current_block, next_block, best_face=None, hit_pos=None):
+					nonlocal target_block
+					if self.world.get_block_number(next_block) != 0:
+						target_block = next_block
+						return True
+					return False
+
+				hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
+				while hit_ray.distance < hit.HIT_RANGE:
+					if hit_ray.step(find_frame):
+						break
+
+				if target_block and self.world.get_block_number(target_block) == 181:
+					existing_st = self.world.get_block_state(target_block)
+					facing = existing_st.facing if existing_st and hasattr(existing_st, "facing") else "NORTH"
+					import block_state
+					new_st = block_state.BlockState(182, facing=facing)
+					self.world.set_block(target_block, 182) # End Portal Frame (Filled with Eye)
+					self.world.set_block_state(target_block, new_st)
+					self.gui.consume_active_item()
+					self.holding = self.gui.get_current_block_id()
+					self.world.check_and_activate_end_portal(target_block)
+					return
+				else:
+					# 2. Thrown Eye of Ender Projectile (Overworld only)
+					if getattr(self.world, "dimension", "overworld") == "overworld":
+						self.ender_eye_manager.throw_eye(self.camera.position, world_seed=getattr(self.world, "seed", 0))
+						self.gui.consume_active_item()
+						self.holding = self.gui.get_current_block_id()
+						return
+			elif held_id == 176: # Ender Pearl
+				if getattr(self, "ender_pearl_cooldown", 0.0) <= 0.0:
+					self.ender_pearl_cooldown = 1.0  # 1.0s cooldown
+					if not hasattr(self, "ender_pearl_manager") or not self.ender_pearl_manager:
+						self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
+					self.ender_pearl_manager.throw_pearl(self.camera.position, self.camera.rotation)
+					self.gui.consume_active_item()
+					self.holding = self.gui.get_current_block_id()
+					return
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
-		is_placeable = (0 < self.holding < 100)
+		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187)
 		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76)
 		DOOR_TRAPDOOR_TOGGLES = {
 			43: 44, 44: 43,  # Oak Door Bottom Closed <-> Open
@@ -1468,8 +1837,8 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(8, axis=axis)
 				self.world.set_block_state(target_pos, st)
 
-			# 4. Slabs (38, 39, 40)
-			elif held_item in (38, 39, 40):
+			# 4. Slabs (38, 39, 40, 95, 180)
+			elif held_item in (38, 39, 40, 95, 180):
 				# Check slab combination on existing same-type slab
 				target_b = self.world.get_block_number(next_pos)
 				if target_b == held_item:
@@ -1550,8 +1919,8 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, facing=facing, half=half, open_state=False)
 				self.world.set_block_state(target_pos, st)
 
-			# 7. Stairs (41, 42)
-			elif held_item in (41, 42):
+			# 7. Stairs (41, 42, 92, 178)
+			elif held_item in (41, 42, 92, 178):
 				if face_vector == (0, 1, 0):
 					half = "BOTTOM"
 				elif face_vector == (0, -1, 0):
@@ -1566,10 +1935,10 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, facing=facing, half=half, shape=shape)
 				self.world.set_block_state(target_pos, st)
 
-			# 8. Fences (51)
-			elif held_item == 51:
-				conns = block_state.calculate_fence_connections(self.world, target_pos, 51)
-				st = block_state.BlockState(51, connections=conns)
+			# 8. Fences (51, 91)
+			elif held_item in (51, 91):
+				conns = block_state.calculate_fence_connections(self.world, target_pos, held_item)
+				st = block_state.BlockState(held_item, connections=conns)
 				self.world.set_block_state(target_pos, st)
 
 			# 9. Walls (52)
@@ -1578,16 +1947,21 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(52, connections=conns)
 				self.world.set_block_state(target_pos, st)
 
-			# 10. Glass Panes (53)
-			elif held_item == 53:
-				conns = block_state.calculate_pane_connections(self.world, target_pos, 53)
-				st = block_state.BlockState(53, connections=conns)
+			# 10. Glass Panes & Iron Bars (53, 99)
+			elif held_item in (53, 99):
+				conns = block_state.calculate_pane_connections(self.world, target_pos, held_item)
+				st = block_state.BlockState(held_item, connections=conns)
 				self.world.set_block_state(target_pos, st)
 
 			# 11. Oak Fence Gate (75)
 			elif held_item == 75:
 				facing = block_state.LEFT_DIRECTIONS[cardinal_dir]
 				st = block_state.BlockState(75, facing=facing, open_state=False)
+				self.world.set_block_state(target_pos, st)
+
+			# 12. End Portal Frame (181, 182)
+			elif held_item in (181, 182):
+				st = block_state.BlockState(held_item, facing=cardinal_dir)
 				self.world.set_block_state(target_pos, st)
 
 			else:

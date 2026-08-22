@@ -324,20 +324,28 @@ class MobEntity:
 		b_head = world.get_block_number((int(math.floor(mx)), int(math.floor(head_y)), int(math.floor(mz))))
 		return is_water_block(b_head)
 
-	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False):
+	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, *args, **kwargs):
 		"""Applies damage, flashes red, and enters directional panic fleeing state."""
 		if self.is_dead or damage <= 0:
+			return
+		if is_fire and getattr(self, "is_fire_immune", False):
 			return
 
 		self.health = max(0, self.health - damage)
 		self.hurt_time = 0.4
-		self.panic_goal.trigger(attacker_pos)
+		if hasattr(self, "panic_goal") and self.panic_goal:
+			self.panic_goal.trigger(attacker_pos)
 
 		if self.health == 0:
 			self.is_dead = True
 
 	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, **kwargs):
 		if self.is_dead:
+			return
+
+		# Void Despawn / Death (Y < -10)
+		if self.position[1] < -10.0:
+			self.is_dead = True
 			return
 
 		if self.hurt_time > 0:
@@ -349,6 +357,9 @@ class MobEntity:
 
 		# 1. Fire & Lava Mechanics
 		if in_water:
+			self.fire_timer = 0.0
+			self.fire_damage_timer = 0.0
+		elif getattr(self, "is_fire_immune", False):
 			self.fire_timer = 0.0
 			self.fire_damage_timer = 0.0
 		else:
@@ -737,6 +748,28 @@ class ChickenEntity(MobEntity):
 # REUSABLE HOSTILE MOB AI GOALS
 # ==============================================================================
 
+def check_line_of_sight(world, sx, sy, sz, tx, ty, tz):
+	"""Checks whether there is an unobstructed line of sight through non-solid blocks."""
+	if not world:
+		return True
+	dx = tx - sx
+	dy = ty - sy
+	dz = tz - sz
+	dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if dist < 0.2:
+		return True
+	steps = max(2, int(dist * 3.0))
+	for i in range(1, steps):
+		frac = i / float(steps)
+		bx = int(math.floor(sx + dx * frac))
+		by = int(math.floor(sy + dy * frac))
+		bz = int(math.floor(sz + dz * frac))
+		b_num = world.get_block_number((bx, by, bz))
+		if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 79, 81):
+			return False
+	return True
+
+
 class FindTargetGoal:
 	"""AI Goal: Throttled search for nearby Survival-mode player target within detection range."""
 	def __init__(self, mob, detection_range=16.0):
@@ -744,7 +777,7 @@ class FindTargetGoal:
 		self.detection_range = detection_range
 		self.scan_timer = 0.0
 
-	def update(self, dt, player_pos, camera=None, flying=False):
+	def update(self, dt, player_pos, camera=None, flying=False, world=None):
 		self.scan_timer -= dt
 		if self.scan_timer > 0:
 			return
@@ -765,7 +798,10 @@ class FindTargetGoal:
 		dist_sq = dx * dx + dy * dy + dz * dz
 
 		if dist_sq <= self.detection_range * self.detection_range:
-			self.mob.target = tuple(player_pos)
+			if world is None or check_line_of_sight(world, mx, my + 1.2, mz, px, py + 1.2, pz):
+				self.mob.target = tuple(player_pos)
+			else:
+				self.mob.target = None
 		else:
 			self.mob.target = None
 
@@ -809,17 +845,19 @@ class MeleeAttackGoal:
 		self.mob.target_yaw = math.atan2(dx, dz)
 
 		if dist <= self.attack_range and abs(dy) <= 2.2:
-			# Within melee attack range! Stop and strike
-			self.mob.is_moving = False
-			self.mob.velocity[0] = 0.0
-			self.mob.velocity[2] = 0.0
-			self.mob.target_dest = None
+			# Verify line of sight so mobs cannot strike through solid walls/floors/ceilings
+			if check_line_of_sight(world, mx, my + min(self.mob.height * 0.75, 1.4), mz, px, py + 1.2, pz):
+				# Within melee attack range and clear line of sight! Stop and strike
+				self.mob.is_moving = False
+				self.mob.velocity[0] = 0.0
+				self.mob.velocity[2] = 0.0
+				self.mob.target_dest = None
 
-			if self.cooldown_timer <= 0.0:
-				self.cooldown_timer = self.cooldown_max
-				self.mob.attack_anim_time = 0.35
-				if camera and hasattr(camera, "take_damage"):
-					camera.take_damage(self.damage, flying=is_creative, gui=gui, world=world)
+				if self.cooldown_timer <= 0.0:
+					self.cooldown_timer = self.cooldown_max
+					self.mob.attack_anim_time = 0.35
+					if camera and hasattr(camera, "take_damage"):
+						camera.take_damage(self.damage, flying=is_creative, gui=gui, world=world)
 		else:
 			# Pursue target
 			self.repath_timer -= dt
@@ -830,34 +868,18 @@ class MeleeAttackGoal:
 
 class RangedBowAttackGoal:
 	"""AI Goal: Skeletons maintain tactical distance, aim bow, and shoot arrows."""
-	def __init__(self, mob, min_range=5.0, max_range=15.0, attack_cooldown=1.8):
+	def __init__(self, mob, min_range=3.0, max_range=16.0, attack_cooldown=1.8):
 		self.mob = mob
 		self.min_range = min_range
 		self.max_range = max_range
 		self.attack_cooldown_max = attack_cooldown
-		self.attack_cooldown = random.uniform(0.5, 1.2)
+		self.attack_cooldown = random.uniform(0.3, 0.8)
 		self.bow_draw_time = 0.0
 		self.repath_timer = 0.0
 
 	def has_line_of_sight(self, world, px, py, pz):
 		mx, my, mz = self.mob.position
-		sx, sy, sz = mx, my + 1.5, mz
-		tx, ty, tz = px, py + 1.2, pz
-		dx, dy, dz = tx - sx, ty - sy, tz - sz
-		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-		if dist < 0.1:
-			return True
-
-		steps = int(dist * 2.0)
-		for i in range(1, steps):
-			frac = i / float(steps)
-			bx = int(math.floor(sx + dx * frac))
-			by = int(math.floor(sy + dy * frac))
-			bz = int(math.floor(sz + dz * frac))
-			b_num = world.get_block_number((bx, by, bz))
-			if b_num != 0 and b_num not in (9, 19, 15, 20, 78):
-				return False
-		return True
+		return check_line_of_sight(world, mx, my + 1.4, mz, px, py + 1.2, pz)
 
 	def update(self, dt, world, player_pos, camera=None, arrow_manager=None, flying=False):
 		if self.attack_cooldown > 0:
@@ -889,33 +911,34 @@ class RangedBowAttackGoal:
 		self.mob.target_yaw = math.atan2(dx, dz)
 		has_los = self.has_line_of_sight(world, px, py, pz)
 
-		if dist < self.min_range:
-			# Player is too close: back away to maintain distance
-			self.mob.is_aiming = False
-			self.repath_timer -= dt
-			if self.repath_timer <= 0:
-				self.repath_timer = 0.3
-				angle = math.atan2(-dx, -dz) + random.uniform(-0.3, 0.3)
-				tx = mx + math.sin(angle) * 6.0
-				tz = mz + math.cos(angle) * 6.0
-				self.mob.set_target_destination(tx, tz, speed_mult=1.1)
-
-		elif dist > self.max_range or not has_los:
+		if not has_los or dist > self.max_range:
 			# Out of range or no line of sight: navigate closer
 			self.mob.is_aiming = False
+			self.bow_draw_time = 0.0
 			self.repath_timer -= dt
-			if self.repath_timer <= 0:
+			if self.repath_timer <= 0 or self.mob.target_dest is None:
 				self.repath_timer = 0.4
 				self.mob.set_target_destination(px, pz, speed_mult=1.1)
-
 		else:
-			# In shooting range with clear line of sight! Aim and fire
-			self.mob.is_moving = False
-			self.mob.velocity[0] = 0.0
-			self.mob.velocity[2] = 0.0
-			self.mob.target_dest = None
+			# In shooting range with clear line of sight! Aim bow and shoot
 			self.mob.is_aiming = True
 
+			if dist < self.min_range:
+				# Player is very close: back away slightly to keep spacing while still drawing bow
+				self.repath_timer -= dt
+				if self.repath_timer <= 0 or self.mob.target_dest is None:
+					self.repath_timer = 0.35
+					angle = math.atan2(-dx, -dz) + random.uniform(-0.4, 0.4)
+					tx = mx + math.sin(angle) * 4.0
+					tz = mz + math.cos(angle) * 4.0
+					self.mob.set_target_destination(tx, tz, speed_mult=0.85)
+			else:
+				self.mob.is_moving = False
+				self.mob.velocity[0] = 0.0
+				self.mob.velocity[2] = 0.0
+				self.mob.target_dest = None
+
+			# Charge bow and release arrow
 			self.bow_draw_time += dt
 			if self.bow_draw_time >= 0.9 and self.attack_cooldown <= 0.0:
 				self.bow_draw_time = 0.0
@@ -924,18 +947,18 @@ class RangedBowAttackGoal:
 				if arrow_manager and hasattr(arrow_manager, "spawn_arrow"):
 					launch_x, launch_y, launch_z = mx, my + 1.4, mz
 					target_y = py - 0.4  # Target player chest level (camera is at eye level)
-					dx = px - launch_x
-					dy = target_y - launch_y
-					dz = pz - launch_z
-					dist = max(0.1, math.sqrt(dx * dx + dz * dz))
+					adx = px - launch_x
+					ady = target_y - launch_y
+					adz = pz - launch_z
+					adist = max(0.1, math.sqrt(adx * adx + adz * adz))
 
 					# Parabolic arc solving for 0.05 gravity and 0.99 drag
 					speed = 1.6  # blocks / tick
-					t = (dist / speed) * 1.04
-					vy = (dy + 0.5 * 0.05 * (t ** 2)) / t
-					vh = dist / t
-					vx = (dx / dist) * vh
-					vz = (dz / dist) * vh
+					t = (adist / speed) * 1.04
+					vy = (ady + 0.5 * 0.05 * (t ** 2)) / t
+					vh = adist / t
+					vx = (adx / adist) * vh
+					vz = (adz / adist) * vh
 
 					# Slight authentic accuracy spread (±0.015)
 					inaccuracy = 0.015
@@ -943,7 +966,130 @@ class RangedBowAttackGoal:
 					vy += random.gauss(0, 1) * inaccuracy
 					vz += random.gauss(0, 1) * inaccuracy
 
-					arrow_manager.spawn_arrow((launch_x, launch_y, launch_z), [vx, vy, vz], shooter=self.mob)
+					arrow_manager.spawn_arrow((launch_x, launch_y, launch_z), (vx, vy, vz), is_critical=False, shooter="skeleton")
+
+class BlazeAttackGoal:
+	"""AI Goal: 3D flying target acquisition (up to 48 blocks), attack flare preparation (1.0s),
+	and triple Small Fireball projectile burst attack."""
+	def __init__(self, mob, max_range=48.0, cooldown=4.5):
+		self.mob = mob
+		self.max_range = max_range
+		self.cooldown_max = cooldown
+		self.cooldown_timer = random.uniform(1.0, 3.0)
+		self.charge_timer = 0.0
+		self.burst_count = 0
+		self.burst_interval = 0.0
+		self.repath_timer = 0.0
+
+	def has_line_of_sight(self, world, px, py, pz):
+		mx, my, mz = self.mob.position
+		sx, sy, sz = mx, my + 1.4, mz
+		tx, ty, tz = px, py, pz
+		dx, dy, dz = tx - sx, ty - sy, tz - sz
+		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+		if dist < 0.1:
+			return True
+
+		steps = int(dist * 2.0)
+		for i in range(1, steps):
+			frac = i / float(steps)
+			bx = int(math.floor(sx + dx * frac))
+			by = int(math.floor(sy + dy * frac))
+			bz = int(math.floor(sz + dz * frac))
+			b_num = world.get_block_number((bx, by, bz))
+			if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 88, 89, 94):
+				return False
+		return True
+
+	def update(self, dt, world, player_pos, camera=None, fireball_manager=None, flying=False):
+		if self.cooldown_timer > 0:
+			self.cooldown_timer = max(0.0, self.cooldown_timer - dt)
+
+		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
+		if is_creative or is_dead or not player_pos:
+			self.mob.target = None
+			self.mob.is_charging = False
+			self.charge_timer = 0.0
+			self.burst_count = 0
+			return
+
+		px, py, pz = player_pos
+		mx, my, mz = self.mob.position
+		dx = px - mx
+		dy = py - my
+		dz = pz - mz
+		dist = math.sqrt(dx * dx + dz * dz)
+		total_dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+		if total_dist > self.max_range:
+			self.mob.target = None
+			self.mob.is_charging = False
+			self.charge_timer = 0.0
+			return
+
+		has_los = self.has_line_of_sight(world, px, py, pz)
+		if not has_los:
+			self.mob.target = None
+			self.mob.is_charging = False
+			return
+
+		self.mob.target = (px, py, pz)
+		self.mob.target_yaw = math.atan2(dx, dz)
+
+		# 3D Flight Pursuit / Repositioning: maintain height 1.5 - 3.5 blocks above player
+		target_hover_y = py + 2.0
+		vy_diff = target_hover_y - my
+		self.mob.velocity[1] = max(-2.5, min(3.5, self.mob.velocity[1] + vy_diff * dt * 2.0))
+
+		# Horizontal approach if > 12 blocks away
+		if dist > 12.0:
+			speed_mult = 0.28
+			self.mob.velocity[0] += (dx / dist) * speed_mult * dt * 4.0
+			self.mob.velocity[2] += (dz / dist) * speed_mult * dt * 4.0
+		elif dist < 5.0:
+			# Back up if too close
+			self.mob.velocity[0] -= (dx / dist) * 0.25 * dt * 4.0
+			self.mob.velocity[2] -= (dz / dist) * 0.25 * dt * 4.0
+
+		# Attack Sequence: Charge for 1.0s -> Fire 3 Fireballs spaced 0.33s -> Cooldown 4.5s
+		if self.cooldown_timer <= 0.0 and self.burst_count == 0 and self.charge_timer == 0.0:
+			# Begin charge!
+			self.charge_timer = 1.0
+			self.mob.is_charging = True
+
+		if self.charge_timer > 0.0:
+			self.charge_timer -= dt
+			if self.charge_timer <= 0.0:
+				self.charge_timer = 0.0
+				self.burst_count = 3
+				self.burst_interval = 0.0
+
+		if self.burst_count > 0:
+			self.burst_interval -= dt
+			if self.burst_interval <= 0.0:
+				self.burst_interval = 0.33 # 6 ticks between fireballs
+				self.burst_count -= 1
+
+				# Fire Small Fireball towards player eye level
+				if fireball_manager and hasattr(fireball_manager, "spawn_fireball"):
+					lx, ly, lz = mx, my + 1.4, mz
+					tx, ty, tz = px, py - 0.2, pz
+					fx = tx - lx
+					fy = ty - ly
+					fz = tz - lz
+					fdist = max(0.1, math.sqrt(fx * fx + fy * fy + fz * fz))
+
+					speed = 15.0 # blocks / second
+					vx = (fx / fdist) * speed + random.gauss(0, 0.25)
+					vy = (fy / fdist) * speed + random.gauss(0, 0.25)
+					vz = (fz / fdist) * speed + random.gauss(0, 0.25)
+
+					fireball_manager.spawn_fireball((lx, ly, lz), [vx, vy, vz], shooter=self.mob)
+
+				if self.burst_count == 0:
+					self.mob.is_charging = False
+					self.cooldown_timer = self.cooldown_max + random.uniform(-0.5, 0.5)
 
 
 class SunlightBurnGoal:
@@ -1096,6 +1242,135 @@ class ZombieEntity(HostileEntity):
 		return drops, xp
 
 
+class ZombiePigmanEntity(HostileEntity):
+	"""Minecraft Zombie Pigman (Zombified Piglin): 20 HP (10 hearts), speed 0.23 (0.38 when angry),
+	neutral mob that only attacks when provoked. Provoking one alerts all nearby pigmen within 32 blocks.
+	100% Fire and Lava immune. Drops 0-1 Rotten Flesh & 0-1 Gold Ingot."""
+	def __init__(self, entity_id, position):
+		super().__init__(entity_id, position, mob_type="zombie_pigman", max_health=20, speed=0.23, width=0.6, height=1.95)
+		self.is_fire_immune = True
+		self.is_angry = False
+		self.anger_timer = 0.0
+		self.melee_goal = MeleeAttackGoal(self, attack_range=1.8, damage=5, cooldown=1.0)
+
+	def become_angry(self, target_pos, anger_duration=25.0):
+		"""Angers the pigman towards the player for anger_duration seconds."""
+		self.is_angry = True
+		self.anger_timer = anger_duration
+		self.speed = 0.38  # Aggressive sprint speed when angry
+		if target_pos:
+			self.target = tuple(target_pos)
+
+	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, *args, **kwargs):
+		if self.is_dead or damage <= 0:
+			return
+		if is_fire and self.is_fire_immune:
+			return
+
+		self.health = max(0, self.health - damage)
+		self.hurt_time = 0.4
+
+		# If attacked by player, become angry!
+		if attacker_pos:
+			self.become_angry(attacker_pos)
+
+		if self.health == 0:
+			self.is_dead = True
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, mob_manager=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		if self.is_dead:
+			return
+
+		if self.attack_anim_time > 0:
+			self.attack_anim_time = max(0.0, self.attack_anim_time - dt)
+
+		# Anger timer decay
+		if self.is_angry:
+			self.anger_timer -= dt
+			if self.anger_timer <= 0.0 or (camera and getattr(camera, 'health', 1) <= 0):
+				self.is_angry = False
+				self.anger_timer = 0.0
+				self.speed = 0.23
+				self.target = None
+				self.target_dest = None
+
+		# If angry and in range, pursue and melee attack player
+		if self.is_angry:
+			self.find_target_goal.update(dt, player_pos, camera=camera, flying=flying)
+			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
+		else:
+			# Neutral wander behavior
+			self.stroll_goal.update(dt, world)
+
+		# Base physics, movement, gravity, collisions
+		super(HostileEntity, self).update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
+
+	def get_loot_drops(self, is_on_fire=False):
+		flesh_count = random.randint(0, 1)
+		gold_count = 1 if random.random() < 0.35 else 0
+		xp = 5
+		drops = []
+		if flesh_count > 0:
+			drops.append((166, flesh_count))  # Rotten Flesh (166)
+		if gold_count > 0:
+			drops.append((124, gold_count))   # Gold Ingot (124)
+		return drops, xp
+
+
+class BlazeEntity(HostileEntity):
+	"""Minecraft Blaze Mob: 20 HP (10 hearts), 3D Flight & Hovering physics,
+	100% Fire/Lava immune, 3-fireball burst attack, drops 0-1 Blaze Rods."""
+	def __init__(self, entity_id, position):
+		super().__init__(entity_id, position, mob_type="blaze", max_health=20, speed=0.25, width=0.6, height=1.8)
+		self.is_fire_immune = True
+		self.is_charging = False
+		self.attack_goal = BlazeAttackGoal(self, max_range=48.0, cooldown=4.5)
+		self.hover_time = random.uniform(0.0, 10.0)
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, fireball_manager=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		if self.is_dead:
+			return
+
+		self.hover_time += dt
+		self.walk_time = self.hover_time
+
+		if self.hurt_time > 0:
+			self.hurt_time = max(0.0, self.hurt_time - dt)
+
+		# 3D Flying Physics: Custom drag & buoyancy (no ground gravity sticking)
+		self.velocity[0] *= (0.91 ** (dt * 20.0))
+		self.velocity[2] *= (0.91 ** (dt * 20.0))
+		self.velocity[1] *= (0.91 ** (dt * 20.0))
+
+		# Execute Blaze Attack Goal
+		self.attack_goal.update(dt, world, player_pos, camera=camera, fireball_manager=fireball_manager, flying=flying)
+
+		# If no active target, float gently around
+		if not self.target:
+			self.velocity[1] += math.sin(self.hover_time * 2.0) * dt * 0.8
+			self.stroll_goal.update(dt, world)
+
+		# Update position using velocity
+		self.position[0] += self.velocity[0] * dt
+		self.position[1] += self.velocity[1] * dt
+		self.position[2] += self.velocity[2] * dt
+
+		# Ensure Blaze stays within reasonable Nether height bounds (Y=10..120)
+		self.position[1] = max(10.0, min(120.0, self.position[1]))
+
+		# Smooth yaw rotation
+		diff = (self.target_yaw - self.yaw + math.pi) % math.tau - math.pi
+		self.yaw += diff * min(1.0, dt * 8.0)
+
+	def get_loot_drops(self, is_on_fire=False):
+		rod_count = random.randint(0, 1)
+		xp = 10
+		drops = []
+		if rod_count > 0:
+			drops.append((172, rod_count))  # Blaze Rod (172)
+		return drops, xp
+
+
 class SkeletonEntity(HostileEntity):
 	"""Minecraft Skeleton Entity: 20 HP (10 hearts), speed 0.24, ranged bow attack, drops 0-2 Bones & 0-2 Arrows."""
 	def __init__(self, entity_id, position):
@@ -1197,27 +1472,33 @@ class CreeperAttackGoal:
 		self.mob.target_yaw = math.atan2(dx, dz)
 
 		if dist <= self.trigger_distance and abs(dy) <= 3.0:
-			# Player in close range! Stop movement and hiss/swell
-			self.mob.is_moving = False
-			self.mob.velocity[0] = 0.0
-			self.mob.velocity[2] = 0.0
-			self.mob.target_dest = None
-			self.mob.is_hissing = True
+			# Verify line of sight so creepers do not hiss/explode through solid walls
+			if check_line_of_sight(world, mx, my + 0.8, mz, px, py + 1.2, pz):
+				# Player in close range! Stop movement and hiss/swell
+				self.mob.is_moving = False
+				self.mob.velocity[0] = 0.0
+				self.mob.velocity[2] = 0.0
+				self.mob.target_dest = None
+				self.mob.is_hissing = True
 
-			self.fuse_time += dt * 20.0
-			self.mob.fuse_progress = min(1.0, self.fuse_time / self.fuse_max)
+				self.fuse_time += dt * 20.0
+				self.mob.fuse_progress = min(1.0, self.fuse_time / self.fuse_max)
 
-			if self.fuse_time >= self.fuse_max:
-				# Detonate Creeper Explosion!
-				self.mob.is_dead = True
-				import explosion
-				ex_pos = (mx, my + 0.85, mz)
-				explosion.create_explosion(
-					world, ex_pos, power=self.explosion_power, source_entity=self.mob,
-					tnt_manager=tnt_manager, mob_manager=mob_manager,
-					camera=camera, gui=gui, item_drop_manager=item_drop_manager
-				)
-				return
+				if self.fuse_time >= self.fuse_max:
+					# Detonate Creeper Explosion!
+					self.mob.is_dead = True
+					import explosion
+					ex_pos = (mx, my + 0.85, mz)
+					explosion.create_explosion(
+						world, ex_pos, power=self.explosion_power, source_entity=self.mob,
+						tnt_manager=tnt_manager, mob_manager=mob_manager,
+						camera=camera, gui=gui, item_drop_manager=item_drop_manager
+					)
+					return
+			else:
+				self.mob.is_hissing = False
+				self.fuse_time = max(0.0, self.fuse_time - dt * 20.0)
+				self.mob.fuse_progress = self.fuse_time / self.fuse_max
 
 		elif dist > self.abort_distance or abs(dy) > 4.0:
 			# Player fled beyond abort distance! Cool down fuse
@@ -1277,5 +1558,332 @@ class CreeperEntity(HostileEntity):
 		if gunpowder_count > 0:
 			drops.append((169, gunpowder_count))  # Gunpowder (169)
 		return drops, xp
+
+
+class EndermanEntity(HostileEntity):
+	"""Minecraft Java Edition Enderman Entity:
+	- 40 HP (20 hearts)
+	- Neutral until player makes direct eye contact with head/eyes or attacks first
+	- Fast aggro pursuit (speed 0.45, wander speed 0.30)
+	- Melee attack: 7 damage (3.5 hearts), 1.0s cooldown, 2.0 block reach
+	- 3D Teleportation: Random repositioning, evasive teleport on damage, water aversion teleport
+	- Drops 0-1 Ender Pearls (50% drop rate) and 5 XP
+	"""
+	def __init__(self, entity_id, position):
+		super().__init__(entity_id, position, mob_type="enderman", max_health=40, speed=0.30, width=0.6, height=2.9)
+		self.is_angry = False
+		self.is_screaming = False
+		self.stare_timer = 0.0
+		self.anger_timer = 0.0
+		self.teleport_cooldown = random.uniform(3.0, 6.0)
+		self.combat_teleport_timer = random.uniform(5.0, 8.0)
+		self.eye_height = 2.55
+		self.damage = 7
+		self.melee_goal = MeleeAttackGoal(self, attack_range=2.0, damage=7, cooldown=1.0)
+		self.stroll_goal = RandomStrollGoal(self)
+
+	def become_angry(self, attacker_pos=None):
+		self.is_angry = True
+		self.is_screaming = True
+		self.stare_timer = 0.6 # Stare & scream before rushing
+		self.anger_timer = 20.0 # Calms down after 20 seconds of no aggression
+		self.speed = 0.45      # Aggressive pursuit speed
+		if attacker_pos:
+			self.target = tuple(attacker_pos)
+
+	def check_player_stare(self, world, player_pos, camera):
+		"""
+		Authentic Minecraft eye-contact detection:
+		Checks if the player's camera look ray directly hits the Enderman's eye/head.
+		Looking at other body parts (chest, legs, feet) does NOT trigger anger.
+		Respects solid block line-of-sight obstruction.
+		"""
+		if not player_pos or not camera or self.is_angry:
+			return False
+
+		# Creative / spectator mode ignores gaze
+		if getattr(camera, 'flying', False) or getattr(camera, 'health', 1) <= 0:
+			return False
+
+		px, py, pz = player_pos
+		eye_offset = getattr(camera, 'eye_offset', 1.62)
+		cam_x, cam_y, cam_z = px, py + eye_offset, pz
+
+		# Enderman eye / head center
+		mx, my, mz = self.position
+		end_eye_x = mx
+		end_eye_y = my + self.eye_height
+		end_eye_z = mz
+
+		# Vector from camera to Enderman eye
+		dx = end_eye_x - cam_x
+		dy = end_eye_y - cam_y
+		dz = end_eye_z - cam_z
+		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+		# Minecraft eye-stare detection range: up to 32 blocks
+		if dist > 32.0 or dist < 0.5:
+			return False
+
+		# Camera look direction unit vector matching hit.py and engine coordinate raycasts
+		yaw, pitch = camera.rotation
+		look_x = math.cos(yaw) * math.cos(pitch)
+		look_y = math.sin(pitch)
+		look_z = math.sin(yaw) * math.cos(pitch)
+
+		# Dot product (must be looking towards the Enderman)
+		dot = (dx * look_x + dy * look_y + dz * look_z)
+		if dot <= 0.0:
+			return False
+
+		# Cosine of angle between look ray and direction to Enderman
+		cos_theta = dot / dist
+		# Must be aimed directly at head (< 5 degrees and perpendicular distance <= 0.35m)
+		if cos_theta < 0.996:
+			return False
+
+		proj_x = cam_x + look_x * dot
+		proj_y = cam_y + look_y * dot
+		proj_z = cam_z + look_z * dot
+		perp_dist = math.sqrt((end_eye_x - proj_x) ** 2 + (end_eye_y - proj_y) ** 2 + (end_eye_z - proj_z) ** 2)
+
+		if perp_dist > 0.35:
+			return False
+
+		# Check line-of-sight: raycast between camera and Enderman eye through world
+		steps = max(2, int(dist * 2.0))
+		for i in range(1, steps):
+			frac = i / float(steps)
+			bx = int(round(cam_x + dx * frac))
+			by = int(round(cam_y + dy * frac))
+			bz = int(round(cam_z + dz * frac))
+
+			b_num = world.get_block_number((bx, by, bz))
+			if b_num != 0 and not is_liquid_or_fire_block(b_num):
+				# Line of sight blocked by opaque wall/terrain
+				return False
+
+		return True
+
+	def is_safe_teleport_dest(self, world, tx, ty, tz):
+		"""
+		Validates candidate teleport destination:
+		1. Solid walkable ground underneath.
+		2. 3 vertical air blocks clearance (height 2.9).
+		3. Not in water, lava, fire, or solid blocks.
+		"""
+		bx = int(math.floor(tx))
+		by = int(math.floor(ty))
+		bz = int(math.floor(tz))
+
+		# Floor beneath destination
+		floor_b = world.get_block_number((bx, by - 1, bz))
+		if not is_walkable_ground(floor_b):
+			return False
+
+		# Check 3-block vertical air clearance for 2.9-block height
+		for cy in range(by, by + 3):
+			b = world.get_block_number((bx, cy, bz))
+			if b != 0 and not is_liquid_or_fire_block(b):
+				return False
+			if is_water_block(b) or is_lava_block(b) or b == 78:
+				return False
+
+		# Check horizontal box clearance (0.6 x 0.6)
+		hw = 0.3
+		for cx in (int(math.floor(tx - hw)), int(math.floor(tx + hw))):
+			for cz in (int(math.floor(tz - hw)), int(math.floor(tz + hw))):
+				for cy in range(by, by + 3):
+					b = world.get_block_number((cx, cy, cz))
+					if b != 0 and not is_liquid_or_fire_block(b):
+						return False
+
+		return True
+
+	def teleport_randomly(self, world, max_h=32, max_v=16, near_pos=None):
+		"""
+		Attempts to teleport to a safe location in the environment.
+		Optionally targets an area near 'near_pos' (e.g. flanking behind the player).
+		"""
+		base_x, base_y, base_z = near_pos if near_pos else self.position
+
+		for _ in range(16):
+			rx = base_x + random.uniform(-max_h, max_h)
+			rz = base_z + random.uniform(-max_h, max_h)
+			ry_start = int(math.floor(base_y + random.uniform(-max_v / 2.0, max_v / 2.0)))
+
+			# Scan down to find solid floor
+			found_y = None
+			for y in range(min(125, ry_start + 4), max(1, ry_start - 8), -1):
+				b = world.get_block_number((int(math.floor(rx)), y - 1, int(math.floor(rz))))
+				if is_walkable_ground(b):
+					found_y = y
+					break
+
+			if found_y is not None and self.is_safe_teleport_dest(world, rx, found_y, rz):
+				self.position = [rx, float(found_y), rz]
+				self.velocity = [0.0, 0.0, 0.0]
+				self.target_dest = None
+				self.is_moving = False
+				self.teleport_cooldown = random.uniform(2.0, 4.0)
+				return True
+
+		return False
+
+	def take_damage(self, damage, attacker_pos=None, is_fall=False, world=None, *args, **kwargs):
+		"""Damaging an Enderman triggers immediate hostility and evasive teleportation."""
+		super().take_damage(damage, attacker_pos=attacker_pos, is_fall=is_fall, *args, **kwargs)
+
+		if attacker_pos:
+			self.become_angry(attacker_pos)
+
+		# Immediate evasive teleport on damage (unless killed)
+		if not self.is_dead and world:
+			self.teleport_randomly(world, max_h=16, max_v=8)
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		if self.is_dead:
+			return
+
+		if self.attack_anim_time > 0:
+			self.attack_anim_time = max(0.0, self.attack_anim_time - dt)
+
+		if self.teleport_cooldown > 0:
+			self.teleport_cooldown = max(0.0, self.teleport_cooldown - dt)
+
+		# 1. WATER REACTION: Taking water damage and immediately teleporting away
+		curr_bx = int(math.floor(self.position[0]))
+		curr_by = int(math.floor(self.position[1]))
+		curr_bz = int(math.floor(self.position[2]))
+		b_feet = world.get_block_number((curr_bx, curr_by, curr_bz))
+		b_body = world.get_block_number((curr_bx, curr_by + 1, curr_bz))
+
+		if is_water_block(b_feet) or is_water_block(b_body):
+			self.take_damage(1, world=world)
+			self.teleport_randomly(world, max_h=32, max_v=16)
+
+		# 2. EYE CONTACT AGGRO DETECTION
+		if not self.is_angry and player_pos and camera:
+			if self.check_player_stare(world, player_pos, camera):
+				self.become_angry(player_pos)
+
+		# 3. ANGER & COMBAT / PURSUIT
+		if self.is_angry:
+			self.anger_timer = max(0.0, self.anger_timer - dt)
+
+			# Distance to player
+			dist_to_player = float('inf')
+			if player_pos:
+				pdx = player_pos[0] - self.position[0]
+				pdy = player_pos[1] - self.position[1]
+				pdz = player_pos[2] - self.position[2]
+				dist_to_player = math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
+
+			is_creative = getattr(camera, 'flying', False) or (camera and getattr(camera, 'health', 1) <= 0)
+
+			# Calm down if anger timer expired, player died/in creative, or player moved far away (>36 blocks)
+			if self.anger_timer <= 0.0 or is_creative or dist_to_player > 36.0:
+				self.is_angry = False
+				self.is_screaming = False
+				self.speed = 0.30
+				self.target = None
+			else:
+				self.target = tuple(player_pos) if player_pos else None
+
+				# Stare countdown before charging
+				if self.stare_timer > 0:
+					self.stare_timer -= dt
+					self.is_moving = False
+					self.velocity[0] = 0.0
+					self.velocity[2] = 0.0
+					if player_pos:
+						dx = player_pos[0] - self.position[0]
+						dz = player_pos[2] - self.position[2]
+						self.target_yaw = math.atan2(dx, dz)
+				else:
+					# Tactical Combat Teleportation during pursuit (only when in active combat within 24m)
+					self.combat_teleport_timer -= dt
+					if self.combat_teleport_timer <= 0:
+						self.combat_teleport_timer = random.uniform(5.0, 9.0)
+						if player_pos and 3.0 < dist_to_player <= 24.0 and random.random() < 0.40 and self.teleport_cooldown <= 0:
+							# Flank behind or near player
+							px, py, pz = player_pos
+							flank_angle = camera.rotation[0] + math.pi if camera else random.uniform(0, math.tau)
+							flank_x = px + math.cos(flank_angle) * random.uniform(3.0, 6.0)
+							flank_z = pz + math.sin(flank_angle) * random.uniform(3.0, 6.0)
+							self.teleport_randomly(world, max_h=8, max_v=4, near_pos=(flank_x, py, flank_z))
+
+					# Melee pursuit & attack
+					self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
+		else:
+			# Neutral idle wander
+			self.is_screaming = False
+			self.stroll_goal.update(dt, world)
+
+		# Base mob physics, gravity, and terrain collisions
+		super(HostileEntity, self).update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
+
+	def get_loot_drops(self, is_on_fire=False):
+		pearl_count = 1 if random.random() < 0.50 else 0
+		xp = 5
+		drops = []
+		if pearl_count > 0:
+			drops.append((176, pearl_count))  # Ender Pearl (176)
+		return drops, xp
+
+
+class SilverfishEntity(HostileEntity):
+	"""
+	Minecraft Java Edition Silverfish Mob
+	- Health: 8 HP (4 hearts)
+	- Hitbox: 0.4 x 0.3
+	- Damage: 1 HP (0.5 hearts)
+	- Speed: 0.25 (wander), 0.35 (chasing)
+	- XP: 5 XP
+	- Calls nearby Silverfish and awakens Infested Blocks when damaged
+	"""
+	def __init__(self, entity_id, position):
+		super().__init__(entity_id, position, mob_type="silverfish", max_health=8, speed=0.25, width=0.4, height=0.3)
+		self.attack_damage = 1
+		self.attack_cooldown = 1.0
+		self.melee_goal = MeleeAttackGoal(self, attack_range=1.2, damage=1, cooldown=1.0)
+
+	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, *args, **kwargs):
+		res = super().take_damage(damage, attacker_pos=attacker_pos, is_fire=is_fire, is_drowning=is_drowning, is_fall=is_fall, world=world, mob_manager=mob_manager, *args, **kwargs)
+		if attacker_pos:
+			self.target = tuple(attacker_pos)
+		# Alert nearby Silverfish & Infested Blocks when damaged
+		if mob_manager and self.target:
+			for mob in mob_manager.mobs:
+				if mob.mob_type == "silverfish" and mob is not self:
+					dx = mob.position[0] - self.position[0]
+					dz = mob.position[2] - self.position[2]
+					if math.sqrt(dx * dx + dz * dz) <= 16.0:
+						mob.target = self.target
+
+		# Awaken nearby Infested Blocks (184, 185, 186, 187)
+		if world and mob_manager and random.random() < 0.35:
+			px, py, pz = int(self.position[0]), int(self.position[1]), int(self.position[2])
+			for dx in range(-3, 4):
+				for dy in range(-2, 3):
+					for dz in range(-3, 4):
+						b_pos = (px + dx, py + dy, pz + dz)
+						b_num = world.get_block_number(b_pos)
+						if b_num in (184, 185, 186, 187):
+							world.set_block(b_pos, 0)
+							spawn_pos = (b_pos[0] + 0.5, b_pos[1] + 0.1, b_pos[2] + 0.5)
+							new_sf = mob_manager.spawn_mob("silverfish", spawn_pos)
+							new_sf.target = self.target
+							break
+		return res
+
+	def update(self, dt, world, player_pos, camera=None, gui=None, arrow_manager=None, time_of_day=0.5, flying=False, *args, **kwargs):
+		super().update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
+		if not self.is_dead:
+			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
+
+	def get_loot_drops(self, is_on_fire=False):
+		return [], 5
+
 
 

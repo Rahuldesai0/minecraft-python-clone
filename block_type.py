@@ -46,5 +46,8 @@ class Block_type:
 				set_block_face(4, texture_index)
 				set_block_face(5, texture_index)
 			
-			else:
+			elif face in ["right", "left", "top", "bottom", "front", "back"]:
 				set_block_face(["right", "left", "top", "bottom", "front", "back"].index(face), texture_index)
+			else:
+				new_tc = [0.0, 1.0, float(texture_index),  0.0, 0.0, float(texture_index),  1.0, 0.0, float(texture_index),  1.0, 1.0, float(texture_index)]
+				self.tex_coords.append(new_tc)

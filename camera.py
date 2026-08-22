@@ -68,7 +68,8 @@ class Camera:
 
 	def take_damage(self, damage, flying=False, gui=None, world=None):
 		import time
-		if flying or damage <= 0 or self.health <= 0:
+		is_creative = flying or getattr(self, "flying", False) or getattr(getattr(self, "window", None), "flying", False)
+		if is_creative or damage <= 0 or self.health <= 0:
 			return
 
 		gui_ref = gui or self.gui
@@ -96,12 +97,21 @@ class Camera:
 			death_pos = list(self.position)
 			gui_ref = gui or self.gui
 			id_mgr = getattr(world, 'item_drop_manager', None)
+			window_ref = getattr(self, 'window', None)
 			if not id_mgr and gui_ref and hasattr(gui_ref, 'window'):
 				id_mgr = getattr(gui_ref.window, 'item_drop_manager', None)
+			if not window_ref and gui_ref and hasattr(gui_ref, 'window'):
+				window_ref = gui_ref.window
+
+			# 1. Drop all player items at death position in current dimension
 			if gui_ref and hasattr(gui_ref, 'drop_all_on_death'):
 				gui_ref.drop_all_on_death(death_pos, id_mgr)
 
-			self.respawn(world)
+			# 2. Respawn at Overworld (0, 0) via Window or direct respawn
+			if window_ref and hasattr(window_ref, 'respawn_player'):
+				window_ref.respawn_player()
+			else:
+				self.respawn(world)
 
 	def respawn(self, world=None):
 		self.health = self.max_health
@@ -112,6 +122,13 @@ class Camera:
 
 		spawn_y = None
 		if world:
+			# Ensure chunk (0, 0) is generated if needed
+			if hasattr(world, 'chunks') and (0, 0, 0) not in world.chunks and hasattr(world, 'generate_chunk'):
+				try:
+					world.chunks[(0, 0, 0)] = world.generate_chunk(0, 0)
+				except Exception:
+					pass
+
 			for y in range(255, 0, -1):
 				b = world.get_block_number((0, y, 0))
 				if b != 0 and b not in (9, 19, 15, 20):
@@ -121,7 +138,7 @@ class Camera:
 		if spawn_y is None:
 			spawn_y = 64
 
-		# Position player right on the ground surface with feet resting on the top of the block
+		# Position player right on the ground surface at (0, 0) in Overworld
 		eye_h = getattr(self, 'eye_offset', 1.62)
 		self.position = [0.5, spawn_y + 1.0 + eye_h, 0.5]
 		self.velocity_y = 0.0
@@ -130,6 +147,8 @@ class Camera:
 		self.fire_damage_timer = 0.0
 		self.air = self.max_air
 		self.drown_damage_timer = 0.0
+		self.portal_timer = 0.0
+		self.portal_cooldown = 4.0
 
 	def round_position(self, position):
 		return [round(coord) for coord in position]
@@ -261,6 +280,34 @@ class Camera:
 						return True
 		return False
 
+	def is_in_end_portal(self, world):
+		"""Checks if the player's bounding box intersects End Portal blocks (183)."""
+		half_width = 0.3
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		standing_height = 1.5 if getattr(self, 'sneaking', False) else 1.75
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b_num = world.get_block_number((bx, by, bz))
+					if b_num == 183:
+						return True
+		return False
+
 	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
 		import time
 		import random
@@ -360,7 +407,7 @@ class Camera:
 		self.eye_offset += (target_eye - self.eye_offset) * min(1.0, 18.0 * delta_time)
 		if self.on_ground:
 			self.position[1] += (self.eye_offset - old_eye)
-
+		self.flying = flying
 		base_speed = 4.3  # Minecraft walking speed (~4.3 m/s)
 		if self.sneaking:
 			speed = 1.3  # Sneak walking speed (~1.3 m/s)
@@ -376,13 +423,20 @@ class Camera:
 			if world.get_block_number((bx, by, bz)) == 85:
 				speed *= 0.40
 
-		# Nether Portal Timer & Cooldown Tracking
+		# Nether & End Portal Timer & Cooldown Tracking
 		self.portal_cooldown = max(0.0, self.portal_cooldown - delta_time)
 		self.is_inside_portal = self.is_in_portal(world)
+		self.is_inside_end_portal = self.is_in_end_portal(world)
 		if self.is_inside_portal:
 			self.portal_timer += delta_time
 		else:
 			self.portal_timer = 0.0
+
+		# Void Damage (Y < -10)
+		if self.position[1] < -10.0 and not flying:
+			if not hasattr(self, "_last_void_damage_time") or time.time() - self._last_void_damage_time >= 0.5:
+				self._last_void_damage_time = time.time()
+				self.take_damage(4, world=world)
 
 		movement_vector = [0.0, 0.0, 0.0]
 
@@ -490,12 +544,12 @@ class Camera:
 
 	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
 		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
-		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89):
+		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183):
 			return []
 
-		# Oak Fence (51) & Stone Wall (52) & Closed Fence Gate (75) - 1.5 blocks tall collision height for jumping
-		if block_num in (51, 52):
-			r = 0.25 if block_num == 51 else 0.3
+		# Oak Fence (51), Nether Brick Fence (91) & Stone Wall (52) - 1.5 blocks tall collision height
+		if block_num in (51, 52, 91):
+			r = 0.25 if block_num in (51, 91) else 0.3
 			return [(block_x - r, block_y - 0.5, block_z - r, block_x + r, block_y + 1.0, block_z + r)]
 
 		if block_num in (75, 76):

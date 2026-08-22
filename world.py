@@ -38,6 +38,9 @@ import models.fence_gate
 import models.fence_gate_open
 import models.portal_x
 import models.portal_z
+import models.end_portal_frame
+import models.end_portal
+import models.iron_bars
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -425,6 +428,13 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	except Exception as e:
 		print(f"[Village Error in chunk {x}, {z}]: {e}")
 
+	# 9. Stronghold Structures Generation (Underground stone brick corridors, rooms, libraries, prison, portal room)
+	try:
+		import stronghold_manager
+		stronghold_manager.stamp_stronghold_blocks_for_chunk(x, z, flat_bytes, seed=seed)
+	except Exception as e:
+		pass
+
 	return bytes(flat_bytes)
 
 
@@ -575,6 +585,41 @@ def build_nether_chunk_blocks_process(x, z, save_dir, seed=0):
 				if flat_bytes[idx] == 0 and flat_bytes[idx_below] == 84:
 					if rng.random() < 0.02:
 						flat_bytes[idx] = 78 # Fire
+
+	# 3. Stamp Connected Nether Fortress Structures (Bridges, Corridors, Spawner Platforms, Nether Wart Farms)
+	try:
+		import fortress_manager
+		fortress_manager.stamp_fortress_blocks_for_chunk(x, z, flat_bytes, seed=seed)
+	except Exception:
+		pass
+
+	# Save to disk
+	try:
+		with gzip.open(save_path, 'wb', compresslevel=1) as f:
+			f.write(bytes(flat_bytes))
+	except Exception:
+		pass
+
+	return bytes(flat_bytes)
+
+
+def build_end_chunk_blocks_process(x, z, save_dir, seed=0):
+	"""Independent worker function for ProcessPoolExecutor/ThreadPoolExecutor.
+	Generates authentic Minecraft Java Edition End terrain (Central Island, Spawn Platform, Pillars, Fountain) into a 65536-byte chunk."""
+	save_path = os.path.join(save_dir, f"{x}_{z}.chunk")
+	if os.path.exists(save_path):
+		try:
+			with gzip.open(save_path, 'rb') as f:
+				data = f.read()
+			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				return data
+		except Exception:
+			pass
+
+	flat_bytes = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
+	import end_generator
+	end_generator.end_generator.seed = seed
+	end_generator.end_generator.stamp_chunk_blocks(x, z, flat_bytes)
 
 	# Save to disk
 	try:
@@ -865,9 +910,9 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 				else:
 					# Non-Cube Custom Model Geometry using native 3D model definitions + BlockState parameters
-					rot_f = facing if b_num in (41, 42, 73, 74, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72, 75, 76) else "NORTH"
+					rot_f = facing if b_num in (41, 42, 73, 74, 92, 93, 178, 179, 181, 182, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72, 75, 76) else "NORTH"
 
-					if b_num in (38, 39, 40, 62, 63, 64):
+					if b_num in (38, 39, 40, 62, 63, 64, 95, 180):
 						# Slabs (Bottom, Top, Double)
 						sl_h = "TOP" if b_num in (62, 63, 64) else half
 						if sl_h == "DOUBLE":
@@ -877,9 +922,9 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						else:
 							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.0, 0.5), [0, 0, 0, 0, 0, 0])
 
-					elif b_num in (41, 42, 73, 74):
+					elif b_num in (41, 42, 73, 74, 92, 93, 178, 179):
 						# Stairs (Facing, Half, Shape)
-						is_top_stair = (b_num in (73, 74) or half in ("TOP", "UPPER"))
+						is_top_stair = (b_num in (73, 74, 93, 179) or half in ("TOP", "UPPER"))
 						y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
 						y_step_min, y_step_max = (-0.5, 0.0) if is_top_stair else (0.0, 0.5)
 
@@ -934,8 +979,8 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							add_custom_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 							add_custom_box((-0.375, -0.375, -0.0625), (0.375, 0.375, 0.0625), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
-					elif b_num in (51, 52, 53):
-						# Fences (51), Walls (52), Glass Panes (53)
+					elif b_num in (51, 52, 53, 91, 99):
+						# Fences (51, 91), Walls (52), Glass Panes (53), Iron Bars (99)
 						nb_n = get_nb(local_x, local_y, local_z - 1)
 						nb_s = get_nb(local_x, local_y, local_z + 1)
 						nb_w = get_nb(local_x - 1, local_y, local_z)
@@ -943,14 +988,14 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						def can_conn(nb, d_key):
 							if conns and d_key in conns: return conns[d_key]
-							if nb in (0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81):
+							if nb in (0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81, 88, 89, 94, 181, 182, 183):
 								return False
-							if b_num == 51:
-								return nb in (51, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							if b_num in (51, 91):
+								return nb in (51, 91, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 52:
-								return nb in (52, 53, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
-							elif b_num == 53:
-								# Glass panes connect to other panes (53), glass blocks (21), walls (52), fences (51), gates (75, 76), stairs, slabs, and all solid blocks!
+								return nb in (52, 53, 99, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							elif b_num in (53, 99):
+								# Glass panes and iron bars connect to other panes/bars, walls, fences, gates, stairs, slabs, and solid blocks!
 								return True
 							return False
 
@@ -961,7 +1006,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						is_straight = (c_n and c_s and not c_w and not c_e) or (c_w and c_e and not c_n and not c_s)
 
-						if b_num == 51:
+						if b_num in (51, 91):
 							add_custom_box((-0.125, -0.5, -0.125), (0.125, 0.5, 0.125), [0, 0, 0, 0, 0, 0])
 							if c_n:
 								add_custom_box((-0.08, 0.15, -0.5), (0.08, 0.35, -0.125), [0, 0, 0, 0, 0, 0])
@@ -986,7 +1031,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							if c_w: add_custom_box((-0.5, -0.5, -0.15), (-0.25 if has_post else 0.0, 0.35, 0.15), [0, 0, 0, 0, 0, 0])
 							if c_e: add_custom_box((0.25 if has_post else 0.0, -0.5, -0.15), (0.5, 0.35, 0.15), [0, 0, 0, 0, 0, 0])
 
-						elif b_num == 53:
+						elif b_num in (53, 99):
 							if not (c_n or c_s or c_w or c_e):
 								add_custom_box((-0.03125, -0.5, -0.125), (0.03125, 0.5, 0.125), [0, 0, 0, 0, 0, 0])
 								add_custom_box((-0.125, -0.5, -0.03125), (0.125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
@@ -996,6 +1041,20 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 								if c_s: add_custom_box((-0.03125, -0.5, 0.03125), (0.03125, 0.5, 0.5), [0, 0, 0, 0, 0, 0])
 								if c_w: add_custom_box((-0.5, -0.5, -0.03125), (-0.03125, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
 								if c_e: add_custom_box((0.03125, -0.5, -0.03125), (0.5, 0.5, 0.03125), [0, 0, 0, 0, 0, 0])
+
+					elif b_num in (181, 182):
+						# 1. Base End Portal Frame (Height 0.8125 blocks)
+						# Top is endframe_top (2), Bottom is end_stone (3), Sides are endframe_side (0, 1, 4, 5)
+						add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.3125, 0.5), [0, 1, 2, 3, 4, 5], rot_facing=rot_f)
+
+						# 2. Separate 3D Eye of Ender piece resting in socket for filled frame (182)
+						if b_num == 182:
+							eye_tex_idx = 6 if len(b_info['tex_coords']) > 6 else 2
+							add_custom_box((-0.25, 0.3125, -0.25), (0.25, 0.50, 0.25), [eye_tex_idx] * 6, rot_facing=rot_f)
+
+					elif b_num == 183:
+						# End Portal block is rendered exclusively by EndPortalRenderer with infinite parallax shader
+						pass
 					else:
 						for face_idx in range(len(b_info['vertex_positions'])):
 							add_face(face_idx, is_translucent)
@@ -1146,7 +1205,7 @@ class World:
 
 		self.save_folder = save_folder or "default"
 		import world_save
-		subfolder = 'chunks_nether' if self.dimension == 'nether' else 'chunks'
+		subfolder = 'chunks_nether' if self.dimension == 'nether' else ('chunks_end' if self.dimension == 'end' else 'chunks')
 		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, subfolder)
 		os.makedirs(self.save_dir, exist_ok=True)
 
@@ -1247,6 +1306,39 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_portal_x", block_face_textures={"all": "portal"}, model=models.portal_x, transparent=True, break_time=float('inf'), requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_portal_z", block_face_textures={"all": "portal"}, model=models.portal_z, transparent=True, break_time=float('inf'), requires_tool=False))
 
+		# Nether Fortress Blocks (90-95)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_brick", block_face_textures={"all": "nether_brick"}, break_time=2.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_brick_fence", block_face_textures={"all": "nether_brick"}, model=models.fence, transparent=True, break_time=2.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_brick_stairs", block_face_textures={"all": "nether_brick"}, model=models.stairs, transparent=True, break_time=2.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_brick_stairs_top", block_face_textures={"all": "nether_brick"}, model=models.stairs_top, transparent=True, break_time=2.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_wart", block_face_textures={"all": "nether_wart_stage_2"}, model=models.plant, transparent=True, break_time=0.1, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="nether_brick_slab", block_face_textures={"all": "nether_brick"}, model=models.slab, transparent=True, break_time=2.0, requires_tool=True))
+
+		# Stronghold Blocks (96-99)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick", block_face_textures={"all": "stonebrick"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="mossy_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_bars", block_face_textures={"all": "iron_trapdoor"}, model=models.iron_bars, transparent=True, break_time=5.0, requires_tool=True))
+
+		# Pad slots 100..177 with placeholder Block_types so block_id index lookups are always valid
+		while len(self.block_types) < 178:
+			curr_id = len(self.block_types)
+			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+
+		# Stone Brick Stairs & Slabs, End Portal Frames & Portal (178-187)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick_stairs", block_face_textures={"all": "stonebrick"}, model=models.stairs, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick_stairs_top", block_face_textures={"all": "stonebrick"}, model=models.stairs_top, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick_slab", block_face_textures={"all": "stonebrick"}, model=models.slab, transparent=True, break_time=1.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_portal_frame", block_face_textures={"top": "endframe_top", "bottom": "end_stone", "sides": "endframe_side"}, model=models.end_portal_frame, transparent=True, break_time=float('inf'), requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_portal_frame_filled", block_face_textures={"top": "endframe_top", "bottom": "end_stone", "sides": "endframe_side", "eye": "endframe_eye"}, model=models.end_portal_frame, transparent=True, break_time=float('inf'), requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_portal", block_face_textures={"all": "portal"}, model=models.end_portal, transparent=True, break_time=float('inf'), requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=0.75, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_mossy_stone_brick", block_face_textures={"all": "stonebrick"}, break_time=0.75, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=0.75, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="infested_stone", block_face_textures={"all": "stone"}, break_time=0.75, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_stone", block_face_textures={"all": "end_stone"}, break_time=3.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dragon_egg", block_face_textures={"all": "obsidian"}, model=models.cube, transparent=True, break_time=3.0, requires_tool=False))
+
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
@@ -1257,6 +1349,14 @@ class World:
 		self.texture_manager.add_texture("soul_sand")
 		self.texture_manager.add_texture("glowstone")
 		self.texture_manager.add_texture("quartz_ore")
+		self.texture_manager.add_texture("nether_brick")
+		self.texture_manager.add_texture("nether_wart_stage_2")
+		self.texture_manager.add_texture("stonebrick")
+		self.texture_manager.add_texture("stonebrick_cracked")
+		self.texture_manager.add_texture("endframe_top")
+		self.texture_manager.add_texture("endframe_side")
+		self.texture_manager.add_texture("endframe_eye")
+		self.texture_manager.add_texture("end_stone")
 		self.texture_manager.add_texture("sun")
 		self.texture_manager.add_texture("moon")
 		self.texture_manager.generate_mipmaps()
@@ -1481,12 +1581,14 @@ class World:
 		chunk_position = (x, 0, z)
 		if self.dimension == "nether":
 			blocks = build_nether_chunk_blocks_process(x, z, self.save_dir, self.seed)
+		elif self.dimension == "end":
+			blocks = build_end_chunk_blocks_process(x, z, self.save_dir, self.seed)
 		else:
 			blocks = build_chunk_blocks_process(
 				x, z, self.scale, self.octaves, self.persistence, self.lacunarity,
 				self.cave_scale, self.cave_threshold, self.save_dir, self.seed)
 
-		if self.dimension != "nether":
+		if self.dimension not in ("nether", "end"):
 			# Register any village chests generated in this chunk
 			try:
 				import village
@@ -1696,7 +1798,7 @@ class World:
 			nb_st = self.get_block_state(nb_pos)
 
 			# 1. Stairs shape recalculation
-			if nb_b in (41, 42, 73, 74):
+			if nb_b in (41, 42, 73, 74, 92, 93):
 				if not nb_st:
 					nb_st = block_state.BlockState(nb_b)
 				new_shape = block_state.calculate_stair_shape(self, nb_pos, nb_st.facing, nb_st.half)
@@ -1705,9 +1807,9 @@ class World:
 					self.set_block_state(nb_pos, nb_st)
 
 			# 2. Fence connection recalculation
-			elif nb_b in (51,):
+			elif nb_b in (51, 91):
 				if not nb_st:
-					nb_st = block_state.BlockState(51)
+					nb_st = block_state.BlockState(nb_b)
 				new_conn = block_state.calculate_fence_connections(self, nb_pos, nb_b)
 				if new_conn != nb_st.connections:
 					nb_st.connections = new_conn
@@ -1743,7 +1845,45 @@ class World:
 		if y < 1 or y >= chunk.CHUNK_HEIGHT:
 			return False
 		b_num = self.get_block_number(pos)
-		return b_num == 0 or b_num in (9, 19, 15, 20, 10, 12, 31, 33)
+		return b_num == 0 or b_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 183)
+
+	def check_and_activate_end_portal(self, frame_pos):
+		"""
+		Checks if the frame block at frame_pos is part of a complete 5x5 End Portal ring (12 filled frames).
+		If all 12 frames contain Eyes of Ender (block ID 182), creates the 9 3x3 central End Portal blocks (183).
+		Returns True if activated, False otherwise.
+		"""
+		fx, fy, fz = int(frame_pos[0]), int(frame_pos[1]), int(frame_pos[2])
+
+		# Potential 3x3 portal center offsets from the clicked frame block
+		for off_x in (-2, -1, 0, 1, 2):
+			for off_z in (-2, -1, 0, 1, 2):
+				cx = fx + off_x
+				cz = fz + off_z
+
+				# Verify 12 frame positions in the 5x5 square around (cx, cz)
+				frame_coords = [
+					(cx - 1, fy, cz - 2), (cx, fy, cz - 2), (cx + 1, fy, cz - 2), # North
+					(cx - 1, fy, cz + 2), (cx, fy, cz + 2), (cx + 1, fy, cz + 2), # South
+					(cx - 2, fy, cz - 1), (cx - 2, fy, cz), (cx - 2, fy, cz + 1), # West
+					(cx + 2, fy, cz - 1), (cx + 2, fy, cz), (cx + 2, fy, cz + 1), # East
+				]
+
+				# Frame that was clicked must be one of these 12
+				if (fx, fy, fz) not in frame_coords:
+					continue
+
+				# Check if all 12 positions are filled End Portal Frames (182)
+				all_filled = all(self.get_block_number(coord) == 182 for coord in frame_coords)
+				if all_filled:
+					# Create 9 End Portal blocks (183) in 3x3 center
+					for dx in (-1, 0, 1):
+						for dz in (-1, 0, 1):
+							p_pos = (cx + dx, fy, cz + dz)
+							if self.get_block_number(p_pos) != 183:
+								self.set_block(p_pos, 183)
+					return True
+		return False
 
 	def tick_gravity_blocks(self):
 		"""Simulates gravity for Sand (6) and Gravel (77) blocks."""
@@ -2422,6 +2562,11 @@ class World:
 				if self.dimension == "nether":
 					self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
 						build_nether_chunk_blocks_process,
+						chunk_pos[0], chunk_pos[2],
+						self.save_dir, self.seed)
+				elif self.dimension == "end":
+					self.chunk_generation_futures[chunk_pos] = self.process_executor.submit(
+						build_end_chunk_blocks_process,
 						chunk_pos[0], chunk_pos[2],
 						self.save_dir, self.seed)
 				else:

@@ -225,28 +225,47 @@ class ItemDropManager:
 
 			b_num = drop.block_id
 
-			if 0 < b_num < len(self.world.block_types) and self.world.block_types[b_num] is not None:
-				b_type = self.world.block_types[b_num]
-				if b_num in (43, 45, 47, 49):
-					# 2D Item Sprite Card for Doors & Trapdoors
-					tex_name = "items/door_wood" if b_num == 43 else ("items/door_iron" if b_num == 45 else ("trapdoor" if b_num == 47 else "iron_trapdoor"))
-					layer = float(self.world.texture_manager.textures.index(tex_name)) if tex_name in self.world.texture_manager.textures else 0.0
-					uv_maps = [self.flat_uv_front, self.flat_uv_back]
-					for q_i, face_verts in enumerate(self.raw_flat_sprite):
-						v_corners = []
-						for vx, vy, vz in face_verts:
-							rx = vx * cos_r - vz * sin_r + x
-							ry = vy + y_pos
-							rz = vx * sin_r + vz * cos_r + z
-							v_corners.append((rx, ry, rz))
+			# Identify whether this item drop is a 2D Flat Item Sprite Card (Tools, weapons, materials, armor, food, drops, doors)
+			# or a 3D Placed Block (Cubes, slabs, stairs, plants, fences, etc.)
+			b_type = self.world.block_types[b_num] if (0 < b_num < len(self.world.block_types)) else None
+			is_placeholder = (b_type is None) or getattr(b_type, 'name', '').startswith('item_')
+			is_tool_item = (100 <= b_num <= 177)
+			is_door_item = (b_num in (43, 45))
 
-						uv_set = uv_maps[q_i]
-						t_corners = [(uv_set[k][0], uv_set[k][1], layer) for k in range(4)]
-						for idx in (0, 1, 2, 0, 2, 3):
-							pos_data.extend(v_corners[idx])
-							tex_data.extend(t_corners[idx])
-							shd_data.append(0.9)
-				elif not getattr(b_type, 'is_cube', True):
+			if is_tool_item or is_door_item or is_placeholder:
+				# 2D Flat Item Sprite Card (Tools, weapons, armor, foods, materials, mob drops, pearls, etc.)
+				tex_name = None
+				if b_num in gui_module.BLOCK_INFO:
+					tex_name = gui_module.BLOCK_INFO[b_num][1]
+				elif b_num == 43:
+					tex_name = "items/door_wood"
+				elif b_num == 45:
+					tex_name = "items/door_iron"
+
+				if tex_name and tex_name in self.world.texture_manager.textures:
+					layer = float(self.world.texture_manager.textures.index(tex_name))
+				else:
+					layer = 0.0
+
+				uv_maps = [self.flat_uv_front, self.flat_uv_back]
+				for q_i, face_verts in enumerate(self.raw_flat_sprite):
+					v_corners = []
+					for vx, vy, vz in face_verts:
+						rx = vx * cos_r - vz * sin_r + x
+						ry = vy + y_pos
+						rz = vx * sin_r + vz * cos_r + z
+						v_corners.append((rx, ry, rz))
+
+					uv_set = uv_maps[q_i]
+					t_corners = [(uv_set[k][0], uv_set[k][1], layer) for k in range(4)]
+					for idx in (0, 1, 2, 0, 2, 3):
+						pos_data.extend(v_corners[idx])
+						tex_data.extend(t_corners[idx])
+						shd_data.append(1.0)
+
+			elif b_type is not None:
+				# 3D Block Item Drop
+				if not getattr(b_type, 'is_cube', True):
 					# Actual 3D Model Geometry for Slabs, Stairs, Fences, Walls, Panes, Fence Gates (scale 0.35)
 					scale = 0.35
 					for f_idx, face_verts in enumerate(b_type.vertex_positions):
@@ -295,35 +314,6 @@ class ItemDropManager:
 							pos_data.extend(v_corners[idx])
 							tex_data.extend(t_corners[idx])
 							shd_data.append(s_corners[idx])
-			else:
-				# 2. 2D Item Sprite Card for Tool Items
-				if b_num in gui_module.BLOCK_INFO:
-					tex_name = gui_module.BLOCK_INFO[b_num][1]
-					layer = float(self.world.texture_manager.textures.index(tex_name)) if tex_name in self.world.texture_manager.textures else 0.0
-				else:
-					layer = 0.0
-
-				uv_maps = [self.flat_uv_front, self.flat_uv_back]
-
-				for q_i, face_verts in enumerate(self.raw_flat_sprite):
-					v_corners = []
-					for vx, vy, vz in face_verts:
-						rx = vx * cos_r - vz * sin_r + x
-						ry = vy + y_pos
-						rz = vx * sin_r + vz * cos_r + z
-						v_corners.append((rx, ry, rz))
-
-					uv_set = uv_maps[q_i]
-					t_corners = [
-						(uv_set[k][0], uv_set[k][1], layer)
-						for k in range(4)
-					]
-
-					# Render 2 triangles per quad face (0, 1, 2) and (0, 2, 3)
-					for idx in (0, 1, 2, 0, 2, 3):
-						pos_data.extend(v_corners[idx])
-						tex_data.extend(t_corners[idx])
-						shd_data.append(1.0)
 
 		if pos_data:
 			shader.use()

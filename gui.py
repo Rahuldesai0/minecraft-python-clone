@@ -64,6 +64,18 @@ PALETTE_ITEMS = [
 	(85, "Soul Sand", "soul_sand"),
 	(86, "Glowstone", "glowstone"),
 	(87, "Nether Quartz Ore", "quartz_ore"),
+	(90, "Nether Brick", "nether_brick"),
+	(91, "Nether Brick Fence", "nether_brick"),
+	(92, "Nether Brick Stairs", "nether_brick"),
+	(94, "Nether Wart", "nether_wart_stage_2"),
+	(95, "Nether Brick Slab", "nether_brick"),
+	(96, "Stone Bricks", "stonebrick"),
+	(97, "Mossy Stone Bricks", "stonebrick"),
+	(98, "Cracked Stone Bricks", "stonebrick_cracked"),
+	(99, "Iron Bars", "iron_trapdoor"),
+	(178, "Stone Brick Stairs", "stonebrick"),
+	(180, "Stone Brick Slab", "stonebrick"),
+	(181, "End Portal Frame", "endframe_top"),
 	(147, "Bucket", "items/bucket_empty"),
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
@@ -143,12 +155,40 @@ TOOL_ITEMS = [
 	(169, "Gunpowder", "items/gunpowder"),
 	(170, "Nether Quartz", "items/quartz"),
 	(171, "Glowstone Dust", "items/glowstone_dust"),
+	(172, "Blaze Rod", "items/blaze_rod"),
+	(173, "Nether Wart", "items/nether_wart"),
+	(174, "Nether Brick", "items/netherbrick"),
+	(175, "Blaze Powder", "items/blaze_powder"),
+	(176, "Ender Pearl", "items/ender_pearl"),
+	(177, "Eye of Ender", "items/ender_eye"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
 BLOCK_INFO = {item[0]: (item[1], item[2]) for item in ALL_ITEMS}
 BLOCK_INFO[88] = ("Nether Portal", "portal")
 BLOCK_INFO[89] = ("Nether Portal", "portal")
+BLOCK_INFO[90] = ("Nether Brick", "nether_brick")
+BLOCK_INFO[91] = ("Nether Brick Fence", "nether_brick")
+BLOCK_INFO[92] = ("Nether Brick Stairs", "nether_brick")
+BLOCK_INFO[93] = ("Nether Brick Stairs", "nether_brick")
+BLOCK_INFO[94] = ("Nether Wart", "nether_wart_stage_2")
+BLOCK_INFO[95] = ("Nether Brick Slab", "nether_brick")
+BLOCK_INFO[96] = ("Stone Bricks", "stonebrick")
+BLOCK_INFO[97] = ("Mossy Stone Bricks", "stonebrick")
+BLOCK_INFO[98] = ("Cracked Stone Bricks", "stonebrick_cracked")
+BLOCK_INFO[99] = ("Iron Bars", "iron_trapdoor")
+BLOCK_INFO[178] = ("Stone Brick Stairs", "stonebrick")
+BLOCK_INFO[179] = ("Stone Brick Stairs", "stonebrick")
+BLOCK_INFO[180] = ("Stone Brick Slab", "stonebrick")
+BLOCK_INFO[181] = ("End Portal Frame", "endframe_top")
+BLOCK_INFO[182] = ("End Portal Frame (Filled)", "endframe_eye")
+BLOCK_INFO[183] = ("End Portal", "portal")
+BLOCK_INFO[184] = ("Infested Stone Bricks", "stonebrick")
+BLOCK_INFO[185] = ("Infested Mossy Stone Bricks", "stonebrick")
+BLOCK_INFO[186] = ("Infested Cracked Stone Bricks", "stonebrick_cracked")
+BLOCK_INFO[187] = ("Infested Stone", "stone")
+BLOCK_INFO[188] = ("End Stone", "end_stone")
+BLOCK_INFO[189] = ("Dragon Egg", "obsidian")
 
 ARMOR_SLOT_TYPES = {
 	130: 0, 134: 0, 138: 0, 142: 0,  # Helmets -> Slot 0
@@ -169,10 +209,10 @@ ARMOR_DEFENSE_POINTS = {
 }
 
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools, Armor, Bow, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets stack to 16. Arrows stack to 64."""
+	"""Returns the maximum stack size for an item ID. Tools, Armor, Bow, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets and Ender Pearls stack to 16. Others stack to 64."""
 	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151, 157):
 		return 1
-	if item_id == 147:
+	if item_id in (147, 176):
 		return 16
 	return 64
 
@@ -237,6 +277,7 @@ FOOD_VALUES = {
 SMELTING_RECIPES = {
 	17: (123, 1),   # Iron Ore -> Iron Ingot
 	35: (124, 1),   # Gold Ore -> Gold Ingot
+	84: (174, 1),   # Netherrack -> Nether Brick item
 	1:  (5, 1),     # Cobblestone -> Stone
 	8:  (121, 1),   # Oak Log -> Coal (Charcoal)
 	6:  (21, 1),    # Sand -> Glass
@@ -377,6 +418,12 @@ BLOCK_MINING_PROPERTIES = {
 	87: ("pickaxe", 1, 1.5, 170),  # Nether Quartz Ore (Drops Nether Quartz 170)
 	88: (None, 0, 0.0, None),      # Nether Portal X
 	89: (None, 0, 0.0, None),      # Nether Portal Z
+	90: ("pickaxe", 1, 2.0, 90),   # Nether Brick
+	91: ("pickaxe", 1, 2.0, 91),   # Nether Brick Fence
+	92: ("pickaxe", 1, 2.0, 92),   # Nether Brick Stairs
+	93: ("pickaxe", 1, 2.0, 92),   # Nether Brick Stairs Top -> drops Stairs 92
+	94: (None, 0, 0.1, 173),       # Nether Wart Crop -> drops Nether Wart 173
+	95: ("pickaxe", 1, 2.0, 95),   # Nether Brick Slab
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -1465,14 +1512,19 @@ class InventoryGUI:
 				if m0 == 7: self.crafting_result = [43, 3]; return   # Oak Door (43)
 				if m0 in (123, 17, 29): self.crafting_result = [45, 3]; return  # Iron Door (45)
 
-		# Recipe 16: Trapdoors (6 materials in 2x3 horizontal rectangle: [[M, M, M], [M, M, M]]) -> 2 Trapdoors
+		# Recipe 16: Trapdoors & Bars (6 materials in 2x3 horizontal rectangle: [[M, M, M], [M, M, M]])
 		if h == 2 and w == 3:
 			m0 = matrix[0][0]
 			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] == matrix[1][0] == matrix[1][1] == matrix[1][2]:
 				if m0 == 7: self.crafting_result = [47, 2]; return   # Oak Trapdoor (47)
-				if m0 in (123, 17, 29): self.crafting_result = [49, 2]; return  # Iron Trapdoor (49)
+				if m0 in (123, 17, 29): self.crafting_result = [99, 16]; return  # Iron Bars (99)
 				if m0 == 1: self.crafting_result = [52, 6]; return   # Cobblestone Wall (52)
 				if m0 == 21: self.crafting_result = [53, 16]; return # Glass Pane (53)
+
+		# Recipe: Iron Trapdoor (4 Iron Ingots in 2x2 square) -> 1 Iron Trapdoor (49)
+		if h == 2 and w == 2 and matrix in ([[123, 123], [123, 123]], [[17, 17], [17, 17]], [[29, 29], [29, 29]]):
+			self.crafting_result = [49, 1]  # Iron Trapdoor (49)
+			return
 
 		# Recipe 17: Oak Fence (4 Planks + 2 Sticks in 2x3: [[7, 100, 7], [7, 100, 7]]) -> 3 Fences
 		if h == 2 and w == 3:
@@ -1544,6 +1596,42 @@ class InventoryGUI:
 				self.crafting_result = [86, 1]  # Glowstone (86)
 				return
 
+		# Recipe 27: Blaze Powder (1 Blaze Rod 172 in any slot) -> 2 Blaze Powder (175)
+		if sorted(flat_items) == [172]:
+			self.crafting_result = [175, 2]  # 2 Blaze Powder (175)
+			return
+
+		# Recipe 28: Eye of Ender (1 Ender Pearl 176 + 1 Blaze Powder 175 in any 2-slot arrangement) -> 1 Eye of Ender (177)
+		if sorted(flat_items) == [175, 176]:
+			self.crafting_result = [177, 1]  # 1 Eye of Ender (177)
+			return
+
+		# Recipe 29: Stone Bricks (4 Stone 5 in 2x2 grid) -> 4 Stone Bricks (96)
+		if h == 2 and w == 2 and matrix == [[5, 5], [5, 5]]:
+			self.crafting_result = [96, 4]  # 4 Stone Bricks (96)
+			return
+
+		# Recipe 30: Stone Brick Stairs (6 Stone Bricks 96 in 3x3 stairs pattern) -> 4 Stone Brick Stairs (178)
+		if h == 3 and w == 3:
+			if (matrix[0][0] == 96 and matrix[0][1] == 0 and matrix[0][2] == 0 and
+				matrix[1][0] == 96 and matrix[1][1] == 96 and matrix[1][2] == 0 and
+				matrix[2][0] == 96 and matrix[2][1] == 96 and matrix[2][2] == 96) or \
+			   (matrix[0][0] == 0 and matrix[0][1] == 0 and matrix[0][2] == 96 and
+				matrix[1][0] == 0 and matrix[1][1] == 96 and matrix[1][2] == 96 and
+				matrix[2][0] == 96 and matrix[2][1] == 96 and matrix[2][2] == 96):
+				self.crafting_result = [178, 4]  # 4 Stone Brick Stairs (178)
+				return
+
+		# Recipe 31: Stone Brick Slab (3 Stone Bricks 96 in 1x3 horizontal row) -> 6 Stone Brick Slabs (180)
+		if h == 1 and w == 3 and matrix[0] == [96, 96, 96]:
+			self.crafting_result = [180, 6]  # 6 Stone Brick Slabs (180)
+			return
+
+		# Recipe 32: Iron Bars (6 Iron Ingots 123 in 2x3 grid: [[123, 123, 123], [123, 123, 123]]) -> 16 Iron Bars (99)
+		if h == 2 and w == 3 and matrix == [[123, 123, 123], [123, 123, 123]]:
+			self.crafting_result = [99, 16]  # 16 Iron Bars (99)
+			return
+
 		self.crafting_result = [0, 0]
 
 	def set_selected_slot(self, slot_idx):
@@ -1603,6 +1691,8 @@ class InventoryGUI:
 			self._draw_armor_bar()
 			self._draw_hunger_bar()
 			self._draw_bubble_bar()
+
+		self._draw_boss_bar()
 
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
@@ -1741,6 +1831,51 @@ class InventoryGUI:
 				draw_vector_bubble(bx, by, is_full=True)
 			else:
 				draw_vector_bubble(bx, by, is_full=False)
+
+	def _draw_boss_bar(self):
+		dragon = getattr(self.window, "ender_dragon", None)
+		if dragon is None and hasattr(self.window, "world"):
+			dragon = getattr(self.window.world, "ender_dragon", None)
+
+		if dragon and not getattr(dragon, "is_dead", False) and getattr(dragon, "health", 0) > 0:
+			bar_w = 360
+			bar_h = 12
+			bar_x = (self.window.width - bar_w) // 2
+			bar_y = self.window.height - 38
+
+			# 1. Boss Name Label
+			if not hasattr(self, "boss_name_label"):
+				self.boss_name_label = pyglet.text.Label(
+					"Ender Dragon",
+					font_name="Arial",
+					font_size=11,
+					x=self.window.width // 2,
+					y=bar_y + 16,
+					anchor_x="center",
+					anchor_y="bottom",
+					color=(240, 180, 255, 255)
+				)
+			else:
+				self.boss_name_label.x = self.window.width // 2
+				self.boss_name_label.y = bar_y + 16
+
+			self.boss_name_label.draw()
+
+			# 2. Outer Bar Border & Background
+			draw_bordered_box(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 1, (20, 8, 25, 235), (80, 30, 95, 255))
+
+			# 3. Magenta/Purple Health Fill
+			max_hp = getattr(dragon, "max_health", 200)
+			fill_pct = max(0.0, min(1.0, dragon.health / float(max_hp)))
+			fill_w = int(bar_w * fill_pct)
+			if fill_w > 0:
+				draw_bordered_box(bar_x, bar_y, fill_w, bar_h, 0, (185, 35, 215, 255), (0, 0, 0, 0))
+				draw_bordered_box(bar_x, bar_y + bar_h - 3, fill_w, 2, 0, (230, 120, 255, 255), (0, 0, 0, 0))
+
+			# 4. Notch Segment Dividers (10 segments)
+			for notch in range(1, 10):
+				nx = bar_x + int(bar_w * (notch / 10.0))
+				draw_bordered_box(nx, bar_y, 1, bar_h, 0, (40, 15, 50, 255), (0, 0, 0, 0))
 
 	def _draw_hotbar(self, current_hover):
 		slot_size = 44

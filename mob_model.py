@@ -798,6 +798,109 @@ class ZombieModel(BaseMobModel):
 		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
 
 
+class ZombiePigmanModel(BaseMobModel):
+	"""3D Bipedal Zombie Pigman (Zombified Piglin) Model with 64x64 texture atlas and sword arm pose."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "zombie_pigman.png"))
+		self.tex_w = 64
+		self.tex_h = 64
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 64
+		self.uv_head  = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tw, th)
+		self.uv_body  = build_cuboid_uv_atlas(16, 16, 8, 12, 4, tw, th)
+		self.uv_arm_l = build_cuboid_uv_atlas(40, 16, 4, 12, 4, tw, th, mirror=True)
+		self.uv_arm_r = build_cuboid_uv_atlas(40, 16, 4, 12, 4, tw, th)
+		self.uv_leg_l = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th, mirror=True)
+		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_angry=False, attack_anim_time=0.0, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		swing = math.sin(walk_time) * (0.80 if is_angry else 0.60) if is_moving else 0.0
+		leg_l = swing
+		leg_r = -swing
+
+		# Arm poses: neutral walk vs aggressive forward-reaching chase
+		if is_angry:
+			arm_pitch_r = -1.45 + math.sin(walk_time * 2.0) * 0.10
+			arm_pitch_l = -1.45 - math.sin(walk_time * 2.0) * 0.10
+		else:
+			arm_pitch_r = -swing * 0.7 - 0.20
+			arm_pitch_l = swing * 0.7 - 0.20
+
+		if attack_anim_time > 0.0:
+			arm_pitch_r -= 0.40
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# 1. BODY (8x12x4 px = 0.50 x 0.75 x 0.25 units, center y = 18 px = 1.125)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.125, 0.0), (0.50, 0.75, 0.25), self.uv_body,
+			local_rot=(0.0, 0.0, 0.0), local_pivot=(0.0, 1.125, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. HEAD (8x8x8 px = 0.50 x 0.50 x 0.50 units, pivot y = 24 px = 1.50)
+		head_pivot = (0.0, 1.50, 0.0)
+		head_rot = (pitch, 0.0, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, 1.75, 0.0), (0.50, 0.50, 0.50), self.uv_head,
+			local_rot=head_rot, local_pivot=head_pivot,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. ARMS (4x12x4 px = 0.25 x 0.75 x 0.25 units, pivot y = 23 px = 1.4375)
+		arm_pivot_y = 1.4375
+		arm_y_center = 1.0625
+		arm_x = 0.375
+
+		# Left Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-arm_x, arm_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_arm_l,
+			local_rot=(arm_pitch_l, 0.0, -0.05), local_pivot=(-arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(arm_x, arm_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_arm_r,
+			local_rot=(arm_pitch_r, 0.0, 0.05), local_pivot=(arm_x, arm_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. LEGS (4x12x4 px = 0.25 x 0.75 x 0.25 units, pivot y = 12 px = 0.75)
+		leg_pivot_y = 0.75
+		leg_y_center = 0.375
+		leg_x = 0.125
+
+		# Left Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-leg_x, leg_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_leg_l,
+			local_rot=(leg_l, 0.0, 0.0), local_pivot=(-leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+		# Right Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(leg_x, leg_y_center, 0.0), (0.25, 0.75, 0.25), self.uv_leg_r,
+			local_rot=(leg_r, 0.0, 0.0), local_pivot=(leg_x, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
 class SkeletonModel(BaseMobModel):
 	"""3D Bipedal Skeleton Model with thin 2x2 bone limbs and bow aiming arm pose."""
 	def __init__(self):
@@ -1115,4 +1218,270 @@ class CreeperModel(BaseMobModel):
 			shd_data = [s * 1.6 for s in shd_data]
 
 		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class BlazeModel(BaseMobModel):
+	"""3D Blaze Model with head and 12 rotating floating rods in 3 orbital tiers."""
+	def __init__(self):
+		super().__init__(os.path.join("textures", "entity", "blaze.png"))
+		self.tex_w = 64
+		self.tex_h = 32
+		self.build_uv_atlas()
+
+	def build_uv_atlas(self):
+		tw, th = 64, 32
+		self.uv_head = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tw, th)
+		self.uv_rod  = build_cuboid_uv_atlas(0, 16, 2, 8, 2, tw, th)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_charging=False, **kwargs):
+		self.ensure_initialized()
+		if not self.texture_id or not self.shader_program:
+			return
+
+		pos_data, tex_data, shd_data = [], [], []
+
+		# Gentle vertical hover bobbing
+		hover_y = math.sin(walk_time * 3.0) * 0.08
+
+		# 1. HEAD (8x8x8 px = 0.5x0.5x0.5 units at Y = 1.45)
+		head_y = 1.45 + hover_y
+		head_rot = (pitch, 0.0, 0.0)
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, head_y, 0.0), (0.50, 0.50, 0.50), self.uv_head,
+			local_rot=head_rot, local_pivot=(0.0, head_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. 12 ROTATING FLOATING RODS (2x8x2 px = 0.125x0.50x0.125 units)
+		rod_size = (0.125, 0.50, 0.125)
+		rot_speed = 3.5 if is_charging else 2.0
+
+		# Upper Tier: 4 rods (Y = 1.40, radius = 0.44)
+		tier1_y = 1.40 + hover_y
+		r1 = 0.55 if is_charging else 0.44
+		for i in range(4):
+			angle = (walk_time * rot_speed) + i * (math.pi / 2.0)
+			rx = math.cos(angle) * r1
+			rz = math.sin(angle) * r1
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(rx, tier1_y, rz), rod_size, self.uv_rod,
+				local_rot=(0.0, -angle, 0.0), local_pivot=(rx, tier1_y, rz),
+				body_pos=pos, body_yaw=yaw
+			)
+
+		# Middle Tier: 4 rods (Y = 0.90, radius = 0.52, reverse orbit)
+		tier2_y = 0.90 + hover_y
+		r2 = 0.65 if is_charging else 0.52
+		for i in range(4):
+			angle = (-walk_time * rot_speed) + i * (math.pi / 2.0) + (math.pi / 4.0)
+			rx = math.cos(angle) * r2
+			rz = math.sin(angle) * r2
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(rx, tier2_y, rz), rod_size, self.uv_rod,
+				local_rot=(0.0, -angle, 0.0), local_pivot=(rx, tier2_y, rz),
+				body_pos=pos, body_yaw=yaw
+			)
+
+		# Lower Tier: 4 rods (Y = 0.40, radius = 0.38)
+		tier3_y = 0.40 + hover_y
+		r3 = 0.48 if is_charging else 0.38
+		for i in range(4):
+			angle = (walk_time * rot_speed) + i * (math.pi / 2.0) + (math.pi / 3.0)
+			rx = math.cos(angle) * r3
+			rz = math.sin(angle) * r3
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(rx, tier3_y, rz), rod_size, self.uv_rod,
+				local_rot=(0.0, -angle, 0.0), local_pivot=(rx, tier3_y, rz),
+				body_pos=pos, body_yaw=yaw
+			)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class EndermanModel(BaseMobModel):
+	"""
+	Minecraft Java Edition Enderman 3D Model:
+	Tall slender 2.9-block biped with long limbs, openable jaw, and glowing eyes.
+	Texture atlas: textures/entity/enderman/enderman.png (64x32).
+	"""
+	def __init__(self):
+		super().__init__("textures/entity/enderman/enderman.png")
+		# Cuboid UV Atlas mappings (64x32)
+		self.uv_head = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tex_w=64, tex_h=32)
+		self.uv_jaw = build_cuboid_uv_atlas(0, 16, 8, 4, 8, tex_w=64, tex_h=32)
+		self.uv_body = build_cuboid_uv_atlas(32, 16, 8, 12, 4, tex_w=64, tex_h=32)
+		self.uv_arm = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
+		self.uv_leg = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
+
+	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, target_yaw=None, is_screaming=False, **kwargs):
+		pos_data, tex_data, shd_data = [], [], []
+		t_yaw = target_yaw if target_yaw is not None else yaw
+
+		# Leg animation
+		leg_swing = math.sin(walk_time * 1.4) * 0.7 if is_moving else 0.0
+		arm_swing = math.sin(walk_time * 1.4) * 0.7 if is_moving else 0.0
+
+		# 1. LEGS (2x30x2 px = 0.125x1.875x0.125 units)
+		leg_size = (0.125, 1.875, 0.125)
+		leg_pivot_y = 1.875
+		leg_center_y = 0.9375
+
+		# Right Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-0.125, leg_center_y, 0.0), leg_size, self.uv_leg,
+			local_rot=(-leg_swing, 0.0, 0.0), local_pivot=(-0.125, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Left Leg
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.125, leg_center_y, 0.0), leg_size, self.uv_leg,
+			local_rot=(leg_swing, 0.0, 0.0), local_pivot=(0.125, leg_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 2. TORSO / BODY (8x12x4 px = 0.50x0.75x0.25 units)
+		body_size = (0.50, 0.75, 0.25)
+		body_center_y = 2.25
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, body_center_y, 0.0), body_size, self.uv_body,
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 3. ARMS (2x30x2 px = 0.125x1.875x0.125 units)
+		arm_size = (0.125, 1.875, 0.125)
+		shoulder_y = 2.5625
+		arm_center_y = shoulder_y - 0.9375
+
+		if is_screaming:
+			# Aggro / screaming state: arms raised menacingly forward
+			r_arm_rot = (-0.6 + arm_swing * 0.4, 0.0, 0.1)
+			l_arm_rot = (-0.6 - arm_swing * 0.4, 0.0, -0.1)
+		else:
+			r_arm_rot = (arm_swing, 0.0, 0.0)
+			l_arm_rot = (-arm_swing, 0.0, 0.0)
+
+		# Right Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(-0.3125, arm_center_y, 0.0), arm_size, self.uv_arm,
+			local_rot=r_arm_rot, local_pivot=(-0.3125, shoulder_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Left Arm
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.3125, arm_center_y, 0.0), arm_size, self.uv_arm,
+			local_rot=l_arm_rot, local_pivot=(0.3125, shoulder_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# 4. HEAD & JAW (8x8x8 px = 0.50x0.50x0.50 units)
+		head_size = (0.50, 0.50, 0.50)
+		neck_pivot_y = 2.625
+		head_center_y = 2.875
+
+		yaw_diff = (t_yaw - yaw + math.pi) % math.tau - math.pi
+		shudder = math.sin(walk_time * 25.0) * 0.06 if is_screaming else 0.0
+		head_rot = (pitch + shudder, yaw_diff, 0.0)
+
+		# Main Head
+		self._add_cuboid(
+			pos_data, tex_data, shd_data,
+			(0.0, head_center_y, 0.0), head_size, self.uv_head,
+			local_rot=head_rot, local_pivot=(0.0, neck_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
+
+		# Openable Jaw (Lower Mouth) - drops down when screaming
+		if is_screaming:
+			jaw_size = (0.50, 0.25, 0.50)
+			jaw_center_y = head_center_y - 0.20
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(0.0, jaw_center_y, 0.0), jaw_size, self.uv_jaw,
+				local_rot=head_rot, local_pivot=(0.0, neck_pivot_y, 0.0),
+				body_pos=pos, body_yaw=yaw
+			)
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
+
+class SilverfishModel(BaseMobModel):
+	"""
+	Minecraft Java Edition Silverfish 3D Model & Wriggling Animation
+	- Segmented body (7 body segments)
+	- Texture atlas: 64x32
+	- Animated undulating sinusoidal crawling motion
+	"""
+	def __init__(self, texture_path="textures/entity/silverfish.png"):
+		super().__init__(texture_path)
+		# Build segment UVs (x, y, w, h, d, tex_w=64, tex_h=32)
+		self.segment_sizes = [
+			(0.1875, 0.125, 0.125),   # 0: Head (3x2x2 px)
+			(0.25, 0.1875, 0.125),    # 1: 4x3x2 px
+			(0.375, 0.25, 0.1875),    # 2: 6x4x3 px
+			(0.375, 0.25, 0.1875),    # 3: 6x4x3 px
+			(0.3125, 0.1875, 0.125),  # 4: 5x3x2 px
+			(0.25, 0.125, 0.125),     # 5: 4x2x2 px
+			(0.1875, 0.0625, 0.0625), # 6: 3x1x1 px
+		]
+		self.segment_uvs = [
+			build_cuboid_uv_atlas(0, 0, 3, 2, 2, 64, 32),
+			build_cuboid_uv_atlas(0, 4, 4, 3, 2, 64, 32),
+			build_cuboid_uv_atlas(0, 9, 6, 4, 3, 64, 32),
+			build_cuboid_uv_atlas(0, 16, 6, 4, 3, 64, 32),
+			build_cuboid_uv_atlas(0, 23, 5, 3, 2, 64, 32),
+			build_cuboid_uv_atlas(11, 0, 4, 2, 2, 64, 32),
+			build_cuboid_uv_atlas(11, 4, 3, 1, 1, 64, 32),
+		]
+
+	def draw(self, camera, pos, yaw, pitch, target_yaw=None, walk_time=0.0, hurt_time=0.0, is_moving=False):
+		pos_data = []
+		tex_data = []
+		shd_data = []
+
+		# Segment Z offsets along length (from front +Z to back -Z)
+		# Silverfish height is ~0.3 blocks above ground
+		current_z = 0.25
+		base_y = 0.12
+
+		for i, (size, uvs) in enumerate(zip(self.segment_sizes, self.segment_uvs)):
+			w, h, d = size
+			seg_z = current_z - (d * 0.5)
+			seg_y = base_y + (h * 0.5)
+
+			# Sinusoidal wriggling animation
+			anim_freq = 12.0 if is_moving else 3.0
+			anim_amp = 0.35 if is_moving else 0.10
+			seg_yaw = math.sin(walk_time * anim_freq - i * 0.7) * anim_amp
+
+			self._add_cuboid(
+				pos_data, tex_data, shd_data,
+				(0.0, seg_y, seg_z), size, uvs,
+				local_rot=(0.0, seg_yaw, 0.0), local_pivot=(0.0, seg_y, current_z),
+				body_pos=pos, body_yaw=yaw
+			)
+
+			current_z -= d
+
+		if not pos_data:
+			return
+
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+
 

@@ -77,6 +77,14 @@ BLAST_RESISTANCE = {
 	81: 0.0,           # Wheat Crops
 	82: 6.0,           # Mossy Cobblestone
 	83: 0.8,           # White Wool
+	90: 6.0, 91: 6.0, 92: 6.0, 93: 6.0, 95: 6.0, # Nether Brick blocks
+	96: 6.0, 97: 6.0, 98: 6.0, # Stone Bricks
+	99: 6.0,           # Iron Bars
+	181: 3600000.0,    # End Portal Frame (Indestructible)
+	182: 3600000.0,    # Filled End Portal Frame (Indestructible)
+	183: 3600000.0,    # End Portal (Indestructible)
+	188: 9.0,          # End Stone (Blast resistance 9.0)
+	189: 9.0,          # Dragon Egg
 }
 
 
@@ -180,7 +188,7 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 				if ray_power > 0.0:
 					if b_id == 25:  # TNT Block
 						tnt_blocks_to_prime.add((bx, by, bz))
-					elif b_id not in (14, 24, 9, 19, 15, 20):  # Exclude Bedrock, Obsidian, Liquids
+					elif b_id not in (14, 24, 181, 182, 183, 9, 19, 15, 20):  # Exclude Bedrock, Obsidian, Portals, Liquids
 						blocks_to_destroy.add((bx, by, bz))
 
 			ray_power -= step_len * 0.75  # Air decay attenuation
@@ -247,8 +255,9 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 		world.queue_chunk_sections_for_meshing(cx, cz)
 
 	# 4. Entity Exposure, Damage & Knockback
-	# (a) Player Camera
-	if camera and not getattr(camera, 'flying', False):
+	# (a) Player Camera (Immune to damage and knockback in Creative mode)
+	is_creative = getattr(camera, 'flying', False) or getattr(getattr(camera, 'window', None), 'flying', False) if camera else True
+	if camera and not is_creative:
 		px, py, pz = camera.position
 		player_box = (px - 0.35, px + 0.35, py - 1.65, py + 0.2, pz - 0.35, pz + 0.35)
 		dx = px - ex_x
@@ -268,7 +277,7 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 				norm = max(0.001, dist)
 				kb_strength = impact * power * 0.45
 				if hasattr(camera, "velocity_y"):
-					camera.velocity_y += (dy / norm) * kb_strength + 0.15
+					camera.velocity_y = max(camera.velocity_y + 0.20, (dy / norm) * kb_strength + 0.30)
 
 	# (b) Hostile & Passive Mobs
 	if mob_manager and hasattr(mob_manager, "mobs"):

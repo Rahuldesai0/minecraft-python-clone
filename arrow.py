@@ -70,7 +70,7 @@ class ArrowEntity:
 			self.pitch = math.degrees(math.atan2(vy, max(0.0001, horiz_speed)))
 			self.yaw = math.degrees(math.atan2(vx, vz))
 
-	def update(self, dt, world, mob_manager, camera, gui):
+	def update(self, dt, world, mob_manager=None, camera=None, gui=None):
 		dt_ticks = dt * 20.0
 
 		# 1. Embedded in ground behavior
@@ -162,6 +162,45 @@ class ArrowEntity:
 				hit_block_pos = (bx, by, bz)
 				min_block_dist = frac
 				break
+
+		# Check End Crystal Collision
+		crystal_mgr = getattr(world, "end_crystal_manager", None)
+		if crystal_mgr:
+			spd = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2 + self.velocity[2]**2)
+			if spd > 0.001:
+				step_dist = spd * dt
+				norm_dir = (self.velocity[0] / spd, self.velocity[1] / spd, self.velocity[2] / spd)
+				if crystal_mgr.check_attack_hit(
+					self.position, norm_dir, max_dist=step_dist * 1.5, damage=1,
+					dragon=getattr(world, "ender_dragon", None),
+					mob_manager=mob_manager or getattr(world, "mob_manager", None),
+					camera=camera, gui=gui,
+					tnt_manager=getattr(world, "tnt_manager", None),
+					item_drop_manager=getattr(world, "item_drop_manager", None)
+				):
+					self.despawn = True
+					return
+
+		# Check Ender Dragon Collision
+		dragon = getattr(world, "ender_dragon", None)
+		if dragon and not getattr(dragon, "is_dead", False):
+			spd = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2 + self.velocity[2]**2)
+			if spd > 0.001:
+				step_dist = spd * dt
+				norm_dir = (self.velocity[0] / spd, self.velocity[1] / spd, self.velocity[2] / spd)
+				hit, part = dragon.check_ray_hit(self.position, norm_dir, max_dist=step_dist * 1.5)
+				if hit:
+					if getattr(dragon, "is_arrow_immune", False):
+						# Deflect arrow while perched (bounce off without damaging)
+						self.velocity[0] = -self.velocity[0] * 0.4 + random.uniform(-2.0, 2.0)
+						self.velocity[1] = random.uniform(3.0, 6.5)
+						self.velocity[2] = -self.velocity[2] * 0.4 + random.uniform(-2.0, 2.0)
+						return
+					else:
+						dmg = int(math.ceil(spd * 2.0))
+						dragon.take_damage(dmg, part=part, attacker_pos=self.position)
+						self.despawn = True
+						return
 
 		# Resolve Closest Collision (Player vs Mob vs Block)
 		if hit_player and min_player_dist <= min_block_dist and (not hit_mob or min_player_dist <= min_mob_dist):
