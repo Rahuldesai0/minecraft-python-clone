@@ -298,7 +298,7 @@ def ray_intersect_aabb(ray_orig, ray_dir, box):
 
 def get_block_hitboxes(world, pos, block_num):
 	"""Returns list of world-space AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num at pos."""
-	if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183):
+	if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183, 81, 204, 205, 206, 207, 210):
 		return []
 
 	bx, by, bz = pos
@@ -455,6 +455,10 @@ def get_block_hitboxes(world, pos, block_num):
 				rotate_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), facing),
 				rotate_box((-0.375, -0.375, -0.0625), (0.375, 0.375, 0.0625), facing)
 			]
+
+	# 9. Enchanting Table (213) - Height 12/16 (0.75 blocks)
+	if block_num == 213:
+		return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.25, bz + 0.5)]
 
 	# Standard Full Cube
 	return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]

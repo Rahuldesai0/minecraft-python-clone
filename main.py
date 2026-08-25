@@ -32,6 +32,7 @@ import tnt_manager
 import explosion
 import ender_eye
 import ender_pearl
+import experience_bottle
 
 class Window(pyglet.window.Window):
 	def __init__(self, **args):
@@ -53,6 +54,8 @@ class Window(pyglet.window.Window):
 		self.ender_eye_manager = ender_eye.EnderEyeManager(self.world)
 		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
 		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.exp_bottle_manager = experience_bottle.ExperienceBottleManager(self.world)
+		self.world.exp_bottle_manager = self.exp_bottle_manager
 		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
@@ -169,6 +172,8 @@ class Window(pyglet.window.Window):
 		self.world.ender_eye_manager = self.ender_eye_manager
 		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
 		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.exp_bottle_manager = experience_bottle.ExperienceBottleManager(self.world)
+		self.world.exp_bottle_manager = self.exp_bottle_manager
 		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
@@ -178,6 +183,7 @@ class Window(pyglet.window.Window):
 		self.camera.rotation = [0, 0]
 		self.camera.velocity_y = 0.0
 		self.camera.health = 20
+		self.camera.reset_xp()
 		self.camera.fov_zoom = 0.0
 		self.flying = False
 		self.sprinting = False
@@ -226,6 +232,8 @@ class Window(pyglet.window.Window):
 		self.world.ender_eye_manager = self.ender_eye_manager
 		self.ender_pearl_manager = ender_pearl.EnderPearlManager(self.world)
 		self.world.ender_pearl_manager = self.ender_pearl_manager
+		self.exp_bottle_manager = experience_bottle.ExperienceBottleManager(self.world)
+		self.world.exp_bottle_manager = self.exp_bottle_manager
 		self.ender_pearl_cooldown = 0.0
 		self.bow_charging = False
 		self.bow_charge_time = 0.0
@@ -239,6 +247,8 @@ class Window(pyglet.window.Window):
 		self.camera.hunger = p_data.get('hunger', 20)
 		self.camera.saturation = p_data.get('saturation', 5.0)
 		self.camera.exhaustion = p_data.get('exhaustion', 0.0)
+		saved_xp = p_data.get('total_xp', p_data.get('xp', 0))
+		self.camera.set_xp(saved_xp)
 		self.flying = p_data.get('flying', False)
 		self.sprinting = p_data.get('sprinting', False)
 
@@ -267,7 +277,8 @@ class Window(pyglet.window.Window):
 		self.item_drop_manager.drops.clear()
 		for d in drops:
 			self.item_drop_manager.spawn_drop(
-				d['block_id'], d['count'], d['position'], velocity=d.get('velocity', [0,0,0])
+				d['block_id'], d['count'], d['position'], velocity=d.get('velocity', [0,0,0]),
+				enchantments=d.get('enchantments', {})
 			)
 
 		# Restore Chest Storage Data
@@ -352,6 +363,8 @@ class Window(pyglet.window.Window):
 				'hunger': getattr(self.camera, 'hunger', 20),
 				'saturation': getattr(self.camera, 'saturation', 5.0),
 				'exhaustion': getattr(self.camera, 'exhaustion', 0.0),
+				'total_xp': getattr(self.camera, 'total_xp', 0),
+				'level': getattr(self.camera, 'level', 0),
 				'flying': self.flying,
 				'sprinting': self.sprinting,
 				'dimension': curr_dim
@@ -371,7 +384,8 @@ class Window(pyglet.window.Window):
 					'count': d.count,
 					'position': list(d.position),
 					'velocity': list(d.velocity),
-					'age': d.age
+					'age': d.age,
+					'enchantments': getattr(d, 'enchantments', {})
 				}
 				for d in self.item_drop_manager.drops
 			]
@@ -517,6 +531,9 @@ class Window(pyglet.window.Window):
 		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
 			self.ender_pearl_manager.world = dest_world
 			dest_world.ender_pearl_manager = self.ender_pearl_manager
+		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
+			self.exp_bottle_manager.world = dest_world
+			dest_world.exp_bottle_manager = self.exp_bottle_manager
 
 		# 7. Position player inside portal opening with 4.0s cooldown
 		self.camera.position = [spawn_x, spawn_y + self.camera.eye_offset, spawn_z]
@@ -650,6 +667,9 @@ class Window(pyglet.window.Window):
 		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
 			self.ender_pearl_manager.world = dest_world
 			dest_world.ender_pearl_manager = self.ender_pearl_manager
+		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
+			self.exp_bottle_manager.world = dest_world
+			dest_world.exp_bottle_manager = self.exp_bottle_manager
 		self.update_sky_color()
 
 		self.camera.position = spawn_pos
@@ -850,7 +870,10 @@ class Window(pyglet.window.Window):
 
 						# 3. Calculate effective mining speed & break time
 						if tool_cat and tool_cat == pref_cat:
-							eff_speed = speed_mult
+							import enchanting
+							held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+							eff_mult = enchanting.get_efficiency_multiplier(held_slot)
+							eff_speed = speed_mult * eff_mult
 						else:
 							eff_speed = 1.0  # Hand or improper tool
 
@@ -878,6 +901,83 @@ class Window(pyglet.window.Window):
 								import random
 								actual_drop_id = 171
 								drop_qty = random.randint(2, 4)
+							elif b_num == 23:  # Bookshelf -> drops 3 Books (216)
+								actual_drop_id = 216
+								drop_qty = 3
+							elif b_num == 212:  # Lapis Lazuli Ore -> drops 4-9 Lapis Lazuli (214) + 2-5 XP
+								import random
+								actual_drop_id = 214
+								drop_qty = random.randint(4, 9)
+								self.item_drop_manager.spawn_xp_orb(
+									random.randint(2, 5),
+									[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+								)
+							elif b_num == 81:  # Wheat Crops
+								import random
+								st = self.world.get_block_state(target_block)
+								stage = int(st.shape) if (st and st.shape.isdigit()) else 7
+								if stage >= 7:
+									actual_drop_id = 154  # 1 Wheat item (154)
+									drop_qty = 1
+									# Also drop 1-3 Wheat Seeds (155)
+									seed_cnt = random.randint(1, 3)
+									self.item_drop_manager.spawn_drop(
+										155, seed_cnt,
+										[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+									)
+								else:
+									actual_drop_id = 155  # Immature: only 1 seed returned
+									drop_qty = 1
+							elif b_num == 204:  # Carrot Crops
+								import random
+								st = self.world.get_block_state(target_block)
+								stage = int(st.shape) if (st and st.shape.isdigit()) else 3
+								if stage >= 3:
+									actual_drop_id = 195  # Mature: 2-4 Carrots (195)
+									drop_qty = random.randint(2, 4)
+								else:
+									actual_drop_id = 195  # Immature: 1 Carrot returned
+									drop_qty = 1
+							elif b_num == 205:  # Potato Crops
+								import random
+								st = self.world.get_block_state(target_block)
+								stage = int(st.shape) if (st and st.shape.isdigit()) else 3
+								if stage >= 3:
+									actual_drop_id = 196  # Mature: 2-4 Potatoes (196)
+									drop_qty = random.randint(2, 4)
+									if random.random() < 0.02:
+										self.item_drop_manager.spawn_drop(
+											198, 1,
+											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+										)
+								else:
+									actual_drop_id = 196  # Immature: 1 Potato returned
+									drop_qty = 1
+							elif b_num == 206:  # Pumpkin Stem
+								actual_drop_id = 199  # Pumpkin Seed (199)
+								drop_qty = 1
+							elif b_num == 207:  # Melon Stem
+								actual_drop_id = 200  # Melon Seed (200)
+								drop_qty = 1
+							elif b_num == 208:  # Pumpkin Block
+								actual_drop_id = 208  # Pumpkin Block (208)
+								drop_qty = 1
+							elif b_num == 209:  # Melon Block
+								import random
+								actual_drop_id = 201  # 3-7 Melon Slices (201)
+								drop_qty = random.randint(3, 7)
+							elif b_num == 210:  # Sugar Cane
+								actual_drop_id = 202
+								drop_qty = 1
+								# Break & drop all connected sugar cane blocks above it
+								up_y = target_block[1] + 1
+								while self.world.get_block_number((target_block[0], up_y, target_block[2])) == 210:
+									self.world.set_block((target_block[0], up_y, target_block[2]), 0)
+									self.item_drop_manager.spawn_drop(
+										202, 1,
+										[target_block[0] + 0.5, up_y + 0.5, target_block[2] + 0.5]
+									)
+									up_y += 1
 							elif b_num == 14:  # Oak Leaves
 								import random
 								roll = random.random()
@@ -891,6 +991,13 @@ class Window(pyglet.window.Window):
 								actual_drop_id = None
 								if hasattr(self, "mob_manager") and self.mob_manager:
 									self.mob_manager.spawn_mob("silverfish", (target_block[0] + 0.5, target_block[1] + 0.1, target_block[2] + 0.5))
+
+							# Apply Fortune enchantment to mined drops
+							import enchanting
+							held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+							fortune_lvl = enchanting.get_fortune_level(held_slot)
+							if fortune_lvl > 0:
+								actual_drop_id, drop_qty = enchanting.apply_fortune_to_block_drop(b_num, actual_drop_id, drop_qty, fortune_lvl)
 
 							if actual_drop_id is not None:
 								self.item_drop_manager.spawn_drop(
@@ -993,7 +1100,7 @@ class Window(pyglet.window.Window):
 		if hasattr(self, "end_portal_renderer") and self.end_portal_renderer:
 			self.end_portal_renderer.update(delta_time)
 
-		self.item_drop_manager.update(delta_time, self.camera.position, self.gui)
+		self.item_drop_manager.update(delta_time, self.camera.position, self.gui, camera=self.camera)
 		if hasattr(self, "tnt_manager"):
 			self.tnt_manager.update(
 				delta_time, mob_manager=self.mob_manager, camera=self.camera,
@@ -1029,6 +1136,9 @@ class Window(pyglet.window.Window):
 		self.ender_pearl_cooldown = max(0.0, getattr(self, "ender_pearl_cooldown", 0.0) - delta_time)
 		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
 			self.ender_pearl_manager.update(delta_time, camera=self.camera, gui=self.gui, mob_manager=self.mob_manager)
+
+		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
+			self.exp_bottle_manager.update(delta_time, item_drop_manager=self.item_drop_manager, mob_manager=self.mob_manager)
 
 		self.world.update_chunks(self.camera.position)
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
@@ -1104,6 +1214,10 @@ class Window(pyglet.window.Window):
 		# Render 3D Ender Pearl projectiles & particle trails
 		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
 			self.ender_pearl_manager.draw(self.camera)
+
+		# Render 3D Experience Bottle projectiles & sparkle effects
+		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
+			self.exp_bottle_manager.draw(self.camera)
 
 		# Render 3D End Crystals & Healing Beams in End Dimension
 		if getattr(self, "dimension", "overworld") == "end" and hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
@@ -1645,8 +1759,8 @@ class Window(pyglet.window.Window):
 			return
 
 		if self.gui.inventory_open:
-			if self.gui.on_mouse_press(x, y, button, modifiers):
-				return
+			self.gui.on_mouse_press(x, y, button, modifiers)
+			return
 
 		if not self.mouse_captured:
 			self.mouse_captured = True
@@ -1656,14 +1770,20 @@ class Window(pyglet.window.Window):
 		if button == pyglet.window.mouse.LEFT:
 			self.left_mouse_down = True
 			held_id = self.gui.get_current_block_id()
+			held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
 			damage = gui.get_item_attack_damage(held_id)
+			import enchanting
+			sharpness_bonus = enchanting.get_sharpness_bonus(held_slot)
+			damage += sharpness_bonus
+			fire_duration = enchanting.get_fire_aspect_duration(held_slot)
+			looting_level = enchanting.get_looting_level(held_slot)
 
 			# Trigger 1st/3rd person player arm swing animation
 			if hasattr(self, "player_model"):
 				self.player_model.is_swinging = True
 				self.player_model.swing_time = 0.0
 
-			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage):
+			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage, fire_duration=fire_duration, looting_level=looting_level):
 				return
 
 			# Check End Crystal and Ender Dragon attack in End dimension
@@ -1785,11 +1905,18 @@ class Window(pyglet.window.Window):
 					self.gui.consume_active_item()
 					self.holding = self.gui.get_current_block_id()
 					return
+			elif held_id == 218: # Experience Bottle (Bottle o' Enchanting)
+				if not hasattr(self, "exp_bottle_manager") or not self.exp_bottle_manager:
+					self.exp_bottle_manager = experience_bottle.ExperienceBottleManager(self.world)
+				self.exp_bottle_manager.throw_bottle(self.camera.position, self.camera.rotation)
+				self.gui.consume_active_item()
+				self.holding = self.gui.get_current_block_id()
+				return
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
-		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187)
-		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76)
+		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187) or (208 <= self.holding <= 210) or (self.holding in (212, 213))
+		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76, 213)
 		DOOR_TRAPDOOR_TOGGLES = {
 			43: 44, 44: 43,  # Oak Door Bottom Closed <-> Open
 			65: 66, 66: 65,  # Oak Door Top Closed <-> Open
@@ -2046,6 +2173,154 @@ class Window(pyglet.window.Window):
 									self.world.ignite_block_face(next_block, face_idx={0, 1, 4, 5}, duration=random.uniform(8.0, 10.0))
 									return
 
+					# 3. Hoe Tilling (190 = Wood, 191 = Stone, 192 = Iron, 193 = Gold, 194 = Diamond)
+					elif self.holding in (190, 191, 192, 193, 194):
+						if target_b in (2, 3, 4):  # Grass Block, Grass, Dirt
+							above_num = self.world.get_block_number((next_block[0], next_block[1] + 1, next_block[2]))
+							if above_num == 0 or above_num in (10, 12, 31, 33):  # Air or replaceable foliage
+								self.world.set_block(next_block, 80)  # Convert to Farmland
+								self.holding = self.gui.get_current_block_id()
+								return
+						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass
+						else:
+							return
+
+					# 4. Crop & Seed Planting (155 = Wheat Seeds, 195 = Carrot, 196 = Potato, 199 = Pumpkin Seeds, 200 = Melon Seeds)
+					elif self.holding in (155, 195, 196, 199, 200):
+						if target_b == 80 and face_vector == (0, 1, 0) and self.world.get_block_number(current_block) == 0:
+							crop_id = 81 if self.holding == 155 else (204 if self.holding == 195 else (205 if self.holding == 196 else (206 if self.holding == 199 else 207)))
+							import block_state
+							st = block_state.BlockState(crop_id, shape="0")
+							self.world.set_block_state(current_block, st)
+							self.world.set_block(current_block, crop_id)
+							self.gui.consume_active_item()
+							self.holding = self.gui.get_current_block_id()
+							return
+						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass
+						else:
+							return
+
+					# 5. Sugar Cane Planting (202 = Sugar Cane item)
+					elif self.holding == 202:
+						if self.world.get_block_number(current_block) == 0 and face_vector == (0, 1, 0):
+							can_plant = False
+							if target_b == 210:
+								h_count = 1
+								check_y = next_block[1] - 1
+								while self.world.get_block_number((next_block[0], check_y, next_block[2])) == 210:
+									h_count += 1
+									check_y -= 1
+								if h_count < 3:
+									can_plant = True
+							elif target_b in (2, 4, 6):  # Grass, Dirt, Sand touching water
+								can_plant = any(
+									self.world.get_block_number((next_block[0] + dx, next_block[1], next_block[2] + dz)) in (9, 19, 13)
+									for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1))
+								)
+							if can_plant:
+								self.world.set_block(current_block, 210)
+								self.gui.consume_active_item()
+								self.holding = self.gui.get_current_block_id()
+								return
+						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass
+						else:
+							return
+
+					# 6. Bone Meal Fertilization (211 = Bone Meal)
+					elif self.holding == 211:
+						target_pos = next_block
+						cur_target_b = target_b
+						if cur_target_b == 80:  # Farmland clicked -> check crop on top
+							above_crop_pos = (next_block[0], next_block[1] + 1, next_block[2])
+							above_crop_b = self.world.get_block_number(above_crop_pos)
+							if above_crop_b in (81, 204, 205, 206, 207):
+								target_pos = above_crop_pos
+								cur_target_b = above_crop_b
+
+						# Crops & Stems (81=Wheat, 204=Carrot, 205=Potato, 206=Pumpkin Stem, 207=Melon Stem)
+						if cur_target_b in (81, 204, 205, 206, 207):
+							st = self.world.get_block_state(target_pos)
+							curr_stage = int(st.shape) if (st and st.shape.isdigit()) else 0
+							max_stage = 7 if cur_target_b in (81, 206, 207) else 3
+							if curr_stage < max_stage:
+								import random, block_state
+								# Advances 2-5 growth stages (skipping growth time)
+								new_stage = min(max_stage, curr_stage + random.randint(2, 5))
+								self.world.set_block_state(target_pos, block_state.BlockState(cur_target_b, shape=str(new_stage)))
+								self.gui.consume_active_item()
+								self.holding = self.gui.get_current_block_id()
+								return
+							elif cur_target_b in (206, 207):
+								# Mature stem -> try to instantly spawn fruit
+								import random
+								cardinals = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+								random.shuffle(cardinals)
+								fruit_spawned = False
+								for cdx, cdz in cardinals:
+									side_pos = (target_pos[0] + cdx, target_pos[1], target_pos[2] + cdz)
+									ground_pos = (target_pos[0] + cdx, target_pos[1] - 1, target_pos[2] + cdz)
+									if self.world.get_block_number(side_pos) == 0:
+										ground_b = self.world.get_block_number(ground_pos)
+										if ground_b in (2, 4, 80):
+											fruit_block = 208 if cur_target_b == 206 else 209
+											self.world.set_block(side_pos, fruit_block)
+											fruit_spawned = True
+											break
+								if fruit_spawned:
+									self.gui.consume_active_item()
+									self.holding = self.gui.get_current_block_id()
+									return
+
+						# Sugar Cane (210) -> grow +1 stalk up to 3 height
+						elif cur_target_b == 210:
+							top_y = target_pos[1]
+							while self.world.get_block_number((target_pos[0], top_y + 1, target_pos[2])) == 210:
+								top_y += 1
+							bot_y = target_pos[1]
+							while self.world.get_block_number((target_pos[0], bot_y - 1, target_pos[2])) == 210:
+								bot_y -= 1
+							total_h = (top_y - bot_y) + 1
+							if total_h < 3 and self.world.get_block_number((target_pos[0], top_y + 1, target_pos[2])) == 0:
+								self.world.set_block((target_pos[0], top_y + 1, target_pos[2]), 210)
+								self.gui.consume_active_item()
+								self.holding = self.gui.get_current_block_id()
+								return
+
+						# Oak Sapling (156) -> instantly grow tree
+						elif cur_target_b == 156:
+							sx, sy, sz = target_pos
+							self.world.set_block(target_pos, 0)
+							import random
+							trunk_h = random.randint(4, 5)
+							for th in range(trunk_h):
+								self.world.set_block((sx, sy + th, sz), 8)  # Oak Log
+							for dx in range(-2, 3):
+								for dz in range(-2, 3):
+									for dy in (trunk_h - 2, trunk_h - 1):
+										if dx in (-2, 2) and dz in (-2, 2) and random.random() < 0.5:
+											continue
+										leaf_pos = (sx + dx, sy + dy, sz + dz)
+										if self.world.get_block_number(leaf_pos) == 0:
+											self.world.set_block(leaf_pos, 14)  # Oak Leaves
+							for dx in range(-1, 2):
+								for dz in range(-1, 2):
+									if dx in (-1, 1) and dz in (-1, 1) and random.random() < 0.4:
+										continue
+									leaf_pos = (sx + dx, sy + trunk_h, sz + dz)
+									if self.world.get_block_number(leaf_pos) == 0:
+										self.world.set_block(leaf_pos, 14)  # Oak Leaves
+							self.gui.consume_active_item()
+							self.holding = self.gui.get_current_block_id()
+							return
+
+						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
+							pass
+						else:
+							return
+
 					if target_b in INTERACTIVE_BLOCKS:
 						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):
 							place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
@@ -2098,6 +2373,8 @@ class Window(pyglet.window.Window):
 
 							elif target_b in (26,):
 								self.gui.open_crafting_table()
+							elif target_b in (213,):
+								self.gui.open_enchanting_table(next_block, self.world)
 							elif target_b in (27, 54, 55, 56):
 								self.gui.open_furnace(self.world.get_furnace(next_block))
 							elif target_b in (37, 57, 58, 59):
@@ -2144,11 +2421,15 @@ class Window(pyglet.window.Window):
 				f = min(1.0, f)
 
 				if f >= 0.1:  # Min 3 ticks to fire
-					if not getattr(self, "flying", False):
-						self.gui.consume_item(158, 1)  # Consume 1 Arrow in Survival mode
+					import enchanting
+					held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+					has_inf = enchanting.has_infinity(held_slot)
+					if not getattr(self, "flying", False) and not has_inf:
+						self.gui.consume_item(158, 1)  # Consume 1 Arrow in Survival mode (unless Infinity)
 					is_crit = (f >= 1.0)
+					dmg_mult = enchanting.get_bow_power_multiplier(held_slot)
 					if hasattr(self, "arrow_manager"):
-						self.arrow_manager.shoot_arrow(self.camera, f, is_critical=is_crit)
+						self.arrow_manager.shoot_arrow(self.camera, f, is_critical=is_crit, damage_multiplier=dmg_mult)
 	
 	def on_mouse_motion(self, x, y, delta_x, delta_y):
 		self.gui.mouse_x = x
@@ -2295,16 +2576,19 @@ class Window(pyglet.window.Window):
 
 				is_ctrl = bool(modifiers & pyglet.window.key.MOD_CTRL) or self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False)
 				drop_cnt = slot[1] if is_ctrl else 1
+				ench = gui.get_slot_enchantments(slot)
 
 				drop_pos = [px + dir_x * 0.5, py - 0.3 + dir_y * 0.5, pz + dir_z * 0.5]
 				self.item_drop_manager.spawn_drop(
 					slot[0], drop_cnt,
-					drop_pos, velocity=[vx, vy, vz]
+					drop_pos, velocity=[vx, vy, vz],
+					enchantments=ench
 				)
 
 				slot[1] -= drop_cnt
 				if slot[1] <= 0:
 					slot[0] = 0
+					gui.set_slot_enchantments(slot, {})
 				self.holding = self.gui.get_current_block_id()
 			return
 

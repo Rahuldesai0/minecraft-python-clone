@@ -156,6 +156,12 @@ class EnderDragonEntity:
 			self.position[1] += dt * 1.5
 			self.pitch = min(0.6, self.pitch + dt * 0.2)
 			self.wing_flap_timer += dt * 2.0
+			if self.death_ticks >= 10.0 and not getattr(self, "xp_dropped", False):
+				self.xp_dropped = True
+				# Spawn Ender Dragon victory XP (12,000 XP in Minecraft)
+				id_mgr = getattr(end_world, 'item_drop_manager', None)
+				if id_mgr:
+					id_mgr.spawn_xp_orb(12000, self.position)
 			return
 
 		# Get dynamic surface fountain height for perch (elevated so player can stand in fountain and hit with melee weapons)

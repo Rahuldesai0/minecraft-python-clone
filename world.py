@@ -41,6 +41,7 @@ import models.portal_z
 import models.end_portal_frame
 import models.end_portal
 import models.iron_bars
+import models.enchanting_table
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -157,6 +158,8 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 					block_num = 17  # Iron Ore
 				elif 2 <= j <= 15 and rng.randrange(1000) < 3:
 					block_num = 18  # Diamond Ore
+				elif 10 <= j <= 32 and rng.randrange(1000) < 8:
+					block_num = 212  # Lapis Lazuli Ore (peaks around Y=13-17)
 				elif 15 <= j <= 65 and rng.randrange(100) < 3:
 					block_num = 77  # Gravel pocket
 				set_b(i, j, k, block_num)
@@ -1055,6 +1058,53 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					elif b_num == 183:
 						# End Portal block is rendered exclusively by EndPortalRenderer with infinite parallax shader
 						pass
+					elif b_num in (81, 204, 205, 206, 207, 210):
+						# Multi-stage crops, stems, and sugarcane
+						tex_map = block_types_info.get('textures_map', {})
+						if b_num == 81:
+							st_stage = int(shape) if shape.isdigit() else 7
+							t_name = f"wheat_stage_{min(7, max(0, st_stage))}"
+						elif b_num == 204:
+							st_stage = int(shape) if shape.isdigit() else 3
+							t_name = f"carrots_stage_{min(3, max(0, st_stage))}"
+						elif b_num == 205:
+							st_stage = int(shape) if shape.isdigit() else 3
+							t_name = f"potatoes_stage_{min(3, max(0, st_stage))}"
+						elif b_num == 206:
+							t_name = "pumpkin_stem_disconnected"
+						elif b_num == 207:
+							t_name = "melon_stem_disconnected"
+						elif b_num == 210:
+							t_name = "sugar_cane"
+						else:
+							t_name = None
+
+						t_layer = float(tex_map[t_name]) if (t_name and t_name in tex_map) else (b_info['tex_coords'][0][2] if b_info.get('tex_coords') else 0.0)
+
+						for face_idx in range(len(b_info['vertex_positions'])):
+							vp = b_info['vertex_positions'][face_idx]
+							sh = b_info['shading_values'][face_idx]
+							base_tc = b_info['tex_coords'][face_idx] if face_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
+							tc = list(base_tc)
+							for vi in range(4):
+								tc[vi * 3 + 2] = t_layer
+
+							c = trans_vert_count if is_translucent else opaque_vert_count
+							idx_arr = trans_idx if is_translucent else opaque_idx
+							idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+
+							pos_arr = trans_pos if is_translucent else opaque_pos
+							for vi in range(4):
+								pos_arr.extend((vp[vi * 3 + 0] + x, vp[vi * 3 + 1] + y, vp[vi * 3 + 2] + z))
+
+							if is_translucent:
+								trans_vert_count += 4
+								trans_tex.extend(tc)
+								trans_shd.extend(sh)
+							else:
+								opaque_vert_count += 4
+								opaque_tex.extend(tc)
+								opaque_shd.extend(sh)
 					else:
 						for face_idx in range(len(b_info['vertex_positions'])):
 							add_face(face_idx, is_translucent)
@@ -1125,6 +1175,7 @@ class FurnaceData:
 		self.burn_time_remaining = 0.0
 		self.max_burn_time = 0.0
 		self.smelt_progress = 0.0
+		self.accumulated_xp = 0.0
 
 	def tick(self, dt):
 		import gui
@@ -1170,6 +1221,10 @@ class FurnaceData:
 						self.output_slot[1] = result_cnt
 					elif self.output_slot[0] == result_id:
 						self.output_slot[1] += result_cnt
+
+					# Accumulate smelting experience
+					xp_per_item = getattr(gui, 'SMELTING_XP', {}).get(result_id, 0.35)
+					self.accumulated_xp += xp_per_item * result_cnt
 
 					self.input_slot[1] -= 1
 					if self.input_slot[1] <= 0:
@@ -1339,9 +1394,51 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="end_stone", block_face_textures={"all": "end_stone"}, break_time=3.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="dragon_egg", block_face_textures={"all": "obsidian"}, model=models.cube, transparent=True, break_time=3.0, requires_tool=False))
 
+		# Pad slots up to 204 with placeholder Block_types
+		while len(self.block_types) < 204:
+			curr_id = len(self.block_types)
+			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+
+		# Farming Blocks (204-210)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="carrot_crops", block_face_textures={"all": "carrots_stage_3"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="potato_crops", block_face_textures={"all": "potatoes_stage_3"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="pumpkin_stem", block_face_textures={"all": "pumpkin_stem_disconnected"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="melon_stem", block_face_textures={"all": "melon_stem_disconnected"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="pumpkin", block_face_textures={"top": "pumpkin_top", "bottom": "pumpkin_top", "sides": "pumpkin_side"}, break_time=1.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="melon", block_face_textures={"top": "melon_top", "bottom": "melon_top", "sides": "melon_side"}, break_time=1.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="sugar_cane", block_face_textures={"all": "sugar_cane"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+
+		# Pad slot 211 with placeholder
+		while len(self.block_types) < 212:
+			curr_id = len(self.block_types)
+			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+
+		# Lapis Lazuli Ore (212) and Enchanting Table (213)
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="lapis_ore", block_face_textures={"all": "lapis_ore"}, break_time=3.0, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="enchanting_table", block_face_textures={"top": "enchanting_table_top", "bottom": "obsidian", "sides": "enchanting_table_side"}, model=models.enchanting_table, transparent=True, break_time=5.0, requires_tool=True))
+
+		# Pad slots up to 219 for items (214: Lapis, 215: Paper, 216: Book, 217: Enchanted Book, 218: Bottle o' Enchanting)
+		while len(self.block_types) < 219:
+			curr_id = len(self.block_types)
+			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
+
+		for stage in range(8):
+			self.texture_manager.add_texture(f"wheat_stage_{stage}")
+		for stage in range(4):
+			self.texture_manager.add_texture(f"carrots_stage_{stage}")
+			self.texture_manager.add_texture(f"potatoes_stage_{stage}")
+		self.texture_manager.add_texture("pumpkin_stem_disconnected")
+		self.texture_manager.add_texture("melon_stem_disconnected")
+		self.texture_manager.add_texture("pumpkin_top")
+		self.texture_manager.add_texture("pumpkin_side")
+		self.texture_manager.add_texture("melon_top")
+		self.texture_manager.add_texture("melon_side")
+		self.texture_manager.add_texture("sugar_cane")
+		self.texture_manager.add_texture("soil")
 
 		self.texture_manager.add_texture("fire")
 		self.texture_manager.add_texture("portal")
@@ -1361,6 +1458,12 @@ class World:
 		self.texture_manager.add_texture("end_stone")
 		self.texture_manager.add_texture("sun")
 		self.texture_manager.add_texture("moon")
+		self.texture_manager.add_texture("experience_orb")
+		for frame in range(4):
+			self.texture_manager.add_texture(f"experience_orb_{frame}")
+		self.texture_manager.add_texture("lapis_ore")
+		self.texture_manager.add_texture("enchanting_table_top")
+		self.texture_manager.add_texture("enchanting_table_side")
 		self.texture_manager.generate_mipmaps()
 
 		self.chunks = {}
@@ -1399,6 +1502,10 @@ class World:
 		self.gravity_tick_timer = 0.0
 		self.active_fires = {}      # (x, y, z) -> remaining_seconds (for standalone Fire block ID 78)
 		self.burning_blocks = {}    # (x, y, z) -> {'timer': remaining_seconds, 'faces': set([face_idx])} (for masked side face fire)
+		self.farm_tick_timer = 0.0
+		self.farmlands = set()
+		self.crops = set()
+		self.sugar_canes = set()
 		self._block_info_cache = None
 
 	def schedule_mesh_update(self, position):
@@ -1530,6 +1637,118 @@ class World:
 		for furnace in list(self.furnaces.values()):
 			furnace.tick(dt)
 
+		self.tick_farming(dt)
+
+	def tick_farming(self, dt):
+		self.farm_tick_timer += dt
+		if self.farm_tick_timer < 1.0:
+			return
+		self.farm_tick_timer = 0.0
+
+		import random
+
+		# 1. Farmland Hydration & Decay
+		for pos in list(self.farmlands):
+			if self.get_block_number(pos) != 80:
+				self.farmlands.discard(pos)
+				continue
+
+			px, py, pz = pos
+			hydrated = False
+			for dx in range(-4, 5):
+				for dz in range(-4, 5):
+					for dy in (-1, 0, 1):
+						nb = self.get_block_number((px + dx, py + dy, pz + dz))
+						if nb in (9, 19, 13):
+							hydrated = True
+							break
+					if hydrated:
+						break
+				if hydrated:
+					break
+
+			if not hydrated:
+				above_b = self.get_block_number((px, py + 1, pz))
+				if above_b not in (81, 204, 205, 206, 207):
+					if random.random() < 0.00075:
+						self.set_block(pos, 4)  # Dry out to Dirt
+						self.farmlands.discard(pos)
+
+		# 2. Crop & Stem Growth (0.005x growth rate: 0.125% chance per second per crop)
+		for pos in list(self.crops):
+			b_num = self.get_block_number(pos)
+			if b_num not in (81, 204, 205, 206, 207):
+				self.crops.discard(pos)
+				continue
+
+			px, py, pz = pos
+			below_b = self.get_block_number((px, py - 1, pz))
+			if below_b != 80:
+				self.set_block(pos, 0)
+				self.crops.discard(pos)
+				if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+					drop_id = 155 if b_num == 81 else (195 if b_num == 204 else (196 if b_num == 205 else (199 if b_num == 206 else 200)))
+					self.item_drop_manager.spawn_drop(drop_id, 1, [px + 0.5, py + 0.2, pz + 0.5])
+				continue
+
+			st = self.get_block_state(pos)
+			curr_stage = int(st.shape) if (st and st.shape.isdigit()) else 0
+			max_stage = 7 if b_num in (81, 206, 207) else 3
+
+			if random.random() < 0.00125:
+				if curr_stage < max_stage:
+					new_stage = curr_stage + 1
+					import block_state
+					new_st = block_state.BlockState(b_num, shape=str(new_stage))
+					self.set_block_state(pos, new_st)
+				elif b_num in (206, 207):
+					cardinals = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+					random.shuffle(cardinals)
+					for cdx, cdz in cardinals:
+						side_pos = (px + cdx, py, pz + cdz)
+						ground_pos = (px + cdx, py - 1, pz + cdz)
+						if self.get_block_number(side_pos) == 0:
+							ground_b = self.get_block_number(ground_pos)
+							if ground_b in (2, 4, 80):
+								fruit_block = 208 if b_num == 206 else 209
+								self.set_block(side_pos, fruit_block)
+								break
+
+		# 3. Sugar Cane Growth (0.005x growth rate: 0.100% chance per second)
+		for pos in list(self.sugar_canes):
+			if self.get_block_number(pos) != 210:
+				self.sugar_canes.discard(pos)
+				continue
+
+			px, py, pz = pos
+			below_b = self.get_block_number((px, py - 1, pz))
+			is_valid = False
+			if below_b == 210:
+				is_valid = True
+			elif below_b in (2, 4, 6):
+				for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+					if self.get_block_number((px + dx, py - 1, pz + dz)) in (9, 19, 13):
+						is_valid = True
+						break
+
+			if not is_valid:
+				self.set_block(pos, 0)
+				self.sugar_canes.discard(pos)
+				if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+					self.item_drop_manager.spawn_drop(202, 1, [px + 0.5, py + 0.2, pz + 0.5])
+				continue
+
+			h_count = 1
+			check_y = py - 1
+			while self.get_block_number((px, check_y, pz)) == 210:
+				h_count += 1
+				check_y -= 1
+
+			if h_count < 3 and random.random() < 0.00100:
+				above_pos = (px, py + 1, pz)
+				if self.get_block_number(above_pos) == 0:
+					self.set_block(above_pos, 210)
+
 	def get_block_types_info(self):
 		if self._block_info_cache is None:
 			info = {}
@@ -1545,6 +1764,7 @@ class World:
 					'tex_coords': b.tex_coords,
 					'shading_values': b.shading_values,
 				}
+			info['textures_map'] = {name: idx for idx, name in enumerate(self.texture_manager.textures)}
 			self._block_info_cache = info
 		return self._block_info_cache
 
@@ -1776,6 +1996,8 @@ class World:
 		lz = int(z % chunk.CHUNK_LENGTH)
 
 		chk.set_block_state(lx, ly, lz, state)
+		if state and state.block_id in (81, 204, 205, 206, 207):
+			self.crops.add(tuple(position))
 		self.dirty_chunks.add(c_pos)
 
 		sy = ly // 16
@@ -2408,6 +2630,21 @@ class World:
 								[x + 0.5, y + 0.5, z + 0.5]
 							)
 				del self.chests[p_key]
+
+		if number == 80:
+			self.farmlands.add(tuple(position))
+		else:
+			self.farmlands.discard(tuple(position))
+
+		if number in (81, 204, 205, 206, 207):
+			self.crops.add(tuple(position))
+		else:
+			self.crops.discard(tuple(position))
+
+		if number == 210:
+			self.sugar_canes.add(tuple(position))
+		else:
+			self.sugar_canes.discard(tuple(position))
 
 		px, py, pz = position
 		chk.set_block_number(lx, ly, lz, number)

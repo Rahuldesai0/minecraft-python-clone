@@ -84,6 +84,29 @@ ITEM_STRING = 159
 ITEM_FEATHER = 160
 ITEM_GOLDEN_APPLE = 161
 ITEM_OBSIDIAN = 24
+ITEM_WOOD_HOE = 190
+ITEM_STONE_HOE = 191
+ITEM_IRON_HOE = 192
+ITEM_CARROT = 195
+ITEM_POTATO = 196
+ITEM_BAKED_POTATO = 197
+ITEM_PUMPKIN_SEEDS = 199
+ITEM_MELON_SEEDS = 200
+ITEM_MELON_SLICE = 201
+ITEM_SUGAR_CANE = 202
+ITEM_LAPIS_LAZULI = 214
+ITEM_PAPER = 215
+ITEM_BOOK = 216
+ITEM_ENCHANTED_BOOK = 217
+ITEM_EXPERIENCE_BOTTLE = 218
+
+BLOCK_CARROT_CROPS = 204
+BLOCK_POTATO_CROPS = 205
+BLOCK_PUMPKIN = 208
+BLOCK_MELON = 209
+BLOCK_SUGAR_CANE = 210
+BLOCK_LAPIS_ORE = 212
+BLOCK_ENCHANTING_TABLE = 213
 
 REGION_SIZE_CHUNKS = 18  # 18 chunks = 288 blocks per village region
 
@@ -200,6 +223,7 @@ def generate_blacksmith_loot(rng):
 		(ITEM_IRON_INGOT, 1, 5, 55),
 		(ITEM_GOLD_INGOT, 1, 3, 25),
 		(ITEM_DIAMOND, 1, 2, 10),
+		(ITEM_LAPIS_LAZULI, 2, 6, 35),
 		(ITEM_BREAD, 2, 5, 65),
 		(ITEM_APPLE, 1, 3, 50),
 		(ITEM_GOLDEN_APPLE, 1, 2, 15),
@@ -225,6 +249,11 @@ def generate_cottage_loot(rng):
 		(ITEM_APPLE, 1, 4, 55),
 		(ITEM_WHEAT, 2, 6, 60),
 		(ITEM_SEEDS, 2, 5, 50),
+		(ITEM_CARROT, 1, 4, 45),
+		(ITEM_POTATO, 1, 4, 45),
+		(ITEM_PUMPKIN_SEEDS, 1, 3, 35),
+		(ITEM_MELON_SEEDS, 1, 3, 35),
+		(ITEM_SUGAR_CANE, 1, 4, 40),
 		(ITEM_RAW_PORKCHOP, 1, 3, 40),
 		(ITEM_RAW_BEEF, 1, 3, 40),
 		(ITEM_STICK, 2, 6, 65),
@@ -268,7 +297,11 @@ def generate_butcher_loot(rng):
 def generate_library_loot(rng):
 	slots = [[0, 0] for _ in range(27)]
 	possible_loot = [
-		(BLOCK_BOOKSHELF, 1, 2, 50),
+		(BLOCK_BOOKSHELF, 1, 3, 55),
+		(ITEM_BOOK, 1, 4, 60),
+		(ITEM_PAPER, 2, 6, 60),
+		(ITEM_LAPIS_LAZULI, 2, 5, 40),
+		(ITEM_EXPERIENCE_BOTTLE, 1, 4, 30),
 		(ITEM_BREAD, 2, 4, 60),
 		(ITEM_APPLE, 2, 4, 55),
 		(ITEM_STICK, 3, 7, 60),
@@ -276,10 +309,10 @@ def generate_library_loot(rng):
 		(ITEM_LEATHER, 2, 4, 50),
 		(ITEM_IRON_INGOT, 1, 3, 35),
 		(ITEM_GOLD_INGOT, 1, 2, 20),
-		(ITEM_DIAMOND, 1, 1, 8),
+		(ITEM_DIAMOND, 1, 1, 10),
 		(ITEM_WHEAT, 2, 5, 40),
 	]
-	_fill_chest_slots(slots, possible_loot, rng, 3, 6)
+	_fill_chest_slots(slots, possible_loot, rng, 4, 7)
 	return slots
 
 
@@ -289,13 +322,21 @@ def generate_farm_loot(rng):
 		(ITEM_BREAD, 2, 6, 75),
 		(ITEM_WHEAT, 4, 10, 80),
 		(ITEM_SEEDS, 3, 8, 75),
+		(ITEM_CARROT, 2, 6, 70),
+		(ITEM_POTATO, 2, 6, 70),
+		(ITEM_PUMPKIN_SEEDS, 1, 4, 60),
+		(ITEM_MELON_SEEDS, 1, 4, 60),
+		(ITEM_MELON_SLICE, 2, 5, 55),
+		(ITEM_SUGAR_CANE, 2, 6, 65),
 		(ITEM_APPLE, 2, 4, 50),
 		(ITEM_OAK_SAPLING, 2, 5, 45),
 		(ITEM_STICK, 2, 6, 50),
+		(ITEM_WOOD_HOE, 1, 1, 35),
+		(ITEM_STONE_HOE, 1, 1, 25),
 		(ITEM_WOOD_SHOVEL, 1, 1, 25),
 		(ITEM_STONE_SHOVEL, 1, 1, 20),
 	]
-	_fill_chest_slots(slots, possible_loot, rng, 3, 6)
+	_fill_chest_slots(slots, possible_loot, rng, 4, 8)
 	return slots
 
 
@@ -607,7 +648,9 @@ def build_crop_farm(origin_x, origin_z, base_y, rotation, seed, rng):
 				struct.set_local_block(x, -1, z, BLOCK_DIRT, w, l)
 			else:
 				struct.set_local_block(x, 0, z, BLOCK_FARMLAND, w, l)
-				struct.set_local_block(x, 1, z, BLOCK_CROPS, w, l)
+				# Diversify crops: Wheat (81), Carrots (204), Potatoes (205)
+				crop_choice = BLOCK_CROPS if x in (1, 2) else rng.choice([BLOCK_CARROT_CROPS, BLOCK_POTATO_CROPS, BLOCK_CROPS])
+				struct.set_local_block(x, 1, z, crop_choice, w, l)
 
 	# 3. Farm shed storage chest
 	struct.set_local_chest(1, 1, 0, generate_farm_loot(rng), w, l)

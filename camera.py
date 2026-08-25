@@ -4,13 +4,13 @@ import matrix
 import block_state
 
 class Camera:
-	def __init__(self, shader, width, height):
+	def __init__(self, shader=None, width=854, height=480):
 		self.width = width
 		self.height = height
 		self.mv_matrix = matrix.Matrix()
 		self.p_matrix = matrix.Matrix()
 		self.shader = shader
-		self.shader_matrix_location = self.shader.find_uniform(b"matrix")
+		self.shader_matrix_location = self.shader.find_uniform(b"matrix") if (self.shader and hasattr(self.shader, "find_uniform")) else -1
 		self.input = [0, 0, 0]
 		self.position = [0, 81.5, 0]
 		self.rotation = [-math.tau / 4, 0]
@@ -40,6 +40,12 @@ class Camera:
 		self.max_air = 10.0
 		self.drown_damage_timer = 0.0
 
+		# Survival Mode Experience (XP) & Leveling Tracking
+		self.total_xp = 0
+		self.level = 0
+		self.xp_progress = 0
+		self.xp_needed = 7
+
 		self.fov_zoom = 0.0
 		self.absorption = 0.0
 		self.gui = None
@@ -48,6 +54,63 @@ class Camera:
 		self.portal_timer = 0.0
 		self.portal_cooldown = 0.0
 		self.is_inside_portal = False
+
+	@staticmethod
+	def xp_for_level(level):
+		"""Returns the amount of XP points required to advance from level to level + 1."""
+		if level <= 15:
+			return 2 * level + 7
+		elif level <= 30:
+			return 5 * level - 38
+		else:
+			return 9 * level - 158
+
+	def add_xp(self, amount):
+		"""Adds XP points and updates level & progress towards next level."""
+		if amount <= 0:
+			return
+		self.total_xp = max(0, self.total_xp + int(amount))
+		self._recompute_level()
+
+	def set_xp(self, total_xp):
+		"""Sets total XP directly and recalculates level & progress."""
+		self.total_xp = max(0, int(total_xp))
+		self._recompute_level()
+
+	def reset_xp(self):
+		"""Resets all XP points and level back to 0."""
+		self.total_xp = 0
+		self.level = 0
+		self.xp_progress = 0
+		self.xp_needed = 7
+
+	def deduct_levels(self, num_levels):
+		"""Deducts num_levels XP levels (e.g. spent on enchanting table) and adjusts total_xp accordingly."""
+		if num_levels <= 0:
+			return
+		target_level = max(0, self.level - int(num_levels))
+		tot = 0
+		for l in range(target_level):
+			tot += Camera.xp_for_level(l)
+		new_needed = Camera.xp_for_level(target_level)
+		if self.xp_needed > 0:
+			frac = min(1.0, self.xp_progress / float(self.xp_needed))
+			tot += int(frac * new_needed)
+		self.set_xp(tot)
+
+	def _recompute_level(self):
+		"""Computes current level, remaining xp_progress, and xp_needed from total_xp."""
+		rem = self.total_xp
+		lvl = 0
+		while True:
+			needed = Camera.xp_for_level(lvl)
+			if rem < needed:
+				self.level = lvl
+				self.xp_progress = rem
+				self.xp_needed = needed
+				break
+			rem -= needed
+			lvl += 1
 
 	def eat_food(self, hunger_points, saturation_points, absorption_points=0.0):
 		"""Restores hunger and saturation (saturation is capped at current hunger level) and grants absorption hearts."""
@@ -78,6 +141,12 @@ class Camera:
 			if defense > 0:
 				reduction = min(0.80, defense * 0.04)
 				damage = max(1.0, damage * (1.0 - reduction))
+
+		# Protection enchantment reduction (stacking up to 80% damage reduction)
+		if gui_ref and hasattr(gui_ref, "get_total_protection_reduction"):
+			prot_reduction = gui_ref.get_total_protection_reduction()
+			if prot_reduction > 0:
+				damage = max(1.0, damage * (1.0 - prot_reduction))
 		
 		# Absorption hearts absorb damage first
 		if getattr(self, "absorption", 0.0) > 0:
@@ -532,6 +601,17 @@ class Camera:
 				else:
 					# Hit a ceiling or floor
 					if dy < 0:
+						if getattr(self, "fall_distance", 0.0) > 0.65 and world:
+							foot_pos = (math.floor(self.position[0]), math.floor(self.position[1] - 0.1), math.floor(self.position[2]))
+							if world.get_block_number(foot_pos) == 80:
+								world.set_block(foot_pos, 4)  # Trample Farmland to Dirt
+								crop_pos = (foot_pos[0], foot_pos[1] + 1, foot_pos[2])
+								crop_b = world.get_block_number(crop_pos)
+								if crop_b in (81, 204, 205, 206, 207):
+									world.set_block(crop_pos, 0)
+									if hasattr(world, "item_drop_manager") and world.item_drop_manager:
+										drop_id = 155 if crop_b == 81 else (195 if crop_b == 204 else (196 if crop_b == 205 else (199 if crop_b == 206 else 200)))
+										world.item_drop_manager.spawn_drop(drop_id, 1, [crop_pos[0] + 0.5, crop_pos[1] + 0.2, crop_pos[2] + 0.5])
 						self.velocity_y = 0.0
 						self.on_ground = True
 					elif dy > 0:
@@ -544,7 +624,7 @@ class Camera:
 
 	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
 		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
-		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183):
+		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183, 81, 204, 205, 206, 207, 210):
 			return []
 
 		# Oak Fence (51), Nether Brick Fence (91) & Stone Wall (52) - 1.5 blocks tall collision height

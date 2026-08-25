@@ -23,6 +23,7 @@ __all__ = [
 	"snow",
 	"cactus",
 	"tinted_glass",
+	"enchanting_table",
 	"pig",
 	"zombie",
 	"skeleton",

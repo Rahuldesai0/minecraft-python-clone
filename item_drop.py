@@ -7,10 +7,11 @@ import pyglet.gl as gl
 import gui as gui_module
 
 class DroppedItem:
-	def __init__(self, block_id, count, position, velocity=None):
+	def __init__(self, block_id, count, position, velocity=None, enchantments=None):
 		self.block_id = block_id
 		self.count = count
 		self.position = list(position)
+		self.enchantments = dict(enchantments) if enchantments else {}
 		if velocity:
 			self.velocity = list(velocity)
 		else:
@@ -91,10 +92,90 @@ class DroppedItem:
 			self.position[1] += (dy / dist) * speed * dt
 			self.position[2] += (dz / dist) * speed * dt
 
+class XPOrb:
+	def __init__(self, xp_value, position, velocity=None):
+		self.xp_value = max(1, int(xp_value))
+		self.position = list(position)
+		if velocity:
+			self.velocity = list(velocity)
+		else:
+			self.velocity = [random.uniform(-1.0, 1.0), random.uniform(2.0, 3.8), random.uniform(-1.0, 1.0)]
+		self.age = 0.0
+		self.rotation = random.uniform(0, 360)
+		self.grounded = False
+		self.pickup_delay = 0.3  # Quick pickup delay
+		self.destroyed = False
+
+	def is_in_lava_or_fire(self, world):
+		ix, iy, iz = self.position
+		min_bx = int(math.floor(ix - 0.2 + 0.5))
+		max_bx = int(math.floor(ix + 0.2 + 0.5))
+		min_by = int(math.floor(iy - 0.2 + 0.5))
+		max_by = int(math.floor(iy + 0.2 + 0.5))
+		min_bz = int(math.floor(iz - 0.2 + 0.5))
+		max_bz = int(math.floor(iz + 0.2 + 0.5))
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					b = world.get_block_number((bx, by, bz))
+					if b in (15, 20, 78) or (bx, by, bz) in getattr(world, 'active_fires', {}):
+						return True
+		return False
+
+	def update(self, dt, world, player_pos):
+		self.age += dt
+		if self.pickup_delay > 0:
+			self.pickup_delay -= dt
+
+		if self.is_in_lava_or_fire(world):
+			self.destroyed = True
+			return
+
+		self.rotation = (self.rotation + 240.0 * dt) % 360.0
+
+		# Gravity & Ground Collision
+		if not self.grounded:
+			self.velocity[1] -= 14.0 * dt
+			nx = self.position[0] + self.velocity[0] * dt
+			ny = self.position[1] + self.velocity[1] * dt
+			nz = self.position[2] + self.velocity[2] * dt
+
+			bx = int(round(nx))
+			by = int(math.floor(ny - 0.1))
+			bz = int(round(nz))
+
+			b_num = world.get_block_number((bx, by, bz))
+			if b_num in (15, 20, 78) or (bx, by, bz) in getattr(world, 'active_fires', {}):
+				self.destroyed = True
+				return
+			elif b_num != 0:
+				self.velocity = [0.0, 0.0, 0.0]
+				self.grounded = True
+				self.position[1] = by + 1.15
+			else:
+				self.position[0] = nx
+				self.position[1] = ny
+				self.position[2] = nz
+
+		# Strong magnet attraction to player within 6.0 blocks
+		px, py, pz = player_pos
+		dx = px - self.position[0]
+		dy = (py - 0.6) - self.position[1]
+		dz = pz - self.position[2]
+		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+		if self.pickup_delay <= 0 and dist < 6.0:
+			speed = 8.5 * (1.0 - dist / 6.0) + 3.5
+			self.position[0] += (dx / max(0.01, dist)) * speed * dt
+			self.position[1] += (dy / max(0.01, dist)) * speed * dt
+			self.position[2] += (dz / max(0.01, dist)) * speed * dt
+
+
 class ItemDropManager:
 	def __init__(self, world):
 		self.world = world
 		self.drops = []
+		self.xp_orbs = []
 
 		# 3D Mini-cube template for Block Drops (scale 0.18)
 		s = 0.18
@@ -111,6 +192,17 @@ class ItemDropManager:
 			[( s, -s,  s), ( s, -s, -s), ( s,  s, -s), ( s,  s,  s)],
 			# Left (x = -s)
 			[(-s, -s, -s), (-s, -s,  s), (-s,  s,  s), (-s,  s, -s)],
+		]
+
+		# Cross-Sprite template for XP Orbs (circular green and yellow orbs)
+		sx = 0.16
+		self.raw_xp_cross = [
+			# Quad 1: Front and Back (facing Z)
+			[(-sx, -sx, 0.0), ( sx, -sx, 0.0), ( sx,  sx, 0.0), (-sx,  sx, 0.0)],
+			[( sx, -sx, 0.0), (-sx, -sx, 0.0), (-sx,  sx, 0.0), ( sx,  sx, 0.0)],
+			# Quad 2: Front and Back (facing X)
+			[(0.0, -sx, -sx), (0.0, -sx,  sx), (0.0,  sx,  sx), (0.0,  sx, -sx)],
+			[(0.0, -sx,  sx), (0.0, -sx, -sx), (0.0,  sx, -sx), (0.0,  sx,  sx)],
 		]
 
 		self.cube_shading = [
@@ -140,17 +232,35 @@ class ItemDropManager:
 		self.vbo_tex = None
 		self.vbo_shd = None
 
-	def spawn_drop(self, block_id, count, position, velocity=None):
+	def spawn_drop(self, block_id, count, position, velocity=None, enchantments=None):
 		if block_id == 0 or count <= 0:
 			return
-		drop = DroppedItem(block_id, count, position, velocity)
+		drop = DroppedItem(block_id, count, position, velocity, enchantments=enchantments)
 		if drop.is_in_lava_or_fire(self.world):
 			return  # Vaporized immediately by lava or fire!
 		self.drops.append(drop)
 		self.merge_nearby_drops()
 
+	def spawn_xp_orb(self, xp_value, position, velocity=None):
+		"""Spawns an experience orb (or split cluster of orbs) at position."""
+		if xp_value <= 0:
+			return
+		if xp_value <= 20:
+			orb = XPOrb(xp_value, position, velocity)
+			if not orb.is_in_lava_or_fire(self.world):
+				self.xp_orbs.append(orb)
+		else:
+			num_orbs = min(12, max(1, xp_value // 10))
+			rem = xp_value
+			for i in range(num_orbs):
+				val = rem // (num_orbs - i)
+				rem -= val
+				orb = XPOrb(val, position, velocity)
+				if not orb.is_in_lava_or_fire(self.world):
+					self.xp_orbs.append(orb)
+
 	def merge_nearby_drops(self):
-		"""Merge nearby drops of the same block_id within 1.5 blocks."""
+		"""Merge nearby drops of the same block_id within 1.5 blocks (only if non-enchanted)."""
 		i = 0
 		while i < len(self.drops):
 			d1 = self.drops[i]
@@ -158,7 +268,7 @@ class ItemDropManager:
 			while j < len(self.drops):
 				d2 = self.drops[j]
 				max_stack = gui_module.get_max_stack_size(d1.block_id)
-				if d1.block_id == d2.block_id and d1.count < max_stack:
+				if d1.block_id == d2.block_id and d1.count < max_stack and not d1.enchantments and not d2.enchantments:
 					dx = d1.position[0] - d2.position[0]
 					dy = d1.position[1] - d2.position[1]
 					dz = d1.position[2] - d2.position[2]
@@ -172,7 +282,7 @@ class ItemDropManager:
 				j += 1
 			i += 1
 
-	def update(self, dt, player_pos, gui):
+	def update(self, dt, player_pos, gui, camera=None):
 		px, py, pz = player_pos
 
 		i = 0
@@ -192,7 +302,7 @@ class ItemDropManager:
 			dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
 			if drop.pickup_delay <= 0 and dist < 0.8:
-				if gui.add_item(drop.block_id, drop.count):
+				if gui.add_item(drop.block_id, drop.count, enchantments=drop.enchantments):
 					self.drops.pop(i)
 					continue
 
@@ -203,9 +313,39 @@ class ItemDropManager:
 
 			i += 1
 
+		# Update XP Orbs
+		j = 0
+		while j < len(self.xp_orbs):
+			orb = self.xp_orbs[j]
+			orb.update(dt, self.world, player_pos)
+			if getattr(orb, "destroyed", False) or orb.is_in_lava_or_fire(self.world):
+				self.xp_orbs.pop(j)
+				continue
+
+			dx = px - orb.position[0]
+			dy = (py - 0.6) - orb.position[1]
+			dz = pz - orb.position[2]
+			dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+
+			# Pickup XP orb when player is within 1.25 blocks
+			if orb.pickup_delay <= 0 and dist < 1.25:
+				cam_ref = camera
+				if not cam_ref and gui and hasattr(gui, 'window') and hasattr(gui.window, 'camera'):
+					cam_ref = gui.window.camera
+				if cam_ref and hasattr(cam_ref, 'add_xp'):
+					cam_ref.add_xp(orb.xp_value)
+				self.xp_orbs.pop(j)
+				continue
+
+			if orb.age > 300.0:
+				self.xp_orbs.pop(j)
+				continue
+
+			j += 1
+
 	def draw(self, shader, gui=None):
-		"""Render 3D mini-block items & flat 2D item card sprites in the overworld using 3D world shader & VAO."""
-		if not self.drops:
+		"""Render 3D mini-block items, flat 2D item card sprites, and glowing XP orbs."""
+		if not self.drops and not self.xp_orbs:
 			return
 
 		pos_data = []
@@ -213,6 +353,44 @@ class ItemDropManager:
 		shd_data = []
 
 		face_map = [4, 5, 2, 3, 0, 1]
+
+		# Render XP Orbs as glowing green and yellow animated circular particles/sprites
+		if self.xp_orbs:
+			uv_set = self.flat_uv_front
+			for orb in self.xp_orbs:
+				x, y, z = orb.position
+				bobbing = 0.06 * math.sin(orb.age * 7.0)
+				y_pos = y + bobbing
+
+				# Dynamic green & yellow animation frame cycling
+				frame_idx = int(orb.age * 9.0) % 4
+				tex_name = f"experience_orb_{frame_idx}"
+				if hasattr(self.world, "texture_manager") and tex_name in self.world.texture_manager.textures:
+					xp_layer = float(self.world.texture_manager.textures.index(tex_name))
+				elif hasattr(self.world, "texture_manager") and "experience_orb" in self.world.texture_manager.textures:
+					xp_layer = float(self.world.texture_manager.textures.index("experience_orb"))
+				else:
+					xp_layer = 0.0
+
+				rad = math.radians(orb.rotation)
+				cos_r = math.cos(rad)
+				sin_r = math.sin(rad)
+
+				pulse_shd = 1.0 + 0.25 * math.sin(orb.age * 10.0)
+
+				for face_verts in self.raw_xp_cross:
+					t_corners = [(uv_set[k][0], uv_set[k][1], xp_layer) for k in range(4)]
+					v_corners = []
+					for vx, vy, vz in face_verts:
+						rx = vx * cos_r - vz * sin_r + x
+						ry = vy + y_pos
+						rz = vx * sin_r + vz * cos_r + z
+						v_corners.append((rx, ry, rz))
+
+					for idx in (0, 1, 2, 0, 2, 3):
+						pos_data.extend(v_corners[idx])
+						tex_data.extend(t_corners[idx])
+						shd_data.append(pulse_shd)
 
 		for drop in self.drops:
 			x, y, z = drop.position

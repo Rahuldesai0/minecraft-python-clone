@@ -1,7 +1,10 @@
 import os
 import math
+import random
+import time
 import pyglet
 import pyglet.gl as gl
+import enchanting
 
 # List of all available block items for the inventory palette
 # Each entry is (block_id, display_name, texture_name)
@@ -56,7 +59,7 @@ PALETTE_ITEMS = [
 	(56, "Oak Fence Gate", "items/oak_fence_gate"),
 	(77, "Gravel", "gravel"),
 	(79, "Torch", "torch"),
-	(80, "Farmland", "dirt"),
+	(80, "Farmland", "soil"),
 	(81, "Wheat Crops", "crops"),
 	(82, "Mossy Cobblestone", "mossy_cobblestone"),
 	(83, "White Wool", "white_cloth"),
@@ -80,6 +83,15 @@ PALETTE_ITEMS = [
 	(148, "Water Bucket", "items/bucket_water"),
 	(149, "Lava Bucket", "items/bucket_lava"),
 	(151, "Flint and Steel", "items/flint_and_steel"),
+	(204, "Carrot Crops", "carrots_stage_3"),
+	(205, "Potato Crops", "potatoes_stage_3"),
+	(206, "Pumpkin Stem", "pumpkin_stem_disconnected"),
+	(207, "Melon Stem", "melon_stem_disconnected"),
+	(208, "Pumpkin", "pumpkin_side"),
+	(209, "Melon", "melon_side"),
+	(210, "Sugar Cane", "sugar_cane"),
+	(212, "Lapis Lazuli Ore", "lapis_ore"),
+	(213, "Enchanting Table", "enchanting_table_top"),
 ]
 
 TOOL_ITEMS = [
@@ -161,6 +173,30 @@ TOOL_ITEMS = [
 	(175, "Blaze Powder", "items/blaze_powder"),
 	(176, "Ender Pearl", "items/ender_pearl"),
 	(177, "Eye of Ender", "items/ender_eye"),
+	# Hoes (190-194)
+	(190, "Wooden Hoe", "items/wood_hoe"),
+	(191, "Stone Hoe", "items/stone_hoe"),
+	(192, "Iron Hoe", "items/iron_hoe"),
+	(193, "Golden Hoe", "items/gold_hoe"),
+	(194, "Diamond Hoe", "items/diamond_hoe"),
+	# Crops, Seeds, Food & Plants (195-203)
+	(195, "Carrot", "items/carrot"),
+	(196, "Potato", "items/potato"),
+	(197, "Baked Potato", "items/potato_baked"),
+	(198, "Poisonous Potato", "items/potato_poisonous"),
+	(199, "Pumpkin Seeds", "items/seeds_pumpkin"),
+	(200, "Melon Seeds", "items/seeds_melon"),
+	(201, "Melon Slice", "items/melon"),
+	(202, "Sugar Cane", "items/reeds"),
+	(203, "Sugar", "items/sugar"),
+	# Bone Meal (211)
+	(211, "Bone Meal", "items/dye_powder_white"),
+	# Enchanting & Lapis (214-217)
+	(214, "Lapis Lazuli", "items/dye_powder_blue"),
+	(215, "Paper", "items/paper"),
+	(216, "Book", "items/book_normal"),
+	(217, "Enchanted Book", "items/book_enchanted"),
+	(218, "Bottle o' Enchanting", "items/experience_bottle"),
 ]
 
 ALL_ITEMS = PALETTE_ITEMS + TOOL_ITEMS
@@ -271,6 +307,11 @@ FOOD_VALUES = {
 	165: (6, 9.6, 0.0),    # Cooked Mutton (+6 Hunger, +9.6 Saturation)
 	166: (4, 0.8, 0.0),    # Rotten Flesh (+4 Hunger, +0.8 Saturation)
 	168: (2, 3.2, 0.0),    # Spider Eye (+2 Hunger, +3.2 Saturation)
+	195: (3, 3.6, 0.0),    # Carrot (+3 Hunger, +3.6 Saturation)
+	196: (1, 0.6, 0.0),    # Potato (+1 Hunger, +0.6 Saturation)
+	197: (5, 6.0, 0.0),    # Baked Potato (+5 Hunger, +6.0 Saturation)
+	198: (2, 1.2, 0.0),    # Poisonous Potato (+2 Hunger, +1.2 Saturation)
+	201: (2, 1.2, 0.0),    # Melon Slice (+2 Hunger, +1.2 Saturation)
 }
 
 # Smelting Recipes: input_item_id -> (result_item_id, result_count)
@@ -286,6 +327,23 @@ SMELTING_RECIPES = {
 	127: (129, 1),  # Raw Beef -> Steak (Cooked Beef)
 	162: (163, 1),  # Raw Chicken -> Cooked Chicken
 	164: (165, 1),  # Raw Mutton -> Cooked Mutton
+	196: (197, 1),  # Raw Potato -> Baked Potato
+}
+
+# Smelting Experience (XP granted per item smelted): result_item_id -> xp_amount
+SMELTING_XP = {
+	123: 0.7,   # Iron Ingot -> 0.7 XP
+	124: 1.0,   # Gold Ingot -> 1.0 XP
+	128: 0.35,  # Cooked Porkchop -> 0.35 XP
+	129: 0.35,  # Steak (Cooked Beef) -> 0.35 XP
+	163: 0.35,  # Cooked Chicken -> 0.35 XP
+	165: 0.35,  # Cooked Mutton -> 0.35 XP
+	197: 0.35,  # Baked Potato -> 0.35 XP
+	5:   0.1,   # Stone -> 0.1 XP
+	21:  0.1,   # Glass -> 0.1 XP
+	121: 0.15,  # Charcoal -> 0.15 XP
+	174: 0.1,   # Nether Brick -> 0.1 XP
+	22:  0.3,   # Bricks -> 0.3 XP
 }
 
 # Fuel Durations (in seconds of burn time): item_id -> burn_time_seconds
@@ -301,12 +359,13 @@ FUEL_BURN_TIMES = {
 	105: 10.0,  # Wooden Axe -> 10s
 	109: 10.0,  # Wooden Shovel -> 10s
 	113: 10.0,  # Wooden Sword -> 10s
+	190: 10.0,  # Wooden Hoe -> 10s
 	100: 5.0,   # Stick -> 5s (0.5 smelts)
 	149: 1000.0, # Lava Bucket -> 1000s (100 smelts)
 }
 
 # Tool Properties: item_id -> (category, tier, speed_multiplier)
-# Category: "pickaxe", "axe", "shovel", "sword"
+# Category: "pickaxe", "axe", "shovel", "sword", "hoe"
 # Tiers: 1=Wood, 2=Stone, 3=Iron, 4=Diamond, 5=Gold
 TOOL_PROPERTIES = {
 	101: ("pickaxe", 1, 2.0),   # Wood Pickaxe
@@ -332,6 +391,12 @@ TOOL_PROPERTIES = {
 	115: ("sword", 3, 2.5),     # Iron Sword
 	116: ("sword", 4, 3.0),     # Diamond Sword
 	120: ("sword", 5, 4.0),     # Gold Sword
+
+	190: ("hoe", 1, 2.0),       # Wood Hoe
+	191: ("hoe", 2, 4.0),       # Stone Hoe
+	192: ("hoe", 3, 6.0),       # Iron Hoe
+	193: ("hoe", 5, 12.0),      # Gold Hoe
+	194: ("hoe", 4, 8.0),       # Diamond Hoe
 }
 
 # Block Mining Specifications: b_num -> (preferred_tool_category, min_required_tier, base_break_seconds, drop_item_id)
@@ -354,7 +419,7 @@ BLOCK_MINING_PROPERTIES = {
 	18: ("pickaxe", 3, 3.0, 122),  # Diamond Ore -> drops Diamond item (122)
 	21: (None, 99, 0.3, None),     # Glass (Breaks with no drop)
 	22: ("pickaxe", 1, 1.8, 22),   # Bricks (Requires Wood Pickaxe+)
-	23: ("axe", 0, 1.2, 23),       # Bookshelf
+	23: ("axe", 0, 1.2, 216),       # Bookshelf (Drops 3 Books 216)
 	24: ("pickaxe", 4, 9.0, 24),   # Obsidian (Requires Diamond Pickaxe!)
 	25: (None, 0, 0.4, 25),        # TNT
 	26: ("axe", 0, 1.5, 26),       # Crafting Table
@@ -411,6 +476,8 @@ BLOCK_MINING_PROPERTIES = {
 	75: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Closed)
 	76: ("axe", 0, 0.6, 75),       # Oak Fence Gate (Open -> drops Closed item 75)
 	77: ("shovel", 0, 0.6, 77),    # Gravel (10% Flint drop handled on break)
+	80: ("shovel", 0, 0.6, 4),     # Farmland (Drops Dirt)
+	81: (None, 0, 0.0, 155),       # Wheat Crops
 	83: (None, 0, 0.8, 83),        # White Wool
 	84: ("pickaxe", 1, 0.4, 84),   # Netherrack (Requires Wood Pickaxe+)
 	85: ("shovel", 0, 0.5, 85),    # Soul Sand
@@ -424,6 +491,15 @@ BLOCK_MINING_PROPERTIES = {
 	93: ("pickaxe", 1, 2.0, 92),   # Nether Brick Stairs Top -> drops Stairs 92
 	94: (None, 0, 0.1, 173),       # Nether Wart Crop -> drops Nether Wart 173
 	95: ("pickaxe", 1, 2.0, 95),   # Nether Brick Slab
+	204: (None, 0, 0.0, 195),      # Carrot Crops
+	205: (None, 0, 0.0, 196),      # Potato Crops
+	206: (None, 0, 0.0, 199),      # Pumpkin Stem
+	207: (None, 0, 0.0, 200),      # Melon Stem
+	208: ("axe", 0, 1.0, 208),     # Pumpkin Block
+	209: ("axe", 0, 1.0, 201),     # Melon Block
+	210: (None, 0, 0.0, 202),      # Sugar Cane
+	212: ("pickaxe", 2, 3.0, 214), # Lapis Lazuli Ore (Requires Stone Pickaxe+, drops Lapis 214)
+	213: ("pickaxe", 1, 5.0, 213), # Enchanting Table (Requires Wood Pickaxe+)
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -450,6 +526,197 @@ def draw_bordered_box(x, y, width, height, border, bg_color, border_color):
 		_box_inner.height = height - 2 * border
 		_box_inner.color = bg_color
 		_box_inner.draw()
+
+def get_slot_enchantments(slot):
+	"""Returns the enchantments dict from a slot list, or empty dict if not enchanted."""
+	if slot and len(slot) > 2 and isinstance(slot[2], dict):
+		return slot[2]
+	return {}
+
+def set_slot_enchantments(slot, enchants):
+	"""Sets enchantments dict on a slot list."""
+	if not slot:
+		return
+	if len(slot) > 2:
+		slot[2] = dict(enchants) if enchants else {}
+	elif enchants:
+		slot.append(dict(enchants))
+
+def is_slot_enchanted(slot):
+	"""Returns True if the slot possesses one or more enchantments."""
+	return bool(get_slot_enchantments(slot))
+
+def draw_enchanted_glint(sx, sy, size, num_enchants=1):
+	"""Draws an authentic Minecraft-style animated sweeping purple glint over an enchanted item."""
+	# Sweep diagonally periodically across the item slot (sweep takes ~1.1s)
+	t = (time.time() * 0.9) % 1.0
+	sweep_x = sx - size * 0.4 + (size * 1.8) * t
+	alpha = min(180, int(70 + num_enchants * 30))
+	shear = size * 0.55
+
+	try:
+		gl.glEnable(gl.GL_SCISSOR_TEST)
+		gl.glScissor(int(sx), int(sy), int(size), int(size))
+
+		for off, a_factor, width in [(-6.0, 0.35, 3.0), (0.0, 0.95, 4.5), (6.0, 0.35, 3.0)]:
+			cx = sweep_x + off
+			col = (190, 70, 255, int(alpha * a_factor))
+			p1 = (cx, sy)
+			p2 = (cx + width, sy)
+			p3 = (cx + width + shear, sy + size)
+			p4 = (cx + shear, sy + size)
+			poly = pyglet.shapes.Polygon(p1, p2, p3, p4, color=col)
+			poly.draw()
+	except Exception:
+		pass
+	finally:
+		try:
+			gl.glDisable(gl.GL_SCISSOR_TEST)
+		except Exception:
+			pass
+
+def format_slot_hover(slot, prefix=""):
+	"""Formats item tooltip with name, stack count, enchantments, and combat/mining/armor/food stats."""
+	if not slot or slot[0] == 0 or slot[1] == 0:
+		return f"{prefix}Empty" if prefix else "Empty"
+	b_id = slot[0]
+	cnt = slot[1]
+	b_name = BLOCK_INFO.get(b_id, (f"Item {b_id}", ""))[0]
+	lines = [f"{prefix}{b_name} ({cnt})" if prefix else f"{b_name} ({cnt})"]
+
+	enchants = get_slot_enchantments(slot)
+	if enchants:
+		import enchanting
+		for e_key, e_lvl in enchants.items():
+			if e_key in enchanting.ENCHANTMENTS:
+				e_name = enchanting.ENCHANTMENTS[e_key]["name"]
+				e_rom = enchanting.to_roman(e_lvl)
+				lines.append(f"  • {e_name} {e_rom}")
+
+	# Stats breakdown
+	sharp_lvl = enchants.get("sharpness", 0) if enchants else 0
+	eff_lvl = enchants.get("efficiency", 0) if enchants else 0
+	power_lvl = enchants.get("power", 0) if enchants else 0
+	fire_lvl = enchants.get("fire_aspect", 0) if enchants else 0
+	loot_lvl = enchants.get("looting", 0) if enchants else 0
+	fort_lvl = enchants.get("fortune", 0) if enchants else 0
+	prot_lvl = enchants.get("protection", 0) if enchants else 0
+	has_inf = enchants.get("infinity", 0) > 0 if enchants else False
+
+	# 1. Swords
+	if b_id in (113, 114, 115, 116, 120):
+		base_dmg = get_item_attack_damage(b_id)
+		bonus_dmg = (0.5 * sharp_lvl + 0.5) if sharp_lvl > 0 else 0.0
+		total_dmg = base_dmg + bonus_dmg
+		if sharp_lvl > 0:
+			lines.append(f"Attack Damage: {total_dmg:.1f} ({base_dmg:.1f} + {bonus_dmg:.1f} Sharpness)")
+		else:
+			lines.append(f"Attack Damage: {base_dmg:.1f}")
+
+		if fire_lvl > 0:
+			lines.append(f"Fire Aspect: Sets target ablaze for {4.0 * fire_lvl:.0f}s")
+		if loot_lvl > 0:
+			lines.append(f"Looting: +{loot_lvl} Max Mob Drops")
+
+	# 2. Bow
+	elif b_id == 157:
+		base_dmg = 9.0
+		if power_lvl > 0:
+			power_mult = 1.0 + 0.25 * (power_lvl + 1)
+			total_dmg = base_dmg * power_mult
+			pct = int(0.25 * (power_lvl + 1) * 100)
+			lines.append(f"Max Arrow Damage: {total_dmg:.1f} (+{pct}% Power)")
+		else:
+			lines.append("Max Arrow Damage: 9.0")
+		if has_inf:
+			lines.append("Infinity: Unlimited Normal Arrows")
+
+	# 3. Pickaxes
+	elif b_id in (101, 102, 103, 104, 117):
+		tier_names = {1: "Wood", 2: "Stone", 3: "Iron", 4: "Diamond", 5: "Gold"}
+		cat, tier, base_speed = TOOL_PROPERTIES.get(b_id, ("pickaxe", 1, 2.0))
+		eff_mult = (1.0 + (eff_lvl * eff_lvl + 1) * 0.25) if eff_lvl > 0 else 1.0
+		total_speed = base_speed * eff_mult
+		if eff_lvl > 0:
+			lines.append(f"Mining Speed: {total_speed:.1f}x ({base_speed:.1f}x + Efficiency)")
+		else:
+			lines.append(f"Mining Speed: {base_speed:.1f}x")
+		lines.append(f"Harvest Level: {tier_names.get(tier, 'Wood')}+")
+		if fort_lvl > 0:
+			lines.append(f"Fortune: Up to {fort_lvl + 1}x Ore Drops")
+
+	# 4. Axes
+	elif b_id in (105, 106, 107, 108, 118):
+		base_dmg = get_item_attack_damage(b_id)
+		bonus_dmg = (0.5 * sharp_lvl + 0.5) if sharp_lvl > 0 else 0.0
+		total_dmg = base_dmg + bonus_dmg
+		cat, tier, base_speed = TOOL_PROPERTIES.get(b_id, ("axe", 1, 2.0))
+		eff_mult = (1.0 + (eff_lvl * eff_lvl + 1) * 0.25) if eff_lvl > 0 else 1.0
+		total_speed = base_speed * eff_mult
+
+		if sharp_lvl > 0:
+			lines.append(f"Attack Damage: {total_dmg:.1f} ({base_dmg:.1f} + {bonus_dmg:.1f} Sharpness)")
+		else:
+			lines.append(f"Attack Damage: {base_dmg:.1f}")
+
+		if eff_lvl > 0:
+			lines.append(f"Chopping Speed: {total_speed:.1f}x ({base_speed:.1f}x + Efficiency)")
+		else:
+			lines.append(f"Chopping Speed: {base_speed:.1f}x")
+		if fort_lvl > 0:
+			lines.append(f"Fortune: Up to {fort_lvl + 1}x Drop Yield")
+
+	# 5. Shovels
+	elif b_id in (109, 110, 111, 112, 119):
+		cat, tier, base_speed = TOOL_PROPERTIES.get(b_id, ("shovel", 1, 2.0))
+		eff_mult = (1.0 + (eff_lvl * eff_lvl + 1) * 0.25) if eff_lvl > 0 else 1.0
+		total_speed = base_speed * eff_mult
+		if eff_lvl > 0:
+			lines.append(f"Digging Speed: {total_speed:.1f}x ({base_speed:.1f}x + Efficiency)")
+		else:
+			lines.append(f"Digging Speed: {base_speed:.1f}x")
+		if fort_lvl > 0:
+			flint_pct = 14 if fort_lvl == 1 else (25 if fort_lvl == 2 else 100)
+			lines.append(f"Fortune: {flint_pct}% Flint Chance from Gravel")
+
+	# 6. Hoes
+	elif b_id in (190, 191, 192, 193, 194):
+		lines.append("Tills Dirt & Grass into Farmland")
+
+	# 7. Armor Pieces
+	elif b_id in ARMOR_DEFENSE_POINTS:
+		defense_pts = ARMOR_DEFENSE_POINTS.get(b_id, 0)
+		pct_reduction = defense_pts * 4.0
+		lines.append(f"Armor Defense: +{defense_pts} (+{pct_reduction:.0f}% Damage Reduction)")
+		if prot_lvl > 0:
+			prot_pct = prot_lvl * 4.0
+			lines.append(f"Protection: +{prot_pct:.0f}% Extra Reduction")
+
+	# 8. Food Items
+	elif b_id in FOOD_VALUES:
+		hunger, sat, abs_hp = FOOD_VALUES[b_id]
+		drumsticks = hunger / 2.0
+		info = f"Restores: {hunger} Hunger ({drumsticks:.1f} Drumsticks)"
+		if abs_hp > 0:
+			info += f" & +{abs_hp / 2.0:.0f} Absorption Hearts"
+		lines.append(info)
+
+	# 9. Special Items
+	elif b_id == 218:
+		lines.append("Throwable: Drops 3–11 Experience Points")
+	elif b_id == 176:
+		lines.append("Throwable: Teleports on impact (5 self-damage)")
+	elif b_id == 177:
+		lines.append("Throwable: Locates Stronghold End Portal")
+	elif b_id == 211:
+		lines.append("Fertilizer: Instantly grows crops and stems")
+	elif b_id == 217:
+		if not enchants:
+			lines.append("Enchanted Book")
+	elif b_id == 216:
+		lines.append("Can be enchanted at Enchanting Table")
+
+	return "\n".join(lines)
 
 # Reusable HUD shapes
 _heart_c1 = None
@@ -628,6 +895,13 @@ class InventoryGUI:
 		self.crafting_grid_3x3 = [[0, 0] for _ in range(9)]
 		self.crafting_result = [0, 0]
 
+		# Enchanting Table Slots & State
+		self.enchant_item_slot = [0, 0, {}]
+		self.enchant_lapis_slot = [0, 0, {}]
+		self.enchant_bookshelves = 0
+		self.enchant_offers = []
+		self.enchant_seed = 0
+
 		self.selected_slot = 0  # 0 to 8
 		self.held_stack = None  # [block_id, count] or None
 
@@ -721,6 +995,31 @@ class InventoryGUI:
 		self.window.mouse_captured = False
 		self.window.set_exclusive_mouse(False)
 
+	def open_enchanting_table(self, pos, world):
+		import enchanting, random
+		self.crafting_mode = "enchanting"
+		self.enchant_bookshelves = enchanting.count_valid_bookshelves(pos, world)
+		self.enchant_item_slot = [0, 0, {}]
+		self.enchant_lapis_slot = [0, 0, {}]
+		self.enchant_offers = []
+		self.enchant_seed = random.randint(0, 1000000)
+		self.inventory_open = True
+		self.window.mouse_captured = False
+		self.window.set_exclusive_mouse(False)
+		self.update_enchantment_offers()
+
+	def update_enchantment_offers(self):
+		import enchanting
+		if not hasattr(self, "enchant_item_slot") or self.enchant_item_slot[0] == 0 or not enchanting.is_enchantable(self.enchant_item_slot[0]):
+			self.enchant_offers = []
+			return
+		item_id = self.enchant_item_slot[0]
+		lvl1, lvl2, lvl3 = enchanting.calculate_enchantment_levels(getattr(self, "enchant_bookshelves", 0), seed=self.enchant_seed)
+		o1 = enchanting.generate_enchantment_offer(item_id, 1, lvl1, seed=self.enchant_seed + 1)
+		o2 = enchanting.generate_enchantment_offer(item_id, 2, lvl2, seed=self.enchant_seed + 2)
+		o3 = enchanting.generate_enchantment_offer(item_id, 3, lvl3, seed=self.enchant_seed + 3)
+		self.enchant_offers = [o1, o2, o3]
+
 	def _load_icons(self):
 		for b_id, (name, tex_name) in BLOCK_INFO.items():
 			img_path = os.path.join("textures", f"{tex_name}.png")
@@ -751,6 +1050,13 @@ class InventoryGUI:
 		slot = self.hotbar_slots[self.selected_slot]
 		return slot[0] if slot[1] > 0 else 0
 
+	def get_current_slot(self):
+		return self.hotbar_slots[self.selected_slot]
+
+	def get_total_protection_reduction(self):
+		import enchanting
+		return enchanting.get_protection_reduction(self.armor_slots)
+
 	def consume_active_item(self):
 		if getattr(self.window, "flying", False):
 			return  # Creative mode: unlimited placement
@@ -760,44 +1066,72 @@ class InventoryGUI:
 			slot[1] -= 1
 			if slot[1] == 0:
 				slot[0] = 0
+				set_slot_enchantments(slot, {})
 
 	def consume_item(self, item_id, count=1):
-		"""Consumes count of item_id from hotbar or inventory slots. Returns True if consumed."""
 		if getattr(self.window, "flying", False):
-			return True # Creative mode: unlimited arrows
-		for slot in self.survival_hotbar + self.survival_inventory:
+			return True
+
+		# Try to consume from active hotbar slot first
+		active_slot = self.hotbar_slots[self.selected_slot]
+		if active_slot[0] == item_id and active_slot[1] > 0:
+			take = min(active_slot[1], count)
+			active_slot[1] -= take
+			count -= take
+			if active_slot[1] == 0:
+				active_slot[0] = 0
+				set_slot_enchantments(active_slot, {})
+			if count <= 0:
+				return True
+
+		# Search remaining hotbar
+		for slot in self.survival_hotbar:
 			if slot[0] == item_id and slot[1] > 0:
-				take = min(count, slot[1])
+				take = min(slot[1], count)
 				slot[1] -= take
 				count -= take
 				if slot[1] == 0:
 					slot[0] = 0
+					set_slot_enchantments(slot, {})
+				if count <= 0:
+					return True
+
+		# Search inventory
+		for slot in self.survival_inventory:
+			if slot[0] == item_id and slot[1] > 0:
+				take = min(slot[1], count)
+				slot[1] -= take
+				count -= take
+				if slot[1] == 0:
+					slot[0] = 0
+					set_slot_enchantments(slot, {})
 				if count <= 0:
 					return True
 		return False
 
-	def add_item_to_inventory(self, item_id, count=1):
-		return self.add_item(item_id, count)
+	def add_item_to_inventory(self, item_id, count=1, enchantments=None):
+		return self.add_item(item_id, count, enchantments=enchantments)
 
-	def add_item(self, block_id, count=1):
+	def add_item(self, block_id, count=1, enchantments=None):
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
 			return True
 
 		max_stack = get_max_stack_size(block_id)
+		ench = dict(enchantments) if enchantments else {}
 
-		if max_stack > 1:
-			# 1. Stack into existing hotbar matching slots
+		if max_stack > 1 and not ench:
+			# 1. Stack into existing hotbar matching non-enchanted slots
 			for slot in self.survival_hotbar:
-				if slot[0] == block_id and slot[1] < max_stack:
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
 					addable = min(count, max_stack - slot[1])
 					slot[1] += addable
 					count -= addable
 					if count == 0:
 						return True
 
-			# 2. Stack into existing inventory matching slots
+			# 2. Stack into existing inventory matching non-enchanted slots
 			for slot in self.survival_inventory:
-				if slot[0] == block_id and slot[1] < max_stack:
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
 					addable = min(count, max_stack - slot[1])
 					slot[1] += addable
 					count -= addable
@@ -809,6 +1143,7 @@ class InventoryGUI:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
 				slot[1] = min(count, max_stack)
+				set_slot_enchantments(slot, ench)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -818,6 +1153,7 @@ class InventoryGUI:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
 				slot[1] = min(count, max_stack)
+				set_slot_enchantments(slot, ench)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -1632,6 +1968,78 @@ class InventoryGUI:
 			self.crafting_result = [99, 16]  # 16 Iron Bars (99)
 			return
 
+		# Recipe 33: Hoes (2 head items + 2 sticks in 2x3 grid) - Left or Right facing
+		if h == 3 and w == 2:
+			# Left-facing Hoe: [[mat, mat], [0, 100], [0, 100]]
+			if matrix[0][0] == matrix[0][1] and matrix[0][0] != 0 and matrix[1][0] == 0 and matrix[1][1] == 100 and matrix[2][0] == 0 and matrix[2][1] == 100:
+				mat = matrix[0][0]
+				if mat in (7,): self.crafting_result = [190, 1]; return          # Wood Hoe
+				if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
+				if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
+				if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
+				if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
+			# Right-facing Hoe: [[mat, mat], [100, 0], [100, 0]]
+			if matrix[0][0] == matrix[0][1] and matrix[0][0] != 0 and matrix[1][0] == 100 and matrix[1][1] == 0 and matrix[2][0] == 100 and matrix[2][1] == 0:
+				mat = matrix[0][0]
+				if mat in (7,): self.crafting_result = [190, 1]; return          # Wood Hoe
+				if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
+				if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
+				if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
+				if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
+
+		# Recipe 34: Bread (3 Wheat 154 in 1x3 horizontal row) -> 1 Bread (152)
+		if h == 1 and w == 3 and matrix[0] == [154, 154, 154]:
+			self.crafting_result = [152, 1]  # 1 Bread (152)
+			return
+
+		# Recipe 35: Pumpkin Seeds (1 Pumpkin Block 208 in any slot) -> 4 Pumpkin Seeds (199)
+		if sorted(flat_items) == [208]:
+			self.crafting_result = [199, 4]  # 4 Pumpkin Seeds (199)
+			return
+
+		# Recipe 36: Melon Slices (1 Melon Block 209 in any slot) -> 9 Melon Slices (201)
+		if sorted(flat_items) == [209]:
+			self.crafting_result = [201, 9]  # 9 Melon Slices (201)
+			return
+
+		# Recipe 37: Melon Block (9 Melon Slices 201 in 3x3 grid) -> 1 Melon Block (209)
+		if h == 3 and w == 3 and matrix == [[201, 201, 201], [201, 201, 201], [201, 201, 201]]:
+			self.crafting_result = [209, 1]  # 1 Melon Block (209)
+			return
+
+		# Recipe 38: Melon Seed (1 Melon Slice 201 in any slot) -> 1 Melon Seed (200)
+		if sorted(flat_items) == [201]:
+			self.crafting_result = [200, 1]  # 1 Melon Seed (200)
+			return
+
+		# Recipe 39: Sugar (1 Sugar Cane 202 in any slot) -> 1 Sugar (203)
+		if sorted(flat_items) == [202]:
+			self.crafting_result = [203, 1]  # 1 Sugar (203)
+			return
+
+		# Recipe 40: Bone Meal (1 Bone 167 in any slot) -> 3 Bone Meal (211)
+		if sorted(flat_items) == [167]:
+			self.crafting_result = [211, 3]  # 3 Bone Meal (211)
+			return
+
+		# Recipe 41: Paper (3 Sugar Cane 202 in 1x3 horizontal row) -> 3 Paper (215)
+		if h == 1 and w == 3 and matrix[0] == [202, 202, 202]:
+			self.crafting_result = [215, 3]  # 3 Paper (215)
+			return
+
+		# Recipe 42: Book (3 Paper 215 + 1 Leather 126 shapeless) -> 1 Book (216)
+		if sorted(flat_items) == [126, 215, 215, 215]:
+			self.crafting_result = [216, 1]  # 1 Book (216)
+			return
+
+		# Recipe 43: Enchanting Table (1 Book 216, 2 Diamonds 122, 4 Obsidian 24 in 3x3)
+		if h == 3 and w == 3:
+			if (matrix[0] == [0, 216, 0] and
+				matrix[1] == [122, 24, 122] and
+				matrix[2] == [24, 24, 24]):
+				self.crafting_result = [213, 1]  # 1 Enchanting Table (213)
+				return
+
 		self.crafting_result = [0, 0]
 
 	def set_selected_slot(self, slot_idx):
@@ -1649,14 +2057,26 @@ class InventoryGUI:
 			self.evaluate_crafting()
 		else:
 			self.creative_search_focused = False
-			# Return ingredients left in active crafting grids to inventory when closing
+			# Return ingredients left in active crafting grids or enchanting table to inventory when closing
 			for grid in (self.crafting_grid_2x2, self.crafting_grid_3x3):
 				for slot in grid:
 					if slot[0] != 0 and slot[1] > 0:
-						self.add_item(slot[0], slot[1])
+						ench = get_slot_enchantments(slot)
+						self.add_item(slot[0], slot[1], enchantments=ench)
 						slot[0] = 0
 						slot[1] = 0
+						set_slot_enchantments(slot, {})
+			if hasattr(self, "enchant_item_slot") and self.enchant_item_slot[0] != 0 and self.enchant_item_slot[1] > 0:
+				ench = get_slot_enchantments(self.enchant_item_slot)
+				self.add_item(self.enchant_item_slot[0], self.enchant_item_slot[1], enchantments=ench)
+				self.enchant_item_slot = [0, 0, {}]
+			if hasattr(self, "enchant_lapis_slot") and self.enchant_lapis_slot[0] != 0 and self.enchant_lapis_slot[1] > 0:
+				self.add_item(self.enchant_lapis_slot[0], self.enchant_lapis_slot[1])
+				self.enchant_lapis_slot = [0, 0, {}]
 			self.crafting_result = [0, 0]
+			if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
+				held_ench = get_slot_enchantments(self.held_stack)
+				self.add_item(self.held_stack[0], self.held_stack[1], enchantments=held_ench)
 			self.held_stack = None
 			self.active_chest1 = None
 			self.active_chest2 = None
@@ -1691,6 +2111,7 @@ class InventoryGUI:
 			self._draw_armor_bar()
 			self._draw_hunger_bar()
 			self._draw_bubble_bar()
+			self._draw_xp_bar()
 
 		self._draw_boss_bar()
 
@@ -1698,17 +2119,7 @@ class InventoryGUI:
 			hover_text = self._draw_inventory_overlay(hover_text)
 
 		if hover_text:
-			self.tooltip_label.text = hover_text
-			self.tooltip_label.x = self.mouse_x
-			self.tooltip_label.y = self.mouse_y + 16
-			
-			tw = self.tooltip_label.content_width + 12
-			th = self.tooltip_label.content_height + 6
-			tx = self.mouse_x - tw // 2
-			ty = self.mouse_y + 12
-			
-			draw_bordered_box(tx, ty, tw, th, 1, (10, 10, 15, 230), (200, 200, 220, 255))
-			self.tooltip_label.draw()
+			self._draw_tooltip(hover_text, self.mouse_x, self.mouse_y)
 
 		if self.inventory_open and self.held_stack and self.held_stack[0] in self.icon_textures:
 			b_id, cnt = self.held_stack[0], self.held_stack[1]
@@ -1732,7 +2143,7 @@ class InventoryGUI:
 		padding = 6
 		total_w = 9 * slot_size + 8 * padding
 		start_x = (self.window.width - total_w) // 2
-		start_y = 64
+		start_y = 70
 
 		health = self.window.camera.health
 
@@ -1773,7 +2184,7 @@ class InventoryGUI:
 		padding = 6
 		total_w = 9 * slot_size + 8 * padding
 		start_x = (self.window.width - total_w) // 2
-		start_y = 82
+		start_y = 88
 
 		for i in range(10):
 			ax = start_x + i * 18
@@ -1792,7 +2203,7 @@ class InventoryGUI:
 		padding = 6
 		total_w = 9 * slot_size + 8 * padding
 		start_x = (self.window.width + total_w) // 2 - 180
-		start_y = 64
+		start_y = 70
 
 		hunger = getattr(self.window.camera, "hunger", 20)
 
@@ -1811,7 +2222,6 @@ class InventoryGUI:
 	def _draw_bubble_bar(self):
 		air = getattr(self.window.camera, "air", 10.0)
 		head_underwater = getattr(self.window.camera, "is_head_underwater", lambda w: False)(self.window.world)
-		# Only display bubble bar when player's head is underwater or air is depleted (< 10.0)
 		if not head_underwater and air >= 10.0:
 			return
 
@@ -1819,7 +2229,7 @@ class InventoryGUI:
 		padding = 6
 		total_w = 9 * slot_size + 8 * padding
 		start_x = (self.window.width + total_w) // 2 - 180
-		start_y = 82  # Positioned directly above hunger bar (which is at y = 64)
+		start_y = 88  # Positioned directly above hunger bar (which is at y = 70)
 
 		bubbles_remaining = int(math.ceil(air))  # 0 to 10
 
@@ -1831,6 +2241,68 @@ class InventoryGUI:
 				draw_vector_bubble(bx, by, is_full=True)
 			else:
 				draw_vector_bubble(bx, by, is_full=False)
+
+	def _draw_xp_bar(self):
+		slot_size = 44
+		padding = 6
+		total_w = 9 * slot_size + 8 * padding
+		start_x = (self.window.width - total_w) // 2
+		start_y = 60
+		bar_h = 5
+
+		cam = getattr(self.window, "camera", None)
+		if not cam:
+			return
+
+		level = getattr(cam, "level", 0)
+		xp_prog = getattr(cam, "xp_progress", 0)
+		xp_need = getattr(cam, "xp_needed", 7)
+		pct = max(0.0, min(1.0, xp_prog / float(max(1, xp_need))))
+
+		# 1. Dark background bar with 1px black outline
+		draw_bordered_box(start_x - 1, start_y - 1, total_w + 2, bar_h + 2, 1, (20, 30, 10, 240), (0, 0, 0, 255))
+
+		# 2. Green XP Progress Fill
+		fill_w = int(total_w * pct)
+		if fill_w > 0:
+			draw_bordered_box(start_x, start_y, fill_w, bar_h, 0, (128, 255, 32, 255), (0, 0, 0, 0))
+			draw_bordered_box(start_x, start_y + bar_h - 1, fill_w, 1, 0, (195, 255, 110, 255), (0, 0, 0, 0))
+
+		# 3. 1px dark segment lines every 10%
+		for notch in range(1, 10):
+			nx = start_x + int(total_w * (notch / 10.0))
+			draw_bordered_box(nx, start_y, 1, bar_h, 0, (0, 0, 0, 180), (0, 0, 0, 0))
+
+		# 4. Central Level Number Label
+		if level > 0:
+			txt = str(level)
+			cx = self.window.width // 2
+			cy = start_y + 4
+
+			if not hasattr(self, "xp_level_label"):
+				self.xp_level_label = pyglet.text.Label(
+					"", font_name="Arial", font_size=11,
+					x=cx, y=cy, anchor_x="center", anchor_y="bottom",
+					color=(128, 255, 32, 255)
+				)
+				self.xp_level_shadow = pyglet.text.Label(
+					"", font_name="Arial", font_size=11,
+					x=cx, y=cy, anchor_x="center", anchor_y="bottom",
+					color=(0, 0, 0, 255)
+				)
+
+			self.xp_level_label.text = txt
+			self.xp_level_shadow.text = txt
+
+			# Draw 4-way dark outline/shadow for readability
+			for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+				self.xp_level_shadow.x = cx + ox
+				self.xp_level_shadow.y = cy + oy
+				self.xp_level_shadow.draw()
+
+			self.xp_level_label.x = cx
+			self.xp_level_label.y = cy
+			self.xp_level_label.draw()
 
 	def _draw_boss_bar(self):
 		dragon = getattr(self.window, "ender_dragon", None)
@@ -1877,6 +2349,64 @@ class InventoryGUI:
 				nx = bar_x + int(bar_w * (notch / 10.0))
 				draw_bordered_box(nx, bar_y, 1, bar_h, 0, (40, 15, 50, 255), (0, 0, 0, 0))
 
+	def _draw_tooltip(self, hover_text, mouse_x, mouse_y):
+		if not hover_text:
+			return
+
+		lines = hover_text.split('\n')
+		line_height = 15
+		pad_x = 8
+		pad_y = 6
+
+		# Calculate max line width
+		max_w = 0
+		for line in lines:
+			self.tooltip_label.text = line
+			self.tooltip_label.font_size = 10
+			w = self.tooltip_label.content_width
+			if w > max_w:
+				max_w = w
+
+		tw = int(max_w + pad_x * 2)
+		th = int(len(lines) * line_height + pad_y * 2)
+
+		# Position tooltip slightly above & to the right of cursor, clamped within window bounds
+		tx = mouse_x + 12
+		ty = mouse_y + 12
+
+		if tx + tw > self.window.width - 4:
+			tx = mouse_x - tw - 8
+		tx = max(4, min(self.window.width - tw - 4, tx))
+
+		if ty + th > self.window.height - 4:
+			ty = mouse_y - th - 8
+		ty = max(4, min(self.window.height - th - 4, ty))
+
+		# Draw tooltip background with double border
+		draw_bordered_box(tx, ty, tw, th, 2, (16, 14, 24, 245), (80, 50, 130, 255))
+
+		# Render lines from top to bottom
+		cur_y = ty + th - pad_y - 12
+		for idx, line in enumerate(lines):
+			if idx == 0:
+				color = (255, 220, 100, 255) if ("•" in hover_text or "Enchanted" in line) else (255, 255, 255, 255)
+			elif line.startswith("  •"):
+				color = (175, 130, 255, 255)  # Enchantment purple/magenta
+			elif any(stat in line for stat in ("Damage", "Speed", "Defense", "Reduction", "Restores", "Tier", "Level")):
+				color = (130, 225, 150, 255)  # Stat green
+			else:
+				color = (185, 190, 205, 255)  # Description gray
+
+			self.tooltip_label.text = line
+			self.tooltip_label.font_size = 10
+			self.tooltip_label.x = tx + pad_x
+			self.tooltip_label.y = cur_y
+			self.tooltip_label.anchor_x = "left"
+			self.tooltip_label.anchor_y = "bottom"
+			self.tooltip_label.color = color
+			self.tooltip_label.draw()
+			cur_y -= line_height
+
 	def _draw_hotbar(self, current_hover):
 		slot_size = 44
 		padding = 6
@@ -1916,6 +2446,10 @@ class InventoryGUI:
 				self.slot_sprite.scale_y = 32.0 / img.height
 				self.slot_sprite.draw()
 
+				# Animated sweeping purple glint for enchanted items
+				if is_slot_enchanted(slot):
+					draw_enchanted_glint(sx + 6, sy + 6, 32, len(get_slot_enchantments(slot)))
+
 				if cnt > 1 or not self.window.flying:
 					self.count_label.text = str(cnt)
 					self.count_label.font_size = 10
@@ -1929,8 +2463,7 @@ class InventoryGUI:
 			num_lbl.draw()
 
 			if sx <= self.mouse_x <= sx + slot_size and sy <= self.mouse_y <= sy + slot_size:
-				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty"
-				current_hover = f"[{i + 1}] {b_name} ({cnt})" if cnt > 0 else f"[{i + 1}] Empty"
+				current_hover = format_slot_hover(slot, f"[{i + 1}] ")
 
 		return current_hover
 
@@ -1946,6 +2479,10 @@ class InventoryGUI:
 			self.slot_sprite.scale_x = 32.0 / img.width
 			self.slot_sprite.scale_y = 32.0 / img.height
 			self.slot_sprite.draw()
+
+			# Animated sweeping purple glint for enchanted items
+			if is_slot_enchanted(slot):
+				draw_enchanted_glint(sx + 4, sy + 4, 32, len(get_slot_enchantments(slot)))
 
 			if cnt > 1 or not self.window.flying:
 				self.count_label.text = str(cnt)
@@ -2050,9 +2587,8 @@ class InventoryGUI:
 						spr.scale_x = 32.0 / img.width
 						spr.scale_y = 32.0 / img.height
 						spr.draw()
-
 					if is_hover:
-						current_hover = b_name
+						current_hover = format_slot_hover([b_id, 64])
 
 			# Draw Vertical Scrollbar
 			if max_scroll > 0:
@@ -2092,24 +2628,22 @@ class InventoryGUI:
 			draw_bordered_box(f_x, f_y, slot_s, slot_s, 2 if is_h_fuel else 1, (55, 60, 75, 230) if is_h_fuel else (35, 38, 48, 200), (255, 215, 0, 255) if is_h_fuel else (70, 75, 90, 200))
 			self._draw_item_in_slot(self.active_furnace.fuel_slot, f_x, f_y, slot_s)
 
-			# 3. Flame Burn Meter (between input & fuel)
+			# 3. Animated Smelting Flame Icon
 			flame_bg = pyglet.shapes.Rectangle(f_x + 12, f_y + 43, 16, 14, color=(40, 40, 50, 255))
 			flame_bg.draw()
-			if self.active_furnace.burn_time_remaining > 0 and self.active_furnace.max_burn_time > 0:
-				ratio = min(1.0, self.active_furnace.burn_time_remaining / self.active_furnace.max_burn_time)
-				fh = int(14 * ratio)
+			if self.active_furnace.is_burning():
+				fh = max(2, int(14 * (self.active_furnace.burn_time / max(0.1, self.active_furnace.max_burn_time))))
 				flame_fg = pyglet.shapes.Rectangle(f_x + 12, f_y + 43, 16, fh, color=(255, 140, 0, 255))
 				flame_fg.draw()
 
-			# 4. Progress Arrow (between slots and output)
+			# 4. Progress Arrow
 			arr_bg = pyglet.shapes.Rectangle(f_x + 55, f_y + 32, 55, 16, color=(40, 40, 50, 255))
 			arr_bg.draw()
-			if self.active_furnace.smelt_progress > 0:
-				ratio = min(1.0, self.active_furnace.smelt_progress / 10.0)
-				pw = int(55 * ratio)
+			if self.active_furnace.cook_progress > 0:
+				pw = int(55 * (self.active_furnace.cook_progress / 10.0))
 				arr_fg = pyglet.shapes.Rectangle(f_x + 55, f_y + 32, pw, 16, color=(50, 205, 50, 255))
 				arr_fg.draw()
-			arr_lbl = pyglet.text.Label("==>", font_name="Arial", font_size=10, x=f_x + 68, y=f_y + 33, color=(255, 255, 255, 220))
+			arr_lbl = pyglet.text.Label("==>", font_name="Arial", font_size=12, x=f_x + 68, y=f_y + 34, color=(240, 240, 240, 255))
 			arr_lbl.draw()
 
 			# 5. Output Result Slot
@@ -2120,17 +2654,11 @@ class InventoryGUI:
 			self._draw_item_in_slot(self.active_furnace.output_slot, res_x + 4, res_y + 4, slot_s)
 
 			if is_h_in:
-				b_id, cnt = self.active_furnace.input_slot[0], self.active_furnace.input_slot[1]
-				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Ingredient Slot"
-				current_hover = f"Ingredient: {b_name} ({cnt})" if cnt > 0 else "Furnace Ingredient Slot (Empty)"
+				current_hover = format_slot_hover(self.active_furnace.input_slot, "Ingredient: ")
 			elif is_h_fuel:
-				b_id, cnt = self.active_furnace.fuel_slot[0], self.active_furnace.fuel_slot[1]
-				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Fuel Slot"
-				current_hover = f"Fuel: {b_name} ({cnt})" if cnt > 0 else "Furnace Fuel Slot (Empty)"
+				current_hover = format_slot_hover(self.active_furnace.fuel_slot, "Fuel: ")
 			elif is_h_out:
-				b_id, cnt = self.active_furnace.output_slot[0], self.active_furnace.output_slot[1]
-				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Output Slot"
-				current_hover = f"Smelt Output: {b_name} ({cnt})" if cnt > 0 else "Furnace Output Slot (Empty)"
+				current_hover = format_slot_hover(self.active_furnace.output_slot, "Smelt Output: ")
 		elif self.crafting_mode == "single_chest" and self.active_chest1:
 			c_lbl = pyglet.text.Label("Chest Storage (27 Slots):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
 			c_lbl.draw()
@@ -2155,9 +2683,7 @@ class InventoryGUI:
 				self._draw_item_in_slot(slot, sx, sy, slot_s)
 
 				if is_h:
-					b_id, cnt = slot[0], slot[1]
-					b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty Chest Slot"
-					current_hover = f"Chest Slot {idx + 1}: {b_name} ({cnt})" if cnt > 0 else "Empty Chest Slot"
+					current_hover = format_slot_hover(slot, f"Chest Slot {idx + 1}: ")
 
 		elif self.crafting_mode == "double_chest" and self.active_chest1 and self.active_chest2:
 			c_lbl = pyglet.text.Label("Large Chest Storage (54 Slots):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + win_h - 68, color=(220, 220, 240, 255))
@@ -2183,9 +2709,113 @@ class InventoryGUI:
 				self._draw_item_in_slot(slot, sx, sy, slot_s)
 
 				if is_h:
-					b_id, cnt = slot[0], slot[1]
-					b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty Chest Slot"
-					current_hover = f"Large Chest Slot {idx + 1}: {b_name} ({cnt})" if cnt > 0 else "Empty Chest Slot"
+					current_hover = format_slot_hover(slot, f"Large Chest Slot {idx + 1}: ")
+		elif self.crafting_mode == "enchanting":
+			enc_title = pyglet.text.Label("Enchanting Table", font_name="Arial", font_size=11, x=win_x + 24, y=win_y + win_h - 68, color=(240, 240, 255, 255))
+			enc_title.draw()
+
+			bs_info = f"Bookshelf Power: {getattr(self, 'enchant_bookshelves', 0)} / 15"
+			bs_lbl = pyglet.text.Label(bs_info, font_name="Arial", font_size=9, x=win_x + 24, y=win_y + win_h - 85, color=(160, 200, 240, 255))
+			bs_lbl.draw()
+
+			# Left Side: Target Item Slot & Lapis Slot
+			e_x = win_x + 45
+			e_y = win_y + win_h - 170
+
+			# Target Item Slot
+			is_h_item = (e_x <= self.mouse_x <= e_x + slot_s and e_y <= self.mouse_y <= e_y + slot_s)
+			draw_bordered_box(e_x, e_y, slot_s, slot_s, 2 if is_h_item else 1, (50, 55, 70, 230) if is_h_item else (32, 35, 45, 200), (255, 215, 0, 255) if is_h_item else (80, 85, 100, 200))
+			self._draw_item_in_slot(getattr(self, "enchant_item_slot", [0, 0, {}]), e_x, e_y, slot_s)
+
+			# Lapis Slot
+			l_x = e_x + slot_s + 16
+			is_h_lapis = (l_x <= self.mouse_x <= l_x + slot_s and e_y <= self.mouse_y <= e_y + slot_s)
+			draw_bordered_box(l_x, e_y, slot_s, slot_s, 2 if is_h_lapis else 1, (30, 45, 80, 230) if is_h_lapis else (20, 25, 45, 200), (60, 140, 255, 255) if is_h_lapis else (40, 70, 130, 200))
+			lapis_slot = getattr(self, "enchant_lapis_slot", [0, 0, {}])
+			if lapis_slot[0] != 0:
+				self._draw_item_in_slot(lapis_slot, l_x, e_y, slot_s)
+			elif 214 in self.icon_textures:
+				img = self.icon_textures[214]
+				self.slot_sprite.image = img
+				self.slot_sprite.x = l_x + 4
+				self.slot_sprite.y = e_y + 4
+				self.slot_sprite.scale_x = 32.0 / img.width
+				self.slot_sprite.scale_y = 32.0 / img.height
+				self.slot_sprite.opacity = 90
+				self.slot_sprite.draw()
+				self.slot_sprite.opacity = 255
+
+			# Slot Labels
+			item_lbl = pyglet.text.Label("Item", font_name="Arial", font_size=8, x=e_x + slot_s // 2, y=e_y - 12, anchor_x="center", color=(180, 180, 200, 255))
+			item_lbl.draw()
+			lapis_lbl = pyglet.text.Label("Lapis Lazuli", font_name="Arial", font_size=8, x=l_x + slot_s // 2, y=e_y - 12, anchor_x="center", color=(100, 160, 255, 255))
+			lapis_lbl.draw()
+
+			# Right Side: 3 Enchantment Option Bars
+			opt_x = win_x + 180
+			opt_w = 420
+			opt_h = 36
+			opt_start_y = win_y + win_h - 110
+
+			player_level = self.window.camera.level if (self.window and hasattr(self.window, "camera") and self.window.camera) else 0
+			lapis_count = lapis_slot[1] if lapis_slot[0] == 214 else 0
+			offers = getattr(self, "enchant_offers", [])
+
+			for i in range(3):
+				opt_y = opt_start_y - i * (opt_h + 8)
+				is_h_opt = (opt_x <= self.mouse_x <= opt_x + opt_w and opt_y <= self.mouse_y <= opt_y + opt_h)
+
+				offer = offers[i] if (i < len(offers) and offers[i]) else None
+				tier = i + 1
+
+				can_afford = (offer is not None) and (player_level >= offer["req_level"]) and (lapis_count >= tier)
+
+				if not offer:
+					# Empty / inactive button state
+					draw_bordered_box(opt_x, opt_y, opt_w, opt_h, 1, (25, 28, 35, 180), (50, 55, 65, 200))
+					tier_lbl = pyglet.text.Label(f"Choice {tier}", font_name="Arial", font_size=9, x=opt_x + 12, y=opt_y + opt_h // 2, anchor_y="center", color=(80, 85, 95, 255))
+					tier_lbl.draw()
+				else:
+					# Active or Locked option button
+					if can_afford:
+						bg_c = (40, 60, 45, 240) if is_h_opt else (25, 45, 30, 220)
+						border_c = (120, 255, 120, 255) if is_h_opt else (60, 180, 80, 255)
+						txt_c = (230, 255, 230, 255)
+						lvl_tag_c = (140, 255, 60, 255)
+						cost_c = (160, 220, 255, 255)
+					else:
+						bg_c = (35, 30, 35, 200) if is_h_opt else (28, 26, 30, 180)
+						border_c = (100, 70, 70, 200) if is_h_opt else (65, 55, 60, 180)
+						txt_c = (140, 130, 140, 255)
+						lvl_tag_c = (180, 100, 100, 255)
+						cost_c = (120, 120, 140, 255)
+
+					draw_bordered_box(opt_x, opt_y, opt_w, opt_h, 2 if (is_h_opt and can_afford) else 1, bg_c, border_c)
+
+					# Level requirement tag
+					tag_str = f"[{offer['req_level']}]"
+					tag_lbl = pyglet.text.Label(tag_str, font_name="Arial", font_size=11, x=opt_x + 10, y=opt_y + opt_h // 2, anchor_y="center", color=lvl_tag_c)
+					tag_lbl.draw()
+
+					# Enchantment name & rank
+					name_lbl = pyglet.text.Label(offer["display"], font_name="Arial", font_size=10, x=opt_x + 55, y=opt_y + opt_h // 2, anchor_y="center", color=txt_c)
+					name_lbl.draw()
+
+					# Cost text
+					cost_str = f"{tier} Lapis • {tier} Lvl"
+					cost_lbl = pyglet.text.Label(cost_str, font_name="Arial", font_size=9, x=opt_x + opt_w - 10, y=opt_y + opt_h // 2, anchor_x="right", anchor_y="center", color=cost_c)
+					cost_lbl.draw()
+
+					if is_h_opt:
+						if can_afford:
+							current_hover = f"Enchant with {offer['display']} (Requires Level {offer['req_level']}; Costs {tier} Lapis & {tier} XP Levels)"
+						else:
+							current_hover = f"Requires Player Level {offer['req_level']} and {tier} Lapis Lazuli"
+
+			if is_h_item:
+				current_hover = format_slot_hover(self.enchant_item_slot, "Target Item: ")
+			elif is_h_lapis:
+				current_hover = format_slot_hover(lapis_slot, "Lapis Slot: ")
 		else:
 			grid_dim = 3 if self.crafting_mode == "3x3" else 2
 			grid = self.active_crafting_grid
@@ -2222,10 +2852,7 @@ class InventoryGUI:
 						p_lbl.draw()
 
 					if is_h:
-						b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if slot[1] > 0 else f"{arm_names[idx]} Slot (Empty)"
-						def_pts = ARMOR_DEFENSE_POINTS.get(b_id, 0)
-						def_str = f" (+{def_pts} Defense)" if def_pts > 0 else ""
-						current_hover = f"{b_name}{def_str}"
+						current_hover = format_slot_hover(slot, f"{arm_names[idx]}: ")
 
 			grid_title_text = "Crafting Table Grid (3x3):" if self.crafting_mode == "3x3" else "Crafting Grid (2x2):"
 			cg_title_x = win_x + 24 if self.crafting_mode == "3x3" else win_x + 140
@@ -2261,8 +2888,7 @@ class InventoryGUI:
 						cnt_lbl.draw()
 
 					if is_h:
-						b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty Crafting Slot"
-						current_hover = f"{b_name} ({cnt})" if cnt > 0 else "Empty Crafting Slot"
+						current_hover = format_slot_hover(slot)
 
 			# Arrow -> Result Slot
 			arr_x = cg_x + grid_dim * (slot_s + pad) + 10
@@ -2291,8 +2917,7 @@ class InventoryGUI:
 				cnt_lbl.draw()
 
 			if is_res_h:
-				b_name = BLOCK_INFO.get(rb_id, ("Result", ""))[0] if rcnt > 0 else "Result Slot"
-				current_hover = f"Craft Result: {b_name} x{rcnt}" if rcnt > 0 else "Result Slot (Empty)"
+				current_hover = format_slot_hover(self.crafting_result, "Craft Result: ")
 
 		if not self.window.flying:
 			# Survival 27-slot Storage Grid (9 columns x 3 rows - Bottom Half)
@@ -2330,8 +2955,7 @@ class InventoryGUI:
 					cnt_lbl.draw()
 
 				if is_hover:
-					b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty"
-					current_hover = f"{b_name} ({cnt})" if cnt > 0 else "Empty Slot"
+					current_hover = format_slot_hover(slot)
 
 		# Hotbar Section Title & Grid Row inside Inventory
 		hb_title = pyglet.text.Label("Hotbar (Slots 1 - 9):", font_name="Arial", font_size=10, x=win_x + 24, y=win_y + 60, color=(220, 220, 240, 255))
@@ -2369,8 +2993,7 @@ class InventoryGUI:
 			num_lbl.draw()
 
 			if is_h:
-				b_name = BLOCK_INFO.get(b_id, ("Empty", ""))[0] if cnt > 0 else "Empty"
-				current_hover = f"Slot {i + 1}: {b_name} ({cnt})" if cnt > 0 else f"Slot {i + 1}: Empty"
+				current_hover = format_slot_hover(slot, f"Slot {i + 1}: ")
 
 		return current_hover
 
@@ -2457,6 +3080,14 @@ class InventoryGUI:
 			res_y = f_y + 22
 			if res_x <= x <= res_x + slot_s + 8 and res_y <= y <= res_y + slot_s + 8:
 				return ("furnace_output", 0, self.active_furnace.output_slot)
+		elif self.crafting_mode == "enchanting":
+			e_x = win_x + 45
+			e_y = win_y + win_h - 170
+			l_x = e_x + slot_s + 16
+			if e_x <= x <= e_x + slot_s and e_y <= y <= e_y + slot_s:
+				return ("enchant_item", 0, self.enchant_item_slot)
+			if l_x <= x <= l_x + slot_s and e_y <= y <= e_y + slot_s:
+				return ("enchant_lapis", 0, self.enchant_lapis_slot)
 		else:
 			if self.crafting_mode == "2x2":
 				arm_x = win_x + 24
@@ -2523,6 +3154,10 @@ class InventoryGUI:
 			return self.survival_hotbar[sidx]
 		elif stype == "result":
 			return self.crafting_result
+		elif stype == "enchant_item":
+			return getattr(self, "enchant_item_slot", None)
+		elif stype == "enchant_lapis":
+			return getattr(self, "enchant_lapis_slot", None)
 		elif stype == "furnace_input":
 			return self.active_furnace.input_slot if self.active_furnace else None
 		elif stype == "furnace_fuel":
@@ -2553,36 +3188,82 @@ class InventoryGUI:
 						slot[1] -= 1
 						if slot[1] == 0:
 							slot[0] = 0
+							set_slot_enchantments(slot, {})
 				self.evaluate_crafting()
 			return
 
-		if stype in ("furnace_output", "furnace_input", "furnace_fuel"):
-			b_id, cnt = target_slot[0], target_slot[1]
-			if b_id != 0 and cnt > 0:
-				if self.add_item(b_id, cnt):
-					target_slot[0] = 0
-					target_slot[1] = 0
-			return
-
-		if stype == "chest":
-			b_id, cnt = target_slot[0], target_slot[1]
-			if b_id != 0 and cnt > 0:
-				if self.add_item(b_id, cnt):
-					target_slot[0] = 0
-					target_slot[1] = 0
-			return
-
-		if stype == "armor":
-			b_id, cnt = target_slot[0], target_slot[1]
-			if b_id != 0 and cnt > 0:
-				if self.add_item(b_id, cnt):
-					target_slot[0] = 0
-					target_slot[1] = 0
+		if not target_slot or target_slot[0] == 0 or target_slot[1] <= 0:
 			return
 
 		b_id, cnt = target_slot[0], target_slot[1]
-		if b_id == 0 or cnt <= 0:
+		ench = get_slot_enchantments(target_slot)
+		max_stack = get_max_stack_size(b_id)
+
+		if stype in ("furnace_output", "furnace_input", "furnace_fuel"):
+			if self.add_item(b_id, cnt, enchantments=ench):
+				target_slot[0] = 0
+				target_slot[1] = 0
+				set_slot_enchantments(target_slot, {})
+				if stype == "furnace_output" and self.active_furnace and hasattr(self.active_furnace, 'accumulated_xp') and self.active_furnace.accumulated_xp > 0:
+					import math, random
+					earned_xp = int(math.floor(self.active_furnace.accumulated_xp))
+					if random.random() < (self.active_furnace.accumulated_xp - earned_xp):
+						earned_xp += 1
+					self.active_furnace.accumulated_xp = 0.0
+					if earned_xp > 0 and self.window and hasattr(self.window, 'camera') and self.window.camera:
+						self.window.camera.add_xp(earned_xp)
 			return
+
+		if stype == "chest":
+			if self.add_item(b_id, cnt, enchantments=ench):
+				target_slot[0] = 0
+				target_slot[1] = 0
+				set_slot_enchantments(target_slot, {})
+			return
+
+		if stype == "armor":
+			if self.add_item(b_id, cnt, enchantments=ench):
+				target_slot[0] = 0
+				target_slot[1] = 0
+				set_slot_enchantments(target_slot, {})
+			return
+
+		if stype in ("enchant_item", "enchant_lapis"):
+			if self.add_item(b_id, cnt, enchantments=ench):
+				target_slot[0] = 0
+				target_slot[1] = 0
+				set_slot_enchantments(target_slot, {})
+				self.update_enchantment_offers()
+			return
+
+		if self.crafting_mode == "enchanting" and stype in ("inv", "hotbar"):
+			import enchanting
+			if b_id == 214:
+				# Lapis Lazuli: Move/stack into lapis slot
+				l_slot = self.enchant_lapis_slot
+				max_lapis = 64
+				curr_cnt = l_slot[1] if l_slot[0] == 214 else 0
+				if l_slot[0] == 0 or (l_slot[0] == 214 and curr_cnt < max_lapis):
+					addable = min(cnt, max_lapis - curr_cnt)
+					l_slot[0] = 214
+					l_slot[1] = curr_cnt + addable
+					target_slot[1] -= addable
+					if target_slot[1] <= 0:
+						target_slot[0] = 0
+						set_slot_enchantments(target_slot, {})
+					self.update_enchantment_offers()
+					return
+			elif enchanting.is_enchantable(b_id) and getattr(self, "enchant_item_slot", [0])[0] == 0:
+				# Enchantable item: Move 1 into item slot
+				self.enchant_item_slot[0] = b_id
+				self.enchant_item_slot[1] = 1
+				set_slot_enchantments(self.enchant_item_slot, ench)
+				target_slot[1] -= 1
+				if target_slot[1] <= 0:
+					target_slot[0] = 0
+					set_slot_enchantments(target_slot, {})
+				self.update_enchantment_offers()
+				return
 
 		# Auto-equip armor pieces when shift-clicked from inventory or hotbar
 		if stype in ("inv", "hotbar") and b_id in ARMOR_SLOT_TYPES:
@@ -2591,22 +3272,22 @@ class InventoryGUI:
 			if arm_slot[0] == 0:
 				arm_slot[0] = b_id
 				arm_slot[1] = 1
+				set_slot_enchantments(arm_slot, ench)
 				target_slot[1] -= 1
 				if target_slot[1] <= 0:
 					target_slot[0] = 0
+					set_slot_enchantments(target_slot, {})
 				return
-
-		max_stack = get_max_stack_size(b_id)
 
 		if self.crafting_mode in ("single_chest", "double_chest") and stype in ("inv", "hotbar"):
 			chests = [self.active_chest1]
 			if self.crafting_mode == "double_chest" and self.active_chest2:
 				chests.append(self.active_chest2)
 
-			if max_stack > 1:
+			if max_stack > 1 and not ench:
 				for ch in chests:
 					for slot in ch.slots:
-						if slot[0] == b_id and slot[1] < max_stack:
+						if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
 							addable = min(cnt, max_stack - slot[1])
 							slot[1] += addable
 							cnt -= addable
@@ -2619,12 +3300,15 @@ class InventoryGUI:
 						if slot[0] == 0 or slot[1] == 0:
 							slot[0] = b_id
 							slot[1] = min(cnt, max_stack)
+							set_slot_enchantments(slot, ench)
 							cnt -= slot[1]
 							if cnt == 0: break
 					if cnt == 0: break
 
 			target_slot[1] = cnt
-			if cnt == 0: target_slot[0] = 0
+			if cnt == 0:
+				target_slot[0] = 0
+				set_slot_enchantments(target_slot, {})
 			return
 
 		if self.crafting_mode == "furnace" and self.active_furnace and stype in ("inv", "hotbar"):
@@ -2636,6 +3320,7 @@ class InventoryGUI:
 					f_slot[1] += cnt
 					target_slot[0] = 0
 					target_slot[1] = 0
+					set_slot_enchantments(target_slot, {})
 					return
 			if b_id in SMELTING_RECIPES:
 				i_slot = self.active_furnace.input_slot
@@ -2645,18 +3330,20 @@ class InventoryGUI:
 					i_slot[1] += cnt
 					target_slot[0] = 0
 					target_slot[1] = 0
+					set_slot_enchantments(target_slot, {})
 					return
 
 		if stype == "craft":
-			if self.add_item(b_id, cnt):
+			if self.add_item(b_id, cnt, enchantments=ench):
 				target_slot[0] = 0
 				target_slot[1] = 0
+				set_slot_enchantments(target_slot, {})
 				self.evaluate_crafting()
 		elif stype == "inv":
 			# Move from storage inventory into hotbar
-			if max_stack > 1:
+			if max_stack > 1 and not ench:
 				for slot in self.survival_hotbar:
-					if slot[0] == b_id and slot[1] < max_stack:
+					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
 						addable = min(cnt, max_stack - slot[1])
 						slot[1] += addable
 						cnt -= addable
@@ -2666,15 +3353,18 @@ class InventoryGUI:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
 						slot[1] = min(cnt, max_stack)
+						set_slot_enchantments(slot, ench)
 						cnt -= slot[1]
 						if cnt == 0: break
 			target_slot[1] = cnt
-			if cnt == 0: target_slot[0] = 0
+			if cnt == 0:
+				target_slot[0] = 0
+				set_slot_enchantments(target_slot, {})
 		elif stype == "hotbar":
 			# Move from hotbar into storage inventory
-			if max_stack > 1:
+			if max_stack > 1 and not ench:
 				for slot in self.survival_inventory:
-					if slot[0] == b_id and slot[1] < max_stack:
+					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
 						addable = min(cnt, max_stack - slot[1])
 						slot[1] += addable
 						cnt -= addable
@@ -2684,43 +3374,61 @@ class InventoryGUI:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
 						slot[1] = min(cnt, max_stack)
+						set_slot_enchantments(slot, ench)
 						cnt -= slot[1]
 						if cnt == 0: break
 			target_slot[1] = cnt
-			if cnt == 0: target_slot[0] = 0
+			if cnt == 0:
+				target_slot[0] = 0
+				set_slot_enchantments(target_slot, {})
 
 	def _update_left_drag(self):
 		if not self.drag_visited_keys or not self.drag_initial_held:
 			return
 
-		b_id, total_cnt = self.drag_initial_held
+		b_id = self.drag_initial_held[0]
+		total_cnt = self.drag_initial_held[1]
+		ench = get_slot_enchantments(self.drag_initial_held)
+		max_stack = get_max_stack_size(b_id)
+
 		n_slots = len(self.drag_visited_keys)
 		per_slot = total_cnt // n_slots
-		remainder = total_cnt % n_slots
 
-		# Reset all visited slots to baseline snapshot first
+		# 1. Reset all visited slots to baseline snapshot first
 		for key in self.drag_visited_keys:
 			slot_ref = self._get_slot_ref_by_key(key)
-			if slot_ref:
-				orig_b, orig_c = self.drag_slot_snapshots[key]
+			if slot_ref is not None and key in self.drag_slot_snapshots:
+				orig_b = self.drag_slot_snapshots[key][0]
+				orig_c = self.drag_slot_snapshots[key][1]
+				orig_e = get_slot_enchantments(self.drag_slot_snapshots[key])
 				slot_ref[0] = orig_b
 				slot_ref[1] = orig_c
+				set_slot_enchantments(slot_ref, orig_e)
 
+		# 2. Distribute per_slot into each visited slot
+		allocated = 0
 		if per_slot > 0:
 			for key in self.drag_visited_keys:
 				slot_ref = self._get_slot_ref_by_key(key)
-				if slot_ref:
-					orig_b, orig_c = self.drag_slot_snapshots[key]
-					if orig_b == 0 or orig_c == 0:
-						slot_ref[0] = b_id
-						slot_ref[1] = min(64, per_slot)
-					elif orig_b == b_id:
-						slot_ref[1] = min(64, orig_c + per_slot)
-		else:
-			remainder = total_cnt
+				if slot_ref is not None and key in self.drag_slot_snapshots:
+					orig_c = self.drag_slot_snapshots[key][1]
+					space = max_stack - orig_c
+					addable = min(per_slot, max(0, space))
+					slot_ref[0] = b_id
+					slot_ref[1] = orig_c + addable
+					if orig_c == 0:
+						set_slot_enchantments(slot_ref, ench)
+					allocated += addable
 
-		self.held_stack = [b_id, remainder] if remainder > 0 else None
+		remainder = total_cnt - allocated
+		if remainder > 0:
+			self.held_stack = [b_id, remainder]
+			set_slot_enchantments(self.held_stack, ench)
+		else:
+			self.held_stack = None
+
 		self.evaluate_crafting()
+		self.update_enchantment_offers()
 
 	def gather_matching_items(self):
 		"""Gathers all matching items scattered across inventory/hotbar/crafting into held_stack up to max_stack."""
@@ -2774,7 +3482,7 @@ class InventoryGUI:
 
 	def handle_slot_click(self, target_slot, is_right_click, slot_type=None, slot_idx=None):
 		"""
-		Handles slot clicks for inventory, hotbar, armor, and crafting grid slots.
+		Handles slot clicks for inventory, hotbar, armor, enchanting, and crafting grid slots.
 		Left Click: Pick up / place full stack, or swap stacks.
 		Right Click:
 		  - If holding NO item: Splits target slot items in half (takes math.ceil(count / 2) onto cursor).
@@ -2787,6 +3495,14 @@ class InventoryGUI:
 			if ARMOR_SLOT_TYPES.get(b_id) != slot_idx:
 				return  # Reject invalid armor piece type for this slot!
 
+		if slot_type == "enchant_lapis" and held and held[0] != 0 and held[0] != 214:
+			return  # Reject non-Lapis items in lapis slot!
+
+		if slot_type == "enchant_item" and held and held[0] != 0:
+			import enchanting
+			if not enchanting.is_enchantable(held[0]):
+				return  # Reject non-enchantable items in enchanting item slot!
+
 		if is_right_click:
 			if held is None or held[0] == 0 or held[1] <= 0:
 				# Right click when NOT holding an item: Split stack in half!
@@ -2794,25 +3510,31 @@ class InventoryGUI:
 					total = target_slot[1]
 					take = (total + 1) // 2  # math.ceil(total / 2)
 					leave = total - take
+					ench = get_slot_enchantments(target_slot)
 					
-					self.held_stack = [target_slot[0], take]
+					self.held_stack = [target_slot[0], take, dict(ench)]
 					if leave > 0:
 						target_slot[1] = leave
 					else:
 						target_slot[0] = 0
 						target_slot[1] = 0
+						set_slot_enchantments(target_slot, {})
 				return
 			else:
 				# Right click when HOLDING an item: Place 1 item into target slot!
 				b_id = held[0]
+				held_ench = get_slot_enchantments(held)
+				target_ench = get_slot_enchantments(target_slot)
 				max_stack = get_max_stack_size(b_id)
+
 				if target_slot[0] == 0 or target_slot[1] == 0:
 					target_slot[0] = b_id
 					target_slot[1] = 1
+					set_slot_enchantments(target_slot, held_ench)
 					held[1] -= 1
 					if held[1] <= 0:
 						self.held_stack = None
-				elif target_slot[0] == b_id and target_slot[1] < max_stack:
+				elif target_slot[0] == b_id and target_ench == held_ench and not held_ench and target_slot[1] < max_stack:
 					target_slot[1] += 1
 					held[1] -= 1
 					if held[1] <= 0:
@@ -2826,7 +3548,6 @@ class InventoryGUI:
 		if not self.inventory_open:
 			return False
 
-		import time
 		curr_time = time.time()
 		is_double_left = (button == pyglet.window.mouse.LEFT) and (curr_time - self.last_left_click_time < 0.35)
 		if button == pyglet.window.mouse.LEFT:
@@ -2845,6 +3566,41 @@ class InventoryGUI:
 		if is_shift and slot_info and not self.window.flying:
 			self.handle_shift_click(slot_info)
 			return True
+
+		# Check Enchanting Table Choice Click
+		if self.crafting_mode == "enchanting" and not self.window.flying and button == pyglet.window.mouse.LEFT:
+			win_w = 640
+			win_h = 460
+			win_x = (self.window.width - win_w) // 2
+			win_y = (self.window.height - win_h) // 2
+			opt_x = win_x + 180
+			opt_w = 420
+			opt_h = 36
+			opt_start_y = win_y + win_h - 110
+
+			player_level = self.window.camera.level if (self.window and hasattr(self.window, "camera") and self.window.camera) else 0
+			lapis_count = self.enchant_lapis_slot[1] if self.enchant_lapis_slot[0] == 214 else 0
+			offers = getattr(self, "enchant_offers", [])
+
+			for i in range(3):
+				opt_y = opt_start_y - i * (opt_h + 8)
+				if opt_x <= x <= opt_x + opt_w and opt_y <= y <= opt_y + opt_h:
+					offer = offers[i] if (i < len(offers) and offers[i]) else None
+					tier = i + 1
+					if offer and player_level >= offer["req_level"] and lapis_count >= tier and self.enchant_item_slot[0] != 0:
+						# Deduct lapis
+						self.enchant_lapis_slot[1] -= tier
+						if self.enchant_lapis_slot[1] <= 0:
+							self.enchant_lapis_slot = [0, 0, {}]
+						# Deduct player levels
+						if self.window and hasattr(self.window, "camera") and self.window.camera:
+							self.window.camera.deduct_levels(tier)
+						# Apply enchantment
+						self.enchant_item_slot = enchanting.apply_enchantment_to_slot(self.enchant_item_slot, offer["key"], offer["level"])
+						# Refresh seed & offers
+						self.enchant_seed += 13
+						self.update_enchantment_offers()
+						return True
 
 		# Update creative search focus based on click location
 		if self.window.flying:
@@ -2915,44 +3671,111 @@ class InventoryGUI:
 			elif stype == "furnace_output":
 				out_id, out_cnt = target_slot[0], target_slot[1]
 				if out_id != 0 and out_cnt > 0:
+					collected = False
 					if self.held_stack is None:
 						self.held_stack = [out_id, out_cnt]
 						target_slot[0] = 0
 						target_slot[1] = 0
+						collected = True
 					elif self.held_stack[0] == out_id and self.held_stack[1] + out_cnt <= 64:
 						self.held_stack[1] += out_cnt
 						target_slot[0] = 0
 						target_slot[1] = 0
+						collected = True
+
+					if collected and self.active_furnace and hasattr(self.active_furnace, 'accumulated_xp') and self.active_furnace.accumulated_xp > 0:
+						earned_xp = int(math.floor(self.active_furnace.accumulated_xp))
+						if random.random() < (self.active_furnace.accumulated_xp - earned_xp):
+							earned_xp += 1
+						self.active_furnace.accumulated_xp = 0.0
+						if earned_xp > 0 and self.window and hasattr(self.window, 'camera') and self.window.camera:
+							self.window.camera.add_xp(earned_xp)
 				return True
 			else:
-				# Regular slot click (crafting, armor, inventory, or hotbar)
-				self.handle_slot_click(target_slot, is_right, slot_type=stype, slot_idx=sidx)
-				if stype == "craft":
-					self.evaluate_crafting()
-
-				# Start drag tracking if holding an item stack
+				# Regular slot click (crafting, armor, inventory, or hotbar, or enchanting)
+				key = (stype, sidx)
 				if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
-					self.is_dragging = True
-					self.drag_button = button
-					self.drag_initial_held = list(self.held_stack)
-					self.drag_visited_keys = [(stype, sidx)]
-					self.drag_slot_snapshots = {(stype, sidx): list(target_slot)}
-				return True
+					b_id = self.held_stack[0]
+					max_stack = get_max_stack_size(b_id)
+					is_drag_compatible = (
+						stype in ("inv", "hotbar", "craft", "chest", "furnace_input", "furnace_fuel") and
+						(target_slot[0] == 0 or (target_slot[0] == b_id and not is_slot_enchanted(target_slot) and not is_slot_enchanted(self.held_stack) and target_slot[1] < max_stack))
+					)
 
-		# Clicked outside window -> Drop item into world
+					if button == pyglet.window.mouse.LEFT and is_drag_compatible:
+						# Start Left Click equal-split drag
+						self.is_dragging = True
+						self.drag_button = pyglet.window.mouse.LEFT
+						self.drag_initial_held = list(self.held_stack)
+						self.drag_visited_keys = [key]
+						self.drag_slot_snapshots = {key: list(target_slot)}
+						self._update_left_drag()
+						return True
+					elif button == pyglet.window.mouse.RIGHT and is_drag_compatible:
+						# Place 1 item and start Right Click single-item drag
+						ench = get_slot_enchantments(self.held_stack)
+						if target_slot[0] == 0 or target_slot[1] == 0:
+							target_slot[0] = b_id
+							target_slot[1] = 1
+							set_slot_enchantments(target_slot, ench)
+							self.held_stack[1] -= 1
+						elif target_slot[0] == b_id and target_slot[1] < max_stack:
+							target_slot[1] += 1
+							self.held_stack[1] -= 1
+
+						if self.held_stack[1] <= 0:
+							self.held_stack = None
+
+						if self.held_stack:
+							self.is_dragging = True
+							self.drag_button = pyglet.window.mouse.RIGHT
+							self.drag_visited_keys = [key]
+						else:
+							self.is_dragging = False
+
+						if stype == "craft":
+							self.evaluate_crafting()
+						elif stype in ("enchant_item", "enchant_lapis"):
+							self.update_enchantment_offers()
+						return True
+					else:
+						# Standard click (swap or armor equip)
+						self.handle_slot_click(target_slot, is_right, slot_type=stype, slot_idx=sidx)
+						if stype == "craft":
+							self.evaluate_crafting()
+						elif stype in ("enchant_item", "enchant_lapis"):
+							self.update_enchantment_offers()
+						return True
+				else:
+					# Cursor has no item: normal click picks up stack or half-stack
+					self.handle_slot_click(target_slot, is_right, slot_type=stype, slot_idx=sidx)
+					if stype == "craft":
+						self.evaluate_crafting()
+					elif stype in ("enchant_item", "enchant_lapis"):
+						self.update_enchantment_offers()
+					return True
+
+		# Clicked outside slots / outside window -> Drop item into world
 		if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
-			if hasattr(self.window, "item_drop_manager"):
+			id_mgr = getattr(self.window, "item_drop_manager", None)
+			if not id_mgr and hasattr(self.window, "world"):
+				id_mgr = getattr(self.window.world, "item_drop_manager", None)
+			if id_mgr and hasattr(self.window, "camera"):
 				px, py, pz = self.window.camera.position
-				rad_x = self.window.camera.rotation[0]
-				rad_y = self.window.camera.rotation[1]
-				vx = math.sin(rad_x) * math.cos(rad_y) * 3.5
-				vy = math.sin(rad_y) * 3.5 + 1.2
-				vz = -math.cos(rad_x) * math.cos(rad_y) * 3.5
+				rad_x, rad_y = self.window.camera.rotation
+				dir_x = math.cos(rad_x) * math.cos(rad_y)
+				dir_y = math.sin(rad_y)
+				dir_z = math.sin(rad_x) * math.cos(rad_y)
+				vx = dir_x * 3.5
+				vy = dir_y * 3.5 + 1.2
+				vz = dir_z * 3.5
 
 				drop_cnt = 1 if is_right else self.held_stack[1]
-				self.window.item_drop_manager.spawn_drop(
+				ench = get_slot_enchantments(self.held_stack)
+				id_mgr.spawn_drop(
 					self.held_stack[0], drop_cnt,
-					[px, py - 0.4, pz], velocity=[vx, vy, vz]
+					[px, py - 0.4, pz], velocity=[vx, vy, vz],
+					enchantments=ench
 				)
 				self.held_stack[1] -= drop_cnt
 				if self.held_stack[1] <= 0:
@@ -2962,48 +3785,75 @@ class InventoryGUI:
 		return True
 
 	def on_mouse_drag(self, x, y, dx, dy, buttons, modifiers):
-		if not self.inventory_open or not self.is_dragging or not self.held_stack:
+		if not self.inventory_open or not self.is_dragging or not self.drag_button:
 			return
 
 		slot_info = self.get_slot_at_pos(x, y)
-		if not slot_info or slot_info[0] == "result" or slot_info[0] == "creative":
+		if not slot_info or slot_info[0] == "result" or slot_info[0] == "creative" or slot_info[0] == "armor":
 			return
 
 		stype, sidx, target_slot = slot_info
 		key = (stype, sidx)
-
-		b_id = self.held_stack[0]
-		if target_slot[0] != 0 and target_slot[0] != b_id:
+		if key in self.drag_visited_keys:
 			return
 
-		if self.drag_button == pyglet.window.mouse.RIGHT:
-			if key not in self.drag_visited_keys:
-				self.drag_visited_keys.append(key)
-				if target_slot[0] == 0 or target_slot[1] == 0:
-					target_slot[0] = b_id
-					target_slot[1] = 1
-					self.held_stack[1] -= 1
-				elif target_slot[0] == b_id and target_slot[1] < 64:
-					target_slot[1] += 1
-					self.held_stack[1] -= 1
+		if self.drag_button == pyglet.window.mouse.LEFT:
+			if not self.drag_initial_held:
+				return
+			b_id = self.drag_initial_held[0]
+			max_stack = get_max_stack_size(b_id)
+			if target_slot[0] != 0 and target_slot[0] != b_id:
+				return
+			if is_slot_enchanted(target_slot) and target_slot[0] != 0:
+				return
+			if target_slot[1] >= max_stack:
+				return
 
-				if self.held_stack[1] <= 0:
-					self.held_stack = None
-					self.is_dragging = False
+			self.drag_visited_keys.append(key)
+			self.drag_slot_snapshots[key] = list(target_slot)
+			self._update_left_drag()
 
-				if stype == "craft":
-					self.evaluate_crafting()
-		elif self.drag_button == pyglet.window.mouse.LEFT:
-			if key not in self.drag_visited_keys:
+		elif self.drag_button == pyglet.window.mouse.RIGHT:
+			if not self.held_stack or self.held_stack[1] <= 0:
+				self.is_dragging = False
+				return
+
+			b_id = self.held_stack[0]
+			ench = get_slot_enchantments(self.held_stack)
+			max_stack = get_max_stack_size(b_id)
+
+			if target_slot[0] == 0 or target_slot[1] == 0:
+				target_slot[0] = b_id
+				target_slot[1] = 1
+				set_slot_enchantments(target_slot, ench)
+				self.held_stack[1] -= 1
 				self.drag_visited_keys.append(key)
-				self.drag_slot_snapshots[key] = list(target_slot)
-				self._update_left_drag()
+			elif target_slot[0] == b_id and target_slot[1] < max_stack and not is_slot_enchanted(target_slot):
+				target_slot[1] += 1
+				self.held_stack[1] -= 1
+				self.drag_visited_keys.append(key)
+			else:
+				return
+
+			if self.held_stack[1] <= 0:
+				self.held_stack = None
+				self.is_dragging = False
+
+			if stype == "craft":
+				self.evaluate_crafting()
+			elif stype in ("enchant_item", "enchant_lapis"):
+				self.update_enchantment_offers()
 
 	def on_mouse_release(self, x, y, button, modifiers):
-		self.is_dragging = False
-		self.drag_button = None
-		self.drag_visited_keys.clear()
-		self.drag_slot_snapshots.clear()
+		if self.is_dragging:
+			if self.drag_button == pyglet.window.mouse.LEFT:
+				self._update_left_drag()
+			self.is_dragging = False
+			self.drag_button = None
+			self.drag_visited_keys.clear()
+			self.drag_slot_snapshots.clear()
+			self.drag_initial_held = None
+			self.evaluate_crafting()
 
 	def _swap_slot(self, target_slot, held, slot_type=None, slot_idx=None):
 		if slot_type == "armor" and slot_idx is not None and held and held[0] != 0:
@@ -3014,13 +3864,17 @@ class InventoryGUI:
 			new_held = list(target_slot)
 			target_slot[0] = 0
 			target_slot[1] = 0
+			set_slot_enchantments(target_slot, {})
 			return new_held if new_held[0] != 0 else None
 		else:
+			held_ench = get_slot_enchantments(held)
+			target_ench = get_slot_enchantments(target_slot)
 			if target_slot[0] == 0 or target_slot[1] == 0:
 				target_slot[0] = held[0]
 				target_slot[1] = held[1]
+				set_slot_enchantments(target_slot, held_ench)
 				return None
-			elif target_slot[0] == held[0]:
+			elif target_slot[0] == held[0] and target_ench == held_ench and not held_ench:
 				max_stack = get_max_stack_size(target_slot[0])
 				space = max_stack - target_slot[1]
 				addable = min(space, held[1])
@@ -3031,6 +3885,7 @@ class InventoryGUI:
 				old_target = list(target_slot)
 				target_slot[0] = held[0]
 				target_slot[1] = held[1]
+				set_slot_enchantments(target_slot, held_ench)
 				return old_target
 
 	def on_mouse_scroll(self, scroll_y):
@@ -3061,9 +3916,18 @@ class InventoryGUI:
 		self.set_selected_slot(new_slot)
 
 	def drop_all_on_death(self, death_position, item_drop_manager):
-		"""Drops all inventory, hotbar, armor, crafting grid, and cursor held items at death_position."""
+		"""Drops all inventory, hotbar, armor, crafting grid, cursor held items, and exactly half XP at death_position."""
 		import random
 		px, py, pz = death_position
+
+		# Drop exactly half of player's current total XP at death location
+		cam = getattr(self.window, 'camera', None)
+		if cam and hasattr(cam, 'total_xp'):
+			total_xp = cam.total_xp
+			half_xp = total_xp // 2
+			cam.reset_xp()
+			if half_xp > 0 and item_drop_manager:
+				item_drop_manager.spawn_xp_orb(half_xp, [px, py - 0.2, pz])
 
 		def drop_slot(slot):
 			if slot and slot[0] != 0 and slot[1] > 0:
@@ -3071,9 +3935,14 @@ class InventoryGUI:
 					vx = random.uniform(-1.8, 1.8)
 					vy = random.uniform(1.5, 3.5)
 					vz = random.uniform(-1.8, 1.8)
-					item_drop_manager.spawn_drop(slot[0], slot[1], [px, py - 0.4, pz], velocity=[vx, vy, vz])
+					ench = get_slot_enchantments(slot)
+					item_drop_manager.spawn_drop(
+						slot[0], slot[1], [px, py - 0.4, pz],
+						velocity=[vx, vy, vz], enchantments=ench
+					)
 				slot[0] = 0
 				slot[1] = 0
+				set_slot_enchantments(slot, {})
 
 		# 1. Hotbar slots
 		for slot in self.survival_hotbar:
@@ -3100,7 +3969,11 @@ class InventoryGUI:
 				vx = random.uniform(-1.8, 1.8)
 				vy = random.uniform(1.5, 3.5)
 				vz = random.uniform(-1.8, 1.8)
-				item_drop_manager.spawn_drop(self.held_stack[0], self.held_stack[1], [px, py - 0.4, pz], velocity=[vx, vy, vz])
+				ench = get_slot_enchantments(self.held_stack)
+				item_drop_manager.spawn_drop(
+					self.held_stack[0], self.held_stack[1], [px, py - 0.4, pz],
+					velocity=[vx, vy, vz], enchantments=ench
+				)
 			self.held_stack = None
 
 		self.inventory_open = False

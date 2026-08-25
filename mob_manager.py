@@ -591,16 +591,19 @@ class MobManager:
 
 			# Process dead mob drops & removal
 			if mob.is_dead:
-				drops, xp = mob.get_loot_drops(is_on_fire=(mob.fire_timer > 0))
+				looting_lvl = getattr(mob, "last_looting_level", 0)
+				drops, xp = mob.get_loot_drops(is_on_fire=(mob.fire_timer > 0), looting_level=looting_lvl)
 				if item_drop_manager:
 					for b_id, count in drops:
 						item_drop_manager.spawn_drop(b_id, count, mob.position)
+					if xp and xp > 0:
+						item_drop_manager.spawn_xp_orb(xp, mob.position)
 				self.mobs.pop(i)
 				continue
 
 			i += 1
 
-	def attack_mob_at_crosshair(self, camera, max_reach=5.0, damage=4):
+	def attack_mob_at_crosshair(self, camera, max_reach=5.0, damage=4, fire_duration=0.0, looting_level=0):
 		"""Checks if player's attack Raycast hits a nearby mob and deals damage."""
 		cam_x, cam_y, cam_z = camera.position
 		yaw, pitch = camera.rotation
@@ -636,7 +639,10 @@ class MobManager:
 
 		if closest_mob:
 			attacker_pos = list(camera.position)
-			closest_mob.take_damage(damage, attacker_pos=attacker_pos, world=self.world, mob_manager=self)
+			closest_mob.take_damage(damage, attacker_pos=attacker_pos, world=self.world, mob_manager=self, looting_level=looting_level)
+
+			if fire_duration > 0.0:
+				closest_mob.fire_timer = max(getattr(closest_mob, "fire_timer", 0.0), float(fire_duration))
 
 			# If a Zombie Pigman is provoked, immediately alert ALL nearby Pigmen within 32 blocks!
 			if closest_mob.mob_type == "zombie_pigman":

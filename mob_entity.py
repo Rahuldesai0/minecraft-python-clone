@@ -324,12 +324,15 @@ class MobEntity:
 		b_head = world.get_block_number((int(math.floor(mx)), int(math.floor(head_y)), int(math.floor(mz))))
 		return is_water_block(b_head)
 
-	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, *args, **kwargs):
+	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, looting_level=0, *args, **kwargs):
 		"""Applies damage, flashes red, and enters directional panic fleeing state."""
 		if self.is_dead or damage <= 0:
 			return
 		if is_fire and getattr(self, "is_fire_immune", False):
 			return
+
+		if looting_level > 0:
+			self.last_looting_level = looting_level
 
 		self.health = max(0, self.health - damage)
 		self.hurt_time = 0.4
@@ -668,8 +671,10 @@ class PigEntity(MobEntity):
 	def __init__(self, entity_id, position):
 		super().__init__(entity_id, position, mob_type="pig", max_health=10, speed=0.25, width=0.9, height=0.9)
 
-	def get_loot_drops(self, is_on_fire=False):
-		count = random.randint(1, 3)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		count = random.randint(1, 3 + looting_level)
 		item_id = 128 if is_on_fire else 125  # Cooked (128) vs Raw Porkchop (125)
 		xp = random.randint(1, 3)
 		return [(item_id, count)], xp
@@ -680,10 +685,12 @@ class CowEntity(MobEntity):
 	def __init__(self, entity_id, position):
 		super().__init__(entity_id, position, mob_type="cow", max_health=10, speed=0.20, width=0.9, height=1.4)
 
-	def get_loot_drops(self, is_on_fire=False):
-		beef_count = random.randint(1, 3)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		beef_count = random.randint(1, 3 + looting_level)
 		beef_id = 129 if is_on_fire else 127  # Steak (129) vs Raw Beef (127)
-		leather_count = random.randint(0, 2)
+		leather_count = random.randint(0, 2 + looting_level)
 		xp = random.randint(1, 3)
 
 		drops = [(beef_id, beef_count)]
@@ -711,8 +718,10 @@ class SheepEntity(MobEntity):
 			self.grazing_timer = 0.0
 			self.is_grazing = False
 
-	def get_loot_drops(self, is_on_fire=False):
-		mutton_count = random.randint(1, 2)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		mutton_count = random.randint(1, 2 + looting_level)
 		mutton_id = 165 if is_on_fire else 164  # Cooked (165) vs Raw Mutton (164)
 		wool_id = 83  # White Wool (83)
 		xp = random.randint(1, 3)
@@ -733,12 +742,15 @@ class ChickenEntity(MobEntity):
 		else:
 			self.wing_flap = 0.0
 
-	def get_loot_drops(self, is_on_fire=False):
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
 		chicken_id = 163 if is_on_fire else 162  # Cooked (163) vs Raw Chicken (162)
-		feather_count = random.randint(0, 2)
+		chicken_count = 1 + random.randint(0, looting_level)
+		feather_count = random.randint(0, 2 + looting_level)
 		xp = random.randint(1, 3)
 
-		drops = [(chicken_id, 1)]
+		drops = [(chicken_id, chicken_count)]
 		if feather_count > 0:
 			drops.append((160, feather_count))  # Feather (160)
 		return drops, xp
@@ -1233,8 +1245,10 @@ class ZombieEntity(HostileEntity):
 		if not self.is_dead:
 			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
 
-	def get_loot_drops(self, is_on_fire=False):
-		flesh_count = random.randint(0, 2)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		flesh_count = random.randint(0, 2 + looting_level)
 		xp = random.randint(3, 5)
 		drops = []
 		if flesh_count > 0:
@@ -1261,11 +1275,14 @@ class ZombiePigmanEntity(HostileEntity):
 		if target_pos:
 			self.target = tuple(target_pos)
 
-	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, *args, **kwargs):
+	def take_damage(self, damage, attacker_pos=None, is_fire=False, is_drowning=False, is_fall=False, world=None, mob_manager=None, looting_level=0, *args, **kwargs):
 		if self.is_dead or damage <= 0:
 			return
 		if is_fire and self.is_fire_immune:
 			return
+
+		if looting_level > 0:
+			self.last_looting_level = looting_level
 
 		self.health = max(0, self.health - damage)
 		self.hurt_time = 0.4
@@ -1305,9 +1322,12 @@ class ZombiePigmanEntity(HostileEntity):
 		# Base physics, movement, gravity, collisions
 		super(HostileEntity, self).update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 
-	def get_loot_drops(self, is_on_fire=False):
-		flesh_count = random.randint(0, 1)
-		gold_count = 1 if random.random() < 0.35 else 0
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		flesh_count = random.randint(0, 1 + looting_level)
+		gold_chance = 0.35 + 0.15 * looting_level
+		gold_count = random.randint(0, 1 + looting_level) if random.random() < gold_chance else 0
 		xp = 5
 		drops = []
 		if flesh_count > 0:
@@ -1362,8 +1382,10 @@ class BlazeEntity(HostileEntity):
 		diff = (self.target_yaw - self.yaw + math.pi) % math.tau - math.pi
 		self.yaw += diff * min(1.0, dt * 8.0)
 
-	def get_loot_drops(self, is_on_fire=False):
-		rod_count = random.randint(0, 1)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		rod_count = random.randint(0, 1 + looting_level)
 		xp = 10
 		drops = []
 		if rod_count > 0:
@@ -1382,9 +1404,11 @@ class SkeletonEntity(HostileEntity):
 		if not self.is_dead:
 			self.ranged_goal.update(dt, world, player_pos, camera=camera, arrow_manager=arrow_manager, flying=flying)
 
-	def get_loot_drops(self, is_on_fire=False):
-		bone_count = random.randint(0, 2)
-		arrow_count = random.randint(0, 2)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		bone_count = random.randint(0, 2 + looting_level)
+		arrow_count = random.randint(0, 2 + looting_level)
 		xp = random.randint(3, 5)
 		drops = []
 		if bone_count > 0:
@@ -1430,9 +1454,12 @@ class SpiderEntity(HostileEntity):
 		if not self.is_dead:
 			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
 
-	def get_loot_drops(self, is_on_fire=False):
-		string_count = random.randint(0, 2)
-		eye_count = 1 if random.random() < 0.33 else 0
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		string_count = random.randint(0, 2 + looting_level)
+		eye_chance = 0.33 + 0.15 * looting_level
+		eye_count = 1 + random.randint(0, looting_level) if random.random() < eye_chance else 0
 		xp = random.randint(3, 5)
 		drops = []
 		if string_count > 0:
@@ -1551,8 +1578,10 @@ class CreeperEntity(HostileEntity):
 				item_drop_manager=item_drop_manager, flying=flying
 			)
 
-	def get_loot_drops(self, is_on_fire=False):
-		gunpowder_count = random.randint(0, 2)
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		gunpowder_count = random.randint(0, 2 + looting_level)
 		xp = 5
 		drops = []
 		if gunpowder_count > 0:
@@ -1823,8 +1852,11 @@ class EndermanEntity(HostileEntity):
 		# Base mob physics, gravity, and terrain collisions
 		super(HostileEntity, self).update(dt, world, player_pos, camera=camera, gui=gui, arrow_manager=arrow_manager, time_of_day=time_of_day, flying=flying, *args, **kwargs)
 
-	def get_loot_drops(self, is_on_fire=False):
-		pearl_count = 1 if random.random() < 0.50 else 0
+	def get_loot_drops(self, is_on_fire=False, looting_level=None):
+		if looting_level is None:
+			looting_level = getattr(self, "last_looting_level", 0)
+		pearl_chance = 0.50 + 0.15 * looting_level
+		pearl_count = random.randint(0, 1 + looting_level) if random.random() < pearl_chance else 0
 		xp = 5
 		drops = []
 		if pearl_count > 0:

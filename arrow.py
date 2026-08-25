@@ -45,11 +45,12 @@ void main(void) {
 
 
 class ArrowEntity:
-	def __init__(self, position, velocity, is_critical=False, shooter=None):
+	def __init__(self, position, velocity, is_critical=False, shooter=None, damage_multiplier=1.0):
 		self.position = list(position)      # [x, y, z] in world coordinates
 		self.velocity = list(velocity)      # [vx, vy, vz] in blocks/tick (1 tick = 0.05s)
 		self.is_critical = is_critical
 		self.shooter = shooter
+		self.damage_multiplier = float(damage_multiplier)
 		self.in_ground = False
 		self.embedded_block = None          # (bx, by, bz)
 		self.ticks_alive = 0
@@ -197,7 +198,7 @@ class ArrowEntity:
 						self.velocity[2] = -self.velocity[2] * 0.4 + random.uniform(-2.0, 2.0)
 						return
 					else:
-						dmg = int(math.ceil(spd * 2.0))
+						dmg = int(math.ceil(spd * 2.0 * getattr(self, "damage_multiplier", 1.0)))
 						dragon.take_damage(dmg, part=part, attacker_pos=self.position)
 						self.despawn = True
 						return
@@ -219,6 +220,10 @@ class ArrowEntity:
 				total_damage = base_damage + crit_extra
 			else:
 				total_damage = base_damage
+
+			mult = getattr(self, "damage_multiplier", 1.0)
+			if mult > 1.0:
+				total_damage = int(math.ceil(total_damage * mult))
 
 			hit_mob.take_damage(total_damage, attacker_pos=self.position)
 			
@@ -345,7 +350,7 @@ class ArrowManager:
 		except Exception as e:
 			print(f"Error initializing Arrow shader: {e}")
 
-	def shoot_arrow(self, camera, power, is_critical=False):
+	def shoot_arrow(self, camera, power, is_critical=False, damage_multiplier=1.0):
 		px, py, pz = camera.position
 		spawn_pos = (px, py - 0.1, pz)
 
@@ -368,7 +373,7 @@ class ArrowManager:
 		speed = power * 3.0
 		vel = (dir_x * speed, dir_y * speed, dir_z * speed)
 
-		arrow = ArrowEntity(spawn_pos, vel, is_critical=is_critical, shooter="player")
+		arrow = ArrowEntity(spawn_pos, vel, is_critical=is_critical, shooter="player", damage_multiplier=damage_multiplier)
 		self.arrows.append(arrow)
 		return arrow
 
