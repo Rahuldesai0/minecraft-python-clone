@@ -527,18 +527,116 @@ def draw_bordered_box(x, y, width, height, border, bg_color, border_color):
 		_box_inner.color = bg_color
 		_box_inner.draw()
 
+# Complete Minecraft Java Edition Tool & Armor Max Durabilities
+ITEM_MAX_DURABILITIES = {
+	# Wooden Tools & Weapons (59 uses)
+	101: 59, 105: 59, 109: 59, 113: 59, 190: 59,
+	# Stone Tools & Weapons (131 uses)
+	102: 131, 106: 131, 110: 131, 114: 131, 191: 131,
+	# Iron Tools & Weapons (250 uses)
+	103: 250, 107: 250, 111: 250, 115: 250, 192: 250,
+	# Diamond Tools & Weapons (1561 uses)
+	104: 1561, 108: 1561, 112: 1561, 116: 1561, 194: 1561,
+	# Golden Tools & Weapons (32 uses)
+	117: 32, 118: 32, 119: 32, 120: 32, 193: 32,
+	# Bow (384 uses)
+	157: 384,
+	# Flint and Steel (64 uses)
+	151: 64,
+	# Leather Armor: Helmet=55, Chest=80, Leggings=75, Boots=65
+	130: 55, 131: 80, 132: 75, 133: 65,
+	# Golden Armor: Helmet=77, Chest=112, Leggings=105, Boots=91
+	134: 77, 135: 112, 136: 105, 137: 91,
+	# Iron Armor: Helmet=165, Chest=240, Leggings=225, Boots=195
+	138: 165, 139: 240, 140: 225, 141: 195,
+	# Diamond Armor: Helmet=363, Chest=528, Leggings=495, Boots=429
+	142: 363, 143: 528, 144: 495, 145: 429,
+}
+
+def get_item_max_durability(item_id):
+	"""Returns the maximum durability of an item, or 0 if not durable."""
+	return ITEM_MAX_DURABILITIES.get(item_id, 0)
+
+def get_slot_damage(slot):
+	"""Returns the current damage value of an item (0 = full durability)."""
+	if slot and len(slot) > 2 and isinstance(slot[2], dict):
+		return int(slot[2].get("damage", 0))
+	return 0
+
+def set_slot_damage(slot, damage):
+	"""Sets the damage value of an item."""
+	if not slot or slot[0] == 0:
+		return
+	if len(slot) <= 2:
+		slot.append({})
+	slot[2]["damage"] = max(0, int(damage))
+
+def damage_slot(slot, amount=1, is_armor=False):
+	"""Applies durability damage to a slot with Unbreaking checks. Returns True if item broke and was destroyed."""
+	if not slot or slot[0] == 0 or slot[1] <= 0:
+		return False
+	max_dur = get_item_max_durability(slot[0])
+	if max_dur <= 0:
+		return False
+
+	unb_lvl = enchanting.get_unbreaking_level(slot)
+	if unb_lvl > 0 and enchanting.roll_unbreaking_success(unb_lvl, is_armor=is_armor):
+		return False
+
+	cur_dmg = get_slot_damage(slot)
+	new_dmg = cur_dmg + amount
+	if new_dmg >= max_dur:
+		slot[0] = 0
+		slot[1] = 0
+		set_slot_enchantments(slot, {})
+		return True
+	else:
+		set_slot_damage(slot, new_dmg)
+		return False
+
+def draw_durability_bar(x, y, damage, max_durability, bar_width=28):
+	"""Draws a Minecraft-style durability gauge bar under a damaged item icon."""
+	if damage <= 0 or max_durability <= 0:
+		return
+	pct = max(0.0, min(1.0, 1.0 - damage / float(max_durability)))
+	fill_w = max(1, int(round(bar_width * pct)))
+
+	# Background dark outline
+	pyglet.shapes.Rectangle(x, y, bar_width, 2, color=(0, 0, 0, 240)).draw()
+
+	# Dynamic color from Green -> Yellow -> Red
+	if pct >= 0.5:
+		r = int(255 * (1.0 - pct) * 2.0)
+		g = 255
+	else:
+		r = 255
+		g = int(255 * pct * 2.0)
+	b = 30
+
+	pyglet.shapes.Rectangle(x, y, fill_w, 2, color=(r, g, b, 255)).draw()
+
 def get_slot_enchantments(slot):
 	"""Returns the enchantments dict from a slot list, or empty dict if not enchanted."""
 	if slot and len(slot) > 2 and isinstance(slot[2], dict):
-		return slot[2]
+		meta = slot[2]
+		if "enchants" in meta and isinstance(meta["enchants"], dict):
+			return dict(meta["enchants"])
+		return {k: v for k, v in meta.items() if k not in ("damage", "custom_name")}
 	return {}
 
 def set_slot_enchantments(slot, enchants):
-	"""Sets enchantments dict on a slot list."""
+	"""Sets enchantments dict on a slot list, preserving other metadata like damage."""
 	if not slot:
 		return
-	if len(slot) > 2:
-		slot[2] = dict(enchants) if enchants else {}
+	if len(slot) > 2 and isinstance(slot[2], dict):
+		dmg = slot[2].get("damage", 0)
+		slot[2].clear()
+		if enchants:
+			for k, v in enchants.items():
+				if k != "damage":
+					slot[2][k] = v
+		if dmg > 0:
+			slot[2]["damage"] = dmg
 	elif enchants:
 		slot.append(dict(enchants))
 
@@ -576,7 +674,7 @@ def draw_enchanted_glint(sx, sy, size, num_enchants=1):
 			pass
 
 def format_slot_hover(slot, prefix=""):
-	"""Formats item tooltip with name, stack count, enchantments, and combat/mining/armor/food stats."""
+	"""Formats item tooltip with name, stack count, enchantments, durability, and combat/mining/armor/food stats."""
 	if not slot or slot[0] == 0 or slot[1] == 0:
 		return f"{prefix}Empty" if prefix else "Empty"
 	b_id = slot[0]
@@ -593,6 +691,13 @@ def format_slot_hover(slot, prefix=""):
 				e_rom = enchanting.to_roman(e_lvl)
 				lines.append(f"  • {e_name} {e_rom}")
 
+	# Durability Breakdown
+	max_dur = get_item_max_durability(b_id)
+	cur_dmg = get_slot_damage(slot)
+	if max_dur > 0:
+		rem_dur = max(0, max_dur - cur_dmg)
+		lines.append(f"Durability: {rem_dur} / {max_dur}")
+
 	# Stats breakdown
 	sharp_lvl = enchants.get("sharpness", 0) if enchants else 0
 	eff_lvl = enchants.get("efficiency", 0) if enchants else 0
@@ -601,7 +706,15 @@ def format_slot_hover(slot, prefix=""):
 	loot_lvl = enchants.get("looting", 0) if enchants else 0
 	fort_lvl = enchants.get("fortune", 0) if enchants else 0
 	prot_lvl = enchants.get("protection", 0) if enchants else 0
+	unb_lvl = enchants.get("unbreaking", 0) if enchants else 0
+	has_silk = enchants.get("silk_touch", 0) > 0 if enchants else False
 	has_inf = enchants.get("infinity", 0) > 0 if enchants else False
+
+	if unb_lvl > 0:
+		pct_mult = unb_lvl * 100
+		lines.append(f"Unbreaking: +{pct_mult}% Effective Lifespan")
+	if has_silk:
+		lines.append("Silk Touch: Drops delicate & ore blocks intact")
 
 	# 1. Swords
 	if b_id in (113, 114, 115, 116, 120):
@@ -942,6 +1055,14 @@ class InventoryGUI:
 			if slot[0] != 0 and slot[1] > 0:
 				total_defense += ARMOR_DEFENSE_POINTS.get(slot[0], 0)
 		return total_defense
+
+	def damage_armor_slots(self, amount=1):
+		"""Applies durability damage across all equipped armor pieces with Unbreaking checks."""
+		if getattr(self.window, "flying", False):
+			return
+		for slot in self.armor_slots:
+			if slot[0] != 0 and slot[1] > 0:
+				damage_slot(slot, amount=amount, is_armor=True)
 
 	def reset_inventory(self):
 		self.survival_hotbar = [[0, 0] for _ in range(9)]
@@ -2450,6 +2571,12 @@ class InventoryGUI:
 				if is_slot_enchanted(slot):
 					draw_enchanted_glint(sx + 6, sy + 6, 32, len(get_slot_enchantments(slot)))
 
+				# Durability gauge bar under damaged tools/armor/weapons
+				max_dur = get_item_max_durability(b_id)
+				cur_dmg = get_slot_damage(slot)
+				if max_dur > 0 and cur_dmg > 0:
+					draw_durability_bar(sx + 7, sy + 7, cur_dmg, max_dur, bar_width=30)
+
 				if cnt > 1 or not self.window.flying:
 					self.count_label.text = str(cnt)
 					self.count_label.font_size = 10
@@ -2483,6 +2610,12 @@ class InventoryGUI:
 			# Animated sweeping purple glint for enchanted items
 			if is_slot_enchanted(slot):
 				draw_enchanted_glint(sx + 4, sy + 4, 32, len(get_slot_enchantments(slot)))
+
+			# Durability gauge bar under damaged tools/armor/weapons
+			max_dur = get_item_max_durability(b_id)
+			cur_dmg = get_slot_damage(slot)
+			if max_dur > 0 and cur_dmg > 0:
+				draw_durability_bar(sx + 6, sy + 6, cur_dmg, max_dur, bar_width=slot_s - 12)
 
 			if cnt > 1 or not self.window.flying:
 				self.count_label.text = str(cnt)

@@ -147,6 +147,10 @@ class Camera:
 			prot_reduction = gui_ref.get_total_protection_reduction()
 			if prot_reduction > 0:
 				damage = max(1.0, damage * (1.0 - prot_reduction))
+
+		# Durability damage to equipped armor pieces
+		if gui_ref and hasattr(gui_ref, "damage_armor_slots"):
+			gui_ref.damage_armor_slots(amount=max(1, int(round(damage / 4.0))))
 		
 		# Absorption hearts absorb damage first
 		if getattr(self, "absorption", 0.0) > 0:

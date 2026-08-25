@@ -73,6 +73,22 @@ ENCHANTMENTS = {
 		"min_power": [15, 24, 33],
 		"max_power": [65, 74, 83],
 	},
+	"unbreaking": {
+		"name": "Unbreaking",
+		"max_level": 3,
+		"weight": 5,
+		"target": "all",
+		"min_power": [5, 13, 21],
+		"max_power": [55, 63, 71],
+	},
+	"silk_touch": {
+		"name": "Silk Touch",
+		"max_level": 1,
+		"weight": 1,
+		"target": "tool",
+		"min_power": [15],
+		"max_power": [65],
+	},
 }
 
 # Item Categorization & Base Enchantability
@@ -143,18 +159,80 @@ def get_valid_enchantments_for_item(item_id):
 	if not cat:
 		return []
 	if cat == "armor":
-		return ["protection"]
+		return ["protection", "unbreaking"]
 	if cat == "sword":
-		return ["sharpness", "fire_aspect", "looting"]
+		return ["sharpness", "fire_aspect", "looting", "unbreaking"]
 	if cat == "axe":
-		return ["efficiency", "sharpness", "fortune"]
+		return ["efficiency", "sharpness", "silk_touch", "fortune", "unbreaking"]
 	if cat == "tool":
-		return ["efficiency", "fortune"]
+		return ["efficiency", "silk_touch", "fortune", "unbreaking"]
 	if cat == "bow":
-		return ["power", "infinity"]
+		return ["power", "infinity", "unbreaking"]
 	if cat == "book":
 		return list(ENCHANTMENTS.keys())
 	return []
+
+# Blocks that drop their exact block item or special intact block when mined with Silk Touch
+SILK_TOUCH_BLOCK_DROPS = {
+	13: 13,   # Oak Leaves -> Oak Leaves block (13)
+	14: 13,   # Oak Leaves -> Oak Leaves block (13)
+	16: 16,   # Coal Ore -> Coal Ore block (16)
+	18: 18,   # Diamond Ore -> Diamond Ore block (18)
+	21: 21,   # Glass -> Glass block (21)
+	23: 23,   # Bookshelf -> Bookshelf block (23)
+	53: 53,   # Glass Pane -> Glass Pane (53)
+	77: 77,   # Gravel -> Gravel (77)
+	86: 86,   # Glowstone -> Glowstone block (86)
+	87: 87,   # Nether Quartz Ore -> Nether Quartz Ore block (87)
+	209: 209, # Melon Block -> Melon block (209)
+	212: 212, # Lapis Lazuli Ore -> Lapis Lazuli Ore block (212)
+	2: 2,     # Grass Block -> Grass Block (2)
+	5: 5,     # Stone -> Stone block (5)
+}
+
+def get_silk_touch_drop(block_num):
+	"""Returns the item ID dropped when mined with Silk Touch, or None if no special silk drop."""
+	return SILK_TOUCH_BLOCK_DROPS.get(block_num, None)
+
+def has_silk_touch(slot_or_enchants):
+	"""Returns True if the tool possesses the Silk Touch enchantment."""
+	if isinstance(slot_or_enchants, dict):
+		if "enchants" in slot_or_enchants and isinstance(slot_or_enchants["enchants"], dict):
+			return slot_or_enchants["enchants"].get("silk_touch", 0) > 0
+		return slot_or_enchants.get("silk_touch", 0) > 0
+	if isinstance(slot_or_enchants, (list, tuple)) and len(slot_or_enchants) >= 3 and isinstance(slot_or_enchants[2], dict):
+		meta = slot_or_enchants[2]
+		enchants = meta.get("enchants", meta)
+		if isinstance(enchants, dict):
+			return enchants.get("silk_touch", 0) > 0
+	return False
+
+def get_unbreaking_level(slot_or_enchants):
+	if isinstance(slot_or_enchants, dict):
+		if "enchants" in slot_or_enchants and isinstance(slot_or_enchants["enchants"], dict):
+			return int(slot_or_enchants["enchants"].get("unbreaking", 0))
+		return int(slot_or_enchants.get("unbreaking", 0))
+	if isinstance(slot_or_enchants, (list, tuple)) and len(slot_or_enchants) >= 3 and isinstance(slot_or_enchants[2], dict):
+		meta = slot_or_enchants[2]
+		enchants = meta.get("enchants", meta)
+		if isinstance(enchants, dict):
+			return int(enchants.get("unbreaking", 0))
+	return 0
+
+def roll_unbreaking_success(unbreaking_level, is_armor=False):
+	"""Returns True if durability damage was PREVENTED by Unbreaking."""
+	if unbreaking_level <= 0:
+		return False
+	if is_armor:
+		# Armor: Chance durability loss is applied = 0.6 + 0.4 / (level + 1)
+		# Chance ignored = 1.0 - (0.6 + 0.4 / (level + 1)) = 0.4 * (1 - 1 / (level + 1))
+		chance_ignored = 0.4 * (1.0 - 1.0 / (unbreaking_level + 1))
+		return random.random() < chance_ignored
+	else:
+		# Tools / Weapons / Bows: Chance durability loss is applied = 1.0 / (level + 1)
+		# Chance ignored = level / (level + 1)
+		chance_ignored = unbreaking_level / float(unbreaking_level + 1)
+		return random.random() < chance_ignored
 
 def count_valid_bookshelves(table_pos, world):
 	"""Scans the 5x5 area around the enchanting table for up to 15 unobstructed bookshelves."""
@@ -220,11 +298,17 @@ def calculate_enchantment_levels(bookshelves, seed=None):
 
 	return lvl_1, lvl_2, lvl_3
 
-def generate_enchantment_offer(item_id, tier, req_level, seed=None):
+def generate_enchantment_offer(item_id, tier, req_level, seed=None, existing_enchants=None):
 	"""Selects a valid enchantment and rank for the given item and power level."""
-	valid_keys = get_valid_enchantments_for_item(item_id)
+	valid_keys = list(get_valid_enchantments_for_item(item_id))
 	if not valid_keys:
 		return None
+
+	if existing_enchants:
+		if "silk_touch" in existing_enchants and "fortune" in valid_keys:
+			valid_keys.remove("fortune")
+		if "fortune" in existing_enchants and "silk_touch" in valid_keys:
+			valid_keys.remove("silk_touch")
 
 	rng = random.Random(seed) if seed is not None else random.Random()
 	enchantability = get_item_enchantability(item_id)

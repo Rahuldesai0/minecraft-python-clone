@@ -978,26 +978,57 @@ class Window(pyglet.window.Window):
 										[target_block[0] + 0.5, up_y + 0.5, target_block[2] + 0.5]
 									)
 									up_y += 1
-							elif b_num == 14:  # Oak Leaves
-								import random
-								roll = random.random()
-								if roll < 0.05:
-									actual_drop_id = 156  # 5% chance Oak Sapling (156)
-								elif roll < 0.07:
-									actual_drop_id = 153  # 2% chance Apple (153)
+							elif b_num in (13, 14):  # Oak Leaves
+								import enchanting
+								held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+								if enchanting.has_silk_touch(held_slot):
+									actual_drop_id = 13  # Drops Oak Leaves block with Silk Touch
+									drop_qty = 1
 								else:
+									# Without Silk Touch: Leaves cannot be mined as block items!
+									# Drops random amount of sticks and sometimes an apple / sapling
+									import random
 									actual_drop_id = None
+									drop_qty = 0
+
+									# Stick drop (50% chance for 1-2 sticks)
+									if random.random() < 0.50:
+										stick_qty = random.randint(1, 2)
+										self.item_drop_manager.spawn_drop(
+											100, stick_qty,
+											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+										)
+
+									# Apple drop (2% chance)
+									if random.random() < 0.02:
+										self.item_drop_manager.spawn_drop(
+											153, 1,
+											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+										)
+
+									# Oak Sapling drop (5% chance)
+									if random.random() < 0.05:
+										self.item_drop_manager.spawn_drop(
+											156, 1,
+											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+										)
 							elif b_num in (184, 185, 186, 187):  # Infested Blocks (Monster Egg)
 								actual_drop_id = None
 								if hasattr(self, "mob_manager") and self.mob_manager:
 									self.mob_manager.spawn_mob("silverfish", (target_block[0] + 0.5, target_block[1] + 0.1, target_block[2] + 0.5))
 
-							# Apply Fortune enchantment to mined drops
+							# Apply Silk Touch or Fortune enchantment to mined drops
 							import enchanting
 							held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
-							fortune_lvl = enchanting.get_fortune_level(held_slot)
-							if fortune_lvl > 0:
-								actual_drop_id, drop_qty = enchanting.apply_fortune_to_block_drop(b_num, actual_drop_id, drop_qty, fortune_lvl)
+							if enchanting.has_silk_touch(held_slot):
+								silk_drop = enchanting.get_silk_touch_drop(b_num)
+								if silk_drop is not None:
+									actual_drop_id = silk_drop
+									drop_qty = 1
+							else:
+								fortune_lvl = enchanting.get_fortune_level(held_slot)
+								if fortune_lvl > 0:
+									actual_drop_id, drop_qty = enchanting.apply_fortune_to_block_drop(b_num, actual_drop_id, drop_qty, fortune_lvl)
 
 							if actual_drop_id is not None:
 								self.item_drop_manager.spawn_drop(
@@ -1023,6 +1054,13 @@ class Window(pyglet.window.Window):
 
 						self.world.set_block(target_block, 0)
 						self.camera.add_exhaustion(0.005)
+						if not getattr(self, "flying", False):
+							held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+							if held_slot and held_slot[0] != 0:
+								held_id = held_slot[0]
+								dmg_amt = 2 if (113 <= held_id <= 116 or held_id == 120) else 1
+								gui.damage_slot(held_slot, amount=dmg_amt)
+								self.holding = self.gui.get_current_block_id()
 						self.breaking_block = None
 						self.break_progress = 0.0
 				else:
@@ -1784,6 +1822,10 @@ class Window(pyglet.window.Window):
 				self.player_model.swing_time = 0.0
 
 			if hasattr(self, "mob_manager") and self.mob_manager.attack_mob_at_crosshair(self.camera, damage=damage, fire_duration=fire_duration, looting_level=looting_level):
+				if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
+					dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
+					gui.damage_slot(held_slot, amount=dmg_amt)
+					self.holding = self.gui.get_current_block_id()
 				return
 
 			# Check End Crystal and Ender Dragon attack in End dimension
@@ -1802,11 +1844,19 @@ class Window(pyglet.window.Window):
 						tnt_manager=getattr(self, "tnt_manager", None),
 						item_drop_manager=self.item_drop_manager
 					):
+						if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
+							dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
+							gui.damage_slot(held_slot, amount=dmg_amt)
+							self.holding = self.gui.get_current_block_id()
 						return
 				if hasattr(self, "ender_dragon") and self.ender_dragon:
 					dragon_hit, dragon_part = self.ender_dragon.check_ray_hit(self.camera.position, ray_dir, max_dist=14.0)
 					if dragon_hit:
 						self.ender_dragon.take_damage(damage, part=dragon_part, attacker_pos=self.camera.position)
+						if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
+							dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
+							gui.damage_slot(held_slot, amount=dmg_amt)
+							self.holding = self.gui.get_current_block_id()
 						return
 
 			# Check if hitting a Fire block (78) or burning block side overlay to extinguish it immediately
@@ -2146,12 +2196,22 @@ class Window(pyglet.window.Window):
 							self.world.set_block(next_block, 0)
 							if hasattr(self, "tnt_manager"):
 								self.tnt_manager.spawn_primed_tnt((next_block[0] + 0.5, next_block[1], next_block[2] + 0.5), fuse_ticks=80)
+							if not getattr(self, "flying", False):
+								held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+								if held_slot and held_slot[0] == 151:
+									gui.damage_slot(held_slot, amount=1)
+									self.holding = self.gui.get_current_block_id()
 							return
 						elif target_b == 24 or (0 <= current_block[1] < 256 and any(self.world.get_block_number((current_block[0] + dx, current_block[1] + dy, current_block[2] + dz)) == 24 for dx, dy, dz in ((0, -1, 0), (0, 1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)))):
 							# Attempt Nether Portal Ignition inside Obsidian Frame!
 							import portal_manager
 							ignite_pos = current_block if self.world.get_block_number(current_block) in (0, 78) else next_block
 							if portal_manager.portal_manager.try_ignite_portal(self.world, ignite_pos):
+								if not getattr(self, "flying", False):
+									held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+									if held_slot and held_slot[0] == 151:
+										gui.damage_slot(held_slot, amount=1)
+										self.holding = self.gui.get_current_block_id()
 								return
 						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
 							pass  # Fall through to interactive block GUI/toggle below
@@ -2164,13 +2224,28 @@ class Window(pyglet.window.Window):
 									if cur_b == 0 or cur_b in (10, 12, 31, 33):
 										import portal_manager
 										if portal_manager.portal_manager.try_ignite_portal(self.world, current_block):
+											if not getattr(self, "flying", False):
+												held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+												if held_slot and held_slot[0] == 151:
+													gui.damage_slot(held_slot, amount=1)
+													self.holding = self.gui.get_current_block_id()
 											return
 										self.world.set_fire(current_block, duration=random.uniform(8.0, 10.0))
+										if not getattr(self, "flying", False):
+											held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+											if held_slot and held_slot[0] == 151:
+												gui.damage_slot(held_slot, amount=1)
+												self.holding = self.gui.get_current_block_id()
 										return
 							elif face_vector in ((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0)):
 								# Side or bottom face: mask only the 4 lateral side faces of that block with fire texture for 8-10s
 								if target_b != 0:
 									self.world.ignite_block_face(next_block, face_idx={0, 1, 4, 5}, duration=random.uniform(8.0, 10.0))
+									if not getattr(self, "flying", False):
+										held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+										if held_slot and held_slot[0] == 151:
+											gui.damage_slot(held_slot, amount=1)
+											self.holding = self.gui.get_current_block_id()
 									return
 
 					# 3. Hoe Tilling (190 = Wood, 191 = Stone, 192 = Iron, 193 = Gold, 194 = Diamond)
@@ -2179,6 +2254,10 @@ class Window(pyglet.window.Window):
 							above_num = self.world.get_block_number((next_block[0], next_block[1] + 1, next_block[2]))
 							if above_num == 0 or above_num in (10, 12, 31, 33):  # Air or replaceable foliage
 								self.world.set_block(next_block, 80)  # Convert to Farmland
+								if not getattr(self, "flying", False):
+									held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
+									if held_slot and held_slot[0] in (190, 191, 192, 193, 194):
+										gui.damage_slot(held_slot, amount=1)
 								self.holding = self.gui.get_current_block_id()
 								return
 						elif target_b in INTERACTIVE_BLOCKS and not is_shift_down:
@@ -2430,6 +2509,9 @@ class Window(pyglet.window.Window):
 					dmg_mult = enchanting.get_bow_power_multiplier(held_slot)
 					if hasattr(self, "arrow_manager"):
 						self.arrow_manager.shoot_arrow(self.camera, f, is_critical=is_crit, damage_multiplier=dmg_mult)
+					if not getattr(self, "flying", False) and held_slot and held_slot[0] == 157:
+						gui.damage_slot(held_slot, amount=1)
+						self.holding = self.gui.get_current_block_id()
 	
 	def on_mouse_motion(self, x, y, delta_x, delta_y):
 		self.gui.mouse_x = x
