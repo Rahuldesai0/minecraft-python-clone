@@ -420,6 +420,33 @@ class Camera:
 						return True
 		return False
 
+	def is_touching_cactus(self, world):
+		"""Returns True if player bounding box touches or intersects a Cactus block (11)."""
+		half_width = 0.35
+		standing_height = 1.8
+		eye_h = getattr(self, 'eye_offset', 1.62)
+
+		body_min_x = self.position[0] - half_width
+		body_max_x = self.position[0] + half_width
+		body_min_y = self.position[1] - eye_h
+		body_max_y = body_min_y + standing_height
+		body_min_z = self.position[2] - half_width
+		body_max_z = self.position[2] + half_width
+
+		min_bx = int(math.floor(body_min_x + 0.5))
+		max_bx = int(math.floor(body_max_x + 0.5))
+		min_by = int(math.floor(body_min_y + 0.5))
+		max_by = int(math.floor(body_max_y + 0.5))
+		min_bz = int(math.floor(body_min_z + 0.5))
+		max_bz = int(math.floor(body_max_z + 0.5))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					if world.get_block_number((bx, by, bz)) == 11:
+						return True
+		return False
+
 	def update_camera(self, delta_time, sprinting, world, flying, keys_down):
 		import time
 		import random
@@ -459,6 +486,15 @@ class Camera:
 					self.take_damage(1, flying=flying, world=world)
 			else:
 				self.fire_damage_timer = 0.0
+
+		# Cactus Contact Damage (1 HP / 0.5 hearts every 0.5s when touching cactus)
+		if not flying and self.is_touching_cactus(world):
+			self.cactus_damage_timer = getattr(self, 'cactus_damage_timer', 0.0) + delta_time
+			if self.cactus_damage_timer >= 0.5:
+				self.cactus_damage_timer = 0.0
+				self.take_damage(1, flying=flying, world=world)
+		else:
+			self.cactus_damage_timer = 0.0
 
 		# Oxygen & Drowning Mechanics
 		head_underwater = self.is_head_underwater(world)

@@ -487,6 +487,10 @@ def get_block_hitboxes(world, pos, block_num):
 	if block_num == 213:
 		return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.25, bz + 0.5)]
 
+	# 10. Cactus (11) - Indented by 1/16 (0.0625) on sides (radius 0.4375)
+	if block_num == 11:
+		return [(bx - 0.4375, by - 0.5, bz - 0.4375, bx + 0.4375, by + 0.5, bz + 0.4375)]
+
 	# Standard Full Cube
 	return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
 

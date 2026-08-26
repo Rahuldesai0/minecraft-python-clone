@@ -27,8 +27,8 @@ def is_lava_block(block_id):
 
 
 def is_walkable_ground(block_id):
-	"""Returns True if the block is a valid solid ground block for mobs to walk on (rejects liquids, fire, foliage/flowers, and leaves)."""
-	return block_id != 0 and block_id not in block_state.PASSABLE_BLOCKS and block_id not in (13, 14, 18, 224, 234, 244, 254, 264)
+	"""Returns True if the block is a valid solid ground block for mobs to walk on (rejects liquids, fire, foliage/flowers, leaves, and cacti)."""
+	return block_id != 0 and block_id not in block_state.PASSABLE_BLOCKS and block_id not in (11, 13, 14, 18, 224, 234, 244, 254, 264)
 
 
 class RandomStrollGoal:
@@ -318,6 +318,24 @@ class MobEntity:
 						return True
 		return False
 
+	def is_touching_cactus(self, world):
+		"""Checks if the mob's bounding box touches a Cactus block (11)."""
+		mx, my, mz = self.position
+		half_w = self.width / 2.0
+		min_bx = int(math.floor(mx - half_w))
+		max_bx = int(math.floor(mx + half_w))
+		min_by = int(math.floor(my))
+		max_by = int(math.floor(my + self.height))
+		min_bz = int(math.floor(mz - half_w))
+		max_bz = int(math.floor(mz + half_w))
+
+		for bx in range(min_bx, max_bx + 1):
+			for by in range(min_by, max_by + 1):
+				for bz in range(min_bz, max_bz + 1):
+					if world.get_block_number((bx, by, bz)) == 11:
+						return True
+		return False
+
 	def is_head_underwater(self, world):
 		"""Checks if the mob's head is submerged in water."""
 		mx, my, mz = self.position
@@ -388,7 +406,16 @@ class MobEntity:
 			else:
 				self.fire_damage_timer = 0.0
 
-		# 2. Oxygen & Drowning Mechanics
+		# 2. Cactus Contact Damage
+		if self.is_touching_cactus(world):
+			self.cactus_damage_timer = getattr(self, "cactus_damage_timer", 0.0) + dt
+			if self.cactus_damage_timer >= 0.5:
+				self.cactus_damage_timer = 0.0
+				self.take_damage(1)
+		else:
+			self.cactus_damage_timer = 0.0
+
+		# 3. Oxygen & Drowning Mechanics
 		head_underwater = self.is_head_underwater(world)
 		if head_underwater:
 			self.air = max(0.0, self.air - dt)

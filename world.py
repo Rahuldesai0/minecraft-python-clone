@@ -68,16 +68,18 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	"""Independent worker function for ProcessPoolExecutor.
 	Generates authentic Minecraft 1.0 style terrain directly into a flat 1D bytearray (65536 bytes)."""
 	save_path = os.path.join(save_dir, f"{x}_{z}.chunk")
+	import array
 	if os.path.exists(save_path):
 		try:
 			with gzip.open(save_path, 'rb') as f:
 				data = f.read()
-			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
-				return data
+			if len(data) == chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH * 2:
+				return array.array('H', data)
+			elif len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				return array.array('H', [b for b in data[:65536]])
 		except Exception:
 			pass
 
-	import array
 	import biome
 	flat_bytes = array.array('H', [0] * (chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH))
 
@@ -227,12 +229,25 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 									if get_b(px, ry, pz) == 0:
 										set_b(px, ry, pz, 5)
 
-	# 6. Surface Water Lakes (outside deserts)
+	# 6. Surface Water & Lava Lakes Generation
 	center_wx = chunk_offset_x + 8
 	center_wz = chunk_offset_z + 8
 	primary_biome = biome.get_biome_at(center_wx, center_wz, seed=seed)
+	is_desert = (primary_biome == biome.BIOME_DESERT)
 
-	if primary_biome != biome.BIOME_DESERT and rng.randrange(100) < 35:
+	# Lake probabilities per biome:
+	# Desert: Lesser amount of water lakes (5%), higher amount of lava lakes (45%)
+	# Non-Desert: Standard water lakes (32%), rare lava lakes (6%)
+	water_lake_chance = 5 if is_desert else 32
+	lava_lake_chance = 45 if is_desert else 6
+
+	lake_type = None
+	if rng.randrange(100) < lava_lake_chance:
+		lake_type = 15  # Lava Lake
+	elif rng.randrange(100) < water_lake_chance:
+		lake_type = 9   # Water Lake
+
+	if lake_type is not None:
 		lake_cx = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
 		lake_cz = rng.randrange(3, chunk.CHUNK_LENGTH - 3)
 		radius = rng.randrange(3, 6)
@@ -243,6 +258,10 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			max_h = max(sample_heights)
 			if (max_h - min_h <= 3) and (min_h >= 62):
 				lake_surface_y = min_h
+				floor_mat = biome.BLOCK_SANDSTONE if is_desert else (5 if lake_type == 15 else 4)
+				sub_mat = 5  # Stone
+				rim_mat = (biome.BLOCK_SANDSTONE if lake_type == 15 else biome.BLOCK_SAND) if is_desert else (5 if lake_type == 15 else 4)
+
 				for dx in range(-radius - 1, radius + 2):
 					for dz in range(-radius - 1, radius + 2):
 						dist_sq = dx * dx + dz * dz
@@ -252,15 +271,15 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 							if dist_sq <= radius * radius:
 								for cy in range(lake_surface_y + 1, col_h + 1):
 									set_b(px, cy, pz, 0)
-								set_b(px, lake_surface_y, pz, 9)
-								set_b(px, lake_surface_y - 1, pz, 9)
-								set_b(px, lake_surface_y - 2, pz, 4)
-								set_b(px, lake_surface_y - 3, pz, 5)
+								set_b(px, lake_surface_y, pz, lake_type)
+								set_b(px, lake_surface_y - 1, pz, lake_type)
+								set_b(px, lake_surface_y - 2, pz, floor_mat)
+								set_b(px, lake_surface_y - 3, pz, sub_mat)
 							elif dist_sq <= (radius + 1) * (radius + 1):
 								for ry in range(lake_surface_y - 2, lake_surface_y + 2):
 									b_curr = get_b(px, ry, pz)
 									if b_curr == 0 or b_curr in (9, 19, 15, 20):
-										set_b(px, ry, pz, 4)
+										set_b(px, ry, pz, rim_mat)
 
 	# 7. Procedural Tree & Flora Generation per Biome
 	tree_count_by_biome = {
@@ -317,7 +336,8 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 					planted_trees.append((tx, tz))
 
 	# 8. Biome-Specific Flora & Ground Decoration
-	for _ in range(rng.randint(6, 16)):
+	flora_attempts = rng.randint(14, 28) if is_desert else rng.randint(6, 16)
+	for _ in range(flora_attempts):
 		fx = rng.randrange(1, chunk.CHUNK_WIDTH - 1)
 		fz = rng.randrange(1, chunk.CHUNK_LENGTH - 1)
 		gy = surface_heights[fx * 16 + fz]
@@ -327,11 +347,32 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		col_biome = biome.get_biome_at(col_wx, col_wz, seed=seed)
 
 		if gy + 1 < chunk.CHUNK_HEIGHT and get_b(fx, gy + 1, fz) == 0:
-			if col_biome == biome.BIOME_DESERT and ground_b == biome.BLOCK_SAND:
-				if rng.random() < 0.45:
-					c_height = rng.randint(1, 3)
-					for cy in range(1, c_height + 1):
-						set_b(fx, gy + cy, fz, biome.BLOCK_CACTUS)
+			if col_biome == biome.BIOME_DESERT and ground_b in (biome.BLOCK_SAND, biome.BLOCK_RED_SAND):
+				has_water_adj = False
+				for adx, adz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+					if get_b(fx + adx, gy, fz + adz) in (9, 19):
+						has_water_adj = True
+						break
+
+				if has_water_adj and rng.random() < 0.65:
+					sc_h = rng.randint(1, 3)
+					for scy in range(1, sc_h + 1):
+						if gy + scy < chunk.CHUNK_HEIGHT:
+							set_b(fx, gy + scy, fz, biome.BLOCK_SUGAR_CANE)
+				elif rng.random() < 0.45:
+					can_place_cactus = True
+					for adx, adz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+						adj = get_b(fx + adx, gy + 1, fz + adz)
+						if adj != 0 and adj not in (9, 19, 15, 20, 12, 31, 210):
+							can_place_cactus = False
+							break
+					if can_place_cactus:
+						c_height = rng.randint(1, 3)
+						for cy in range(1, c_height + 1):
+							if gy + cy < chunk.CHUNK_HEIGHT:
+								set_b(fx, gy + cy, fz, biome.BLOCK_CACTUS)
+					else:
+						set_b(fx, gy + 1, fz, biome.BLOCK_DEAD_BUSH)
 				else:
 					set_b(fx, gy + 1, fz, biome.BLOCK_DEAD_BUSH)
 			elif col_biome == biome.BIOME_JUNGLE and ground_b == biome.BLOCK_GRASS:
@@ -1673,6 +1714,7 @@ class World:
 		self.crops = set()
 		self.sugar_canes = set()
 		self.saplings = set()
+		self.cacti = set()
 		self._block_info_cache = None
 
 	def schedule_mesh_update(self, position):
@@ -1916,7 +1958,50 @@ class World:
 				if self.get_block_number(above_pos) == 0:
 					self.set_block(above_pos, 210)
 
-		# 4. Sapling Natural Growth (0.003x chance per second: grows in ~3-6 mins)
+		# 4. Cactus Growth (0.00100% chance per second: grows up to 3 blocks tall on sand without obstacles)
+		for pos in list(self.cacti):
+			if self.get_block_number(pos) != 11:
+				self.cacti.discard(pos)
+				continue
+
+			px, py, pz = pos
+			below_b = self.get_block_number((px, py - 1, pz))
+			is_valid = (below_b in (6, 11, 281))
+			if is_valid:
+				import block_state
+				for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+					adj_b = self.get_block_number((px + dx, py, pz + dz))
+					if adj_b != 0 and adj_b not in block_state.PASSABLE_BLOCKS:
+						is_valid = False
+						break
+
+			if not is_valid:
+				self.set_block(pos, 0)
+				self.cacti.discard(pos)
+				if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+					self.item_drop_manager.spawn_drop(11, 1, [px + 0.5, py + 0.2, pz + 0.5])
+				continue
+
+			h_count = 1
+			check_y = py - 1
+			while self.get_block_number((px, check_y, pz)) == 11:
+				h_count += 1
+				check_y -= 1
+
+			if h_count < 3 and random.random() < 0.00100:
+				above_pos = (px, py + 1, pz)
+				if self.get_block_number(above_pos) == 0:
+					can_grow = True
+					import block_state
+					for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+						adj_b = self.get_block_number((px + dx, py + 1, pz + dz))
+						if adj_b != 0 and adj_b not in block_state.PASSABLE_BLOCKS:
+							can_grow = False
+							break
+					if can_grow:
+						self.set_block(above_pos, 11)
+
+		# 5. Sapling Natural Growth (0.003x chance per second: grows in ~3-6 mins)
 		for pos in list(self.saplings):
 			b_num = self.get_block_number(pos)
 			if b_num not in (156, 225, 235, 245, 255, 265):
@@ -2352,6 +2437,10 @@ class World:
 			self.crops.add(tuple(position))
 		if state and state.block_id in (156, 225, 235, 245, 255, 265):
 			self.saplings.add(tuple(position))
+		if state and state.block_id == 11:
+			self.cacti.add(tuple(position))
+		else:
+			self.cacti.discard(tuple(position))
 		self.dirty_chunks.add(c_pos)
 
 		sy = ly // 16
@@ -2411,7 +2500,7 @@ class World:
 					nb_st.connections = new_conn
 					self.set_block_state(nb_pos, nb_st)
 
-		# Check if block directly above is a flower or sapling needing valid grass/dirt ground support
+		# Check if block directly above is a flower, sapling, cactus, or dead bush needing ground support
 		above_pos = (int(px), int(py + 1), int(pz))
 		if py + 1 < chunk.CHUNK_HEIGHT:
 			above_b = self.get_block_number(above_pos)
@@ -2423,6 +2512,31 @@ class World:
 					self.saplings.discard(above_pos)
 					if hasattr(self, "item_drop_manager") and self.item_drop_manager:
 						self.item_drop_manager.spawn_drop(above_b, 1, [above_pos[0] + 0.5, above_pos[1] + 0.2, above_pos[2] + 0.5])
+			elif above_b == 11:
+				cur_b = self.get_block_number(position)
+				if cur_b not in (6, 11, 281):
+					self.set_block(above_pos, 0)
+					self.cacti.discard(above_pos)
+					if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+						self.item_drop_manager.spawn_drop(11, 1, [above_pos[0] + 0.5, above_pos[1] + 0.2, above_pos[2] + 0.5])
+			elif above_b == 12:
+				cur_b = self.get_block_number(position)
+				if cur_b not in (6, 281, 2, 3, 4, 80, 278):
+					self.set_block(above_pos, 0)
+					if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+						self.item_drop_manager.spawn_drop(12, 1, [above_pos[0] + 0.5, above_pos[1] + 0.2, above_pos[2] + 0.5])
+
+		# Check if placing a solid block breaks any horizontally adjacent cactus
+		import block_state
+		cur_b = self.get_block_number(position)
+		if cur_b != 0 and cur_b not in block_state.PASSABLE_BLOCKS:
+			for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+				nb_pos = (int(px + dx), int(py), int(pz + dz))
+				if self.get_block_number(nb_pos) == 11:
+					self.set_block(nb_pos, 0)
+					self.cacti.discard(nb_pos)
+					if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+						self.item_drop_manager.spawn_drop(11, 1, [nb_pos[0] + 0.5, nb_pos[1] + 0.2, nb_pos[2] + 0.5])
 
 		# Check if block directly above is a gravity block (sand/gravel) needing to fall
 		if py + 1 < chunk.CHUNK_HEIGHT and self.get_block_number(above_pos) in (6, 77):
@@ -3017,6 +3131,11 @@ class World:
 			self.saplings.add(tuple(position))
 		else:
 			self.saplings.discard(tuple(position))
+
+		if number == 11:
+			self.cacti.add(tuple(position))
+		else:
+			self.cacti.discard(tuple(position))
 
 		px, py, pz = position
 		chk.set_block_number(lx, ly, lz, number)

@@ -2034,8 +2034,40 @@ class Window(pyglet.window.Window):
 				if ground_b not in block_state.VALID_SOIL_BLOCKS:
 					return
 
+			# Cactus (11) - Placed only on Sand (6, 281) or Cactus (11) on top face, without adjacent solid blocks
+			elif held_item == 11:
+				if face_vector is not None and face_vector != (0, 1, 0):
+					return
+				cur_target_b = self.world.get_block_number(target_pos)
+				if cur_target_b != 0 and cur_target_b not in (9, 19, 15, 20):
+					return
+				ground_pos = (target_pos[0], target_pos[1] - 1, target_pos[2])
+				ground_b = self.world.get_block_number(ground_pos)
+				if ground_b not in (6, 11, 281):
+					return
+				tx, ty, tz = target_pos
+				for adx, adz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+					adj_b = self.world.get_block_number((tx + adx, ty, tz + adz))
+					if adj_b != 0 and adj_b not in block_state.PASSABLE_BLOCKS:
+						return
+
+			# Dead Bush (12) - Placed on Sand (6, 281), Dirt (4), Grass (2, 3), or Podzol (278)
+			elif held_item == 12:
+				if face_vector is not None and face_vector != (0, 1, 0):
+					return
+				cur_target_b = self.world.get_block_number(target_pos)
+				if cur_target_b != 0 and cur_target_b not in (9, 19, 15, 20):
+					return
+				clicked_b = self.world.get_block_number(next_pos)
+				if clicked_b in block_state.FLOWERS_AND_SAPLINGS or clicked_b == 12:
+					return
+				ground_pos = (target_pos[0], target_pos[1] - 1, target_pos[2])
+				ground_b = self.world.get_block_number(ground_pos)
+				if ground_b not in (6, 281, 2, 3, 4, 80, 278):
+					return
+
 			# 1. Furnace (27)
-			if held_item == 27:
+			elif held_item == 27:
 				st = block_state.BlockState(27, facing=cardinal_dir)
 				self.world.set_block_state(target_pos, st)
 

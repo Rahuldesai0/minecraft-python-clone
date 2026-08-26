@@ -153,14 +153,14 @@ BLOCK_OXEYE_DAISY = 285
 # Biome Parameter Centroids (Temperature [0..1], Moisture [0..1])
 # -------------------------------------------------------------------
 BIOME_CENTROIDS = {
-	BIOME_DESERT:       (0.88, 0.12),
-	BIOME_SAVANNA:      (0.75, 0.35),
-	BIOME_JUNGLE:       (0.80, 0.82),
-	BIOME_PLAINS:       (0.55, 0.25),
-	BIOME_FOREST:       (0.50, 0.58),
-	BIOME_BIRCH_FOREST: (0.38, 0.42),
-	BIOME_SPRUCE_TAIGA: (0.25, 0.68),
-	BIOME_SNOW_FOREST:  (0.08, 0.50),
+	BIOME_DESERT:       (0.66, 0.28),
+	BIOME_SAVANNA:      (0.62, 0.42),
+	BIOME_JUNGLE:       (0.66, 0.68),
+	BIOME_PLAINS:       (0.50, 0.32),
+	BIOME_FOREST:       (0.48, 0.54),
+	BIOME_BIRCH_FOREST: (0.38, 0.44),
+	BIOME_SPRUCE_TAIGA: (0.30, 0.64),
+	BIOME_SNOW_FOREST:  (0.20, 0.48),
 }
 
 # -------------------------------------------------------------------
@@ -367,7 +367,7 @@ def get_surface_column(wx, wz, surface_y, seed=0):
 
 	# 3. Desert Biome
 	desert_weight = b_weights.get(BIOME_DESERT, 0.0)
-	if desert_weight + dither > 0.45 or primary_biome == BIOME_DESERT:
+	if desert_weight + dither > 0.38 or primary_biome == BIOME_DESERT:
 		return BLOCK_SAND, BLOCK_SAND, BLOCK_SANDSTONE
 
 	# 4. Cold / Snow Forest Biome
