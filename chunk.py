@@ -158,8 +158,11 @@ class Chunk:
 					self.blocks = array.array('H')
 					self.blocks.frombytes(block_bytes[:target_size * 2])
 				elif len(block_bytes) >= target_size:
-					# Legacy uint8 chunk
-					self.blocks = array.array('H', block_bytes[:target_size])
+					# Legacy uint8 chunk (65536 bytes -> 65536 uint16s)
+					raw_16 = bytearray(target_size * 2)
+					raw_16[0::2] = block_bytes[:target_size]
+					self.blocks = array.array('H')
+					self.blocks.frombytes(raw_16)
 				else:
 					self.blocks = array.array('H', [0] * target_size)
 					for i in range(min(len(block_bytes), target_size)):
@@ -167,6 +170,11 @@ class Chunk:
 			elif isinstance(blocks, array.array):
 				if blocks.typecode == 'H' and len(blocks) >= target_size:
 					self.blocks = array.array('H', blocks[:target_size])
+				elif blocks.typecode == 'B' and len(blocks) >= target_size:
+					raw_16 = bytearray(target_size * 2)
+					raw_16[0::2] = blocks[:target_size].tobytes()
+					self.blocks = array.array('H')
+					self.blocks.frombytes(raw_16)
 				else:
 					self.blocks = array.array('H', [0] * target_size)
 					for i in range(min(len(blocks), target_size)):
@@ -192,12 +200,16 @@ class Chunk:
 
 	def get_block_number(self, x, y, z):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
-			return self.blocks[x * 4096 + y * 16 + z]
+			idx = x * 4096 + y * 16 + z
+			if idx < len(self.blocks):
+				return self.blocks[idx]
 		return 0
 
 	def set_block_number(self, x, y, z, val):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
-			self.blocks[x * 4096 + y * 16 + z] = val
+			idx = x * 4096 + y * 16 + z
+			if idx < len(self.blocks):
+				self.blocks[idx] = val
 			if val == 0 and (x, y, z) in self.block_states:
 				del self.block_states[(x, y, z)]
 

@@ -1853,28 +1853,29 @@ class Window(pyglet.window.Window):
 					math.sin(pitch),
 					math.sin(yaw) * math.cos(pitch)
 				)
-				if hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
-					if self.end_crystal_manager.check_attack_hit(
-						self.camera.position, ray_dir, max_dist=6.5, damage=damage,
-						dragon=getattr(self, "ender_dragon", None), mob_manager=self.mob_manager,
-						camera=self.camera, gui=self.gui,
-						tnt_manager=getattr(self, "tnt_manager", None),
-						item_drop_manager=self.item_drop_manager
-					):
-						if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
-							dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
-							gui.damage_slot(held_slot, amount=dmg_amt)
-							self.holding = self.gui.get_current_block_id()
-						return
-				if hasattr(self, "ender_dragon") and self.ender_dragon:
-					dragon_hit, dragon_part = self.ender_dragon.check_ray_hit(self.camera.position, ray_dir, max_dist=14.0)
-					if dragon_hit:
-						self.ender_dragon.take_damage(damage, part=dragon_part, attacker_pos=self.camera.position)
-						if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
-							dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
-							gui.damage_slot(held_slot, amount=dmg_amt)
-							self.holding = self.gui.get_current_block_id()
-						return
+				if getattr(self, "dimension", "overworld") == "end":
+					if hasattr(self, "end_crystal_manager") and self.end_crystal_manager:
+						if self.end_crystal_manager.check_attack_hit(
+							self.camera.position, ray_dir, max_dist=6.5, damage=damage,
+							dragon=getattr(self, "ender_dragon", None), mob_manager=self.mob_manager,
+							camera=self.camera, gui=self.gui,
+							tnt_manager=getattr(self, "tnt_manager", None),
+							item_drop_manager=self.item_drop_manager
+						):
+							if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
+								dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
+								gui.damage_slot(held_slot, amount=dmg_amt)
+								self.holding = self.gui.get_current_block_id()
+							return
+					if hasattr(self, "ender_dragon") and self.ender_dragon:
+						dragon_hit, dragon_part = self.ender_dragon.check_ray_hit(self.camera.position, ray_dir, max_dist=14.0)
+						if dragon_hit:
+							self.ender_dragon.take_damage(damage, part=dragon_part, attacker_pos=self.camera.position)
+							if not getattr(self, "flying", False) and held_slot and held_slot[0] != 0:
+								dmg_amt = 1 if (113 <= held_id <= 116 or held_id == 120) else 2
+								gui.damage_slot(held_slot, amount=dmg_amt)
+								self.holding = self.gui.get_current_block_id()
+							return
 
 			# Check if hitting a Fire block (78) or burning block side overlay to extinguish it immediately
 			target_block = None
@@ -2803,7 +2804,7 @@ class Window(pyglet.window.Window):
 				slot[1] -= drop_cnt
 				if slot[1] <= 0:
 					slot[0] = 0
-					gui.set_slot_enchantments(slot, {})
+					gui.set_slot_metadata(slot, {})
 				self.holding = self.gui.get_current_block_id()
 			return
 

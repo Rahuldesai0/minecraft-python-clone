@@ -73,10 +73,20 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		try:
 			with gzip.open(save_path, 'rb') as f:
 				data = f.read()
-			if len(data) == chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH * 2:
-				return array.array('H', data)
-			elif len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
-				return array.array('H', [b for b in data[:65536]])
+			if b"|STATE_DATA|" in data:
+				block_bytes = data.split(b"|STATE_DATA|", 1)[0]
+			else:
+				block_bytes = data
+			if len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH * 2:
+				arr = array.array('H')
+				arr.frombytes(block_bytes[:131072])
+				return arr
+			elif len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				raw_16 = bytearray(131072)
+				raw_16[0::2] = block_bytes[:65536]
+				arr = array.array('H')
+				arr.frombytes(raw_16)
+				return arr
 		except Exception:
 			pass
 
@@ -423,18 +433,31 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 
 def build_nether_chunk_blocks_process(x, z, save_dir, seed=0):
 	"""Independent worker function for ProcessPoolExecutor/ThreadPoolExecutor.
-	Generates authentic Minecraft Java Edition 3D Nether terrain into a flat 1D bytearray (65536 bytes)."""
+	Generates authentic Minecraft Java Edition 3D Nether terrain into a flat 1D uint16 array (131072 bytes)."""
 	save_path = os.path.join(save_dir, f"{x}_{z}.chunk")
+	import array
 	if os.path.exists(save_path):
 		try:
 			with gzip.open(save_path, 'rb') as f:
 				data = f.read()
-			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
-				return data
+			if b"|STATE_DATA|" in data:
+				block_bytes = data.split(b"|STATE_DATA|", 1)[0]
+			else:
+				block_bytes = data
+			if len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH * 2:
+				arr = array.array('H')
+				arr.frombytes(block_bytes[:131072])
+				return arr
+			elif len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				raw_16 = bytearray(131072)
+				raw_16[0::2] = block_bytes[:65536]
+				arr = array.array('H')
+				arr.frombytes(raw_16)
+				return arr
 		except Exception:
 			pass
 
-	flat_bytes = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
+	flat_bytes = array.array('H', [0] * (chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH))
 
 	seed_offset_x = float((seed * 10007) % 50000)
 	seed_offset_z = float((seed * 16007) % 50000)
@@ -579,27 +602,40 @@ def build_nether_chunk_blocks_process(x, z, save_dir, seed=0):
 	# Save to disk
 	try:
 		with gzip.open(save_path, 'wb', compresslevel=1) as f:
-			f.write(bytes(flat_bytes))
+			f.write(flat_bytes.tobytes())
 	except Exception:
 		pass
 
-	return bytes(flat_bytes)
+	return flat_bytes.tobytes()
 
 
 def build_end_chunk_blocks_process(x, z, save_dir, seed=0):
 	"""Independent worker function for ProcessPoolExecutor/ThreadPoolExecutor.
-	Generates authentic Minecraft Java Edition End terrain (Central Island, Spawn Platform, Pillars, Fountain) into a 65536-byte chunk."""
+	Generates authentic Minecraft Java Edition End terrain (Central Island, Spawn Platform, Pillars, Fountain) into a 131072-byte chunk."""
 	save_path = os.path.join(save_dir, f"{x}_{z}.chunk")
+	import array
 	if os.path.exists(save_path):
 		try:
 			with gzip.open(save_path, 'rb') as f:
 				data = f.read()
-			if len(data) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
-				return data
+			if b"|STATE_DATA|" in data:
+				block_bytes = data.split(b"|STATE_DATA|", 1)[0]
+			else:
+				block_bytes = data
+			if len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH * 2:
+				arr = array.array('H')
+				arr.frombytes(block_bytes[:131072])
+				return arr
+			elif len(block_bytes) >= chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH:
+				raw_16 = bytearray(131072)
+				raw_16[0::2] = block_bytes[:65536]
+				arr = array.array('H')
+				arr.frombytes(raw_16)
+				return arr
 		except Exception:
 			pass
 
-	flat_bytes = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
+	flat_bytes = array.array('H', [0] * (chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH))
 	import end_generator
 	end_generator.end_generator.seed = seed
 	end_generator.end_generator.stamp_chunk_blocks(x, z, flat_bytes)
@@ -607,11 +643,11 @@ def build_end_chunk_blocks_process(x, z, save_dir, seed=0):
 	# Save to disk
 	try:
 		with gzip.open(save_path, 'wb', compresslevel=1) as f:
-			f.write(bytes(flat_bytes))
+			f.write(flat_bytes.tobytes())
 	except Exception:
 		pass
 
-	return bytes(flat_bytes)
+	return flat_bytes.tobytes()
 
 
 def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None, burning_blocks=None):
@@ -621,14 +657,35 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		if raw_data is None:
 			return None
 		if isinstance(raw_data, array.array):
-			return raw_data
+			if raw_data.typecode == 'H' and len(raw_data) >= 65536:
+				return raw_data
+			elif raw_data.typecode == 'B' and len(raw_data) >= 65536:
+				raw_16 = bytearray(131072)
+				raw_16[0::2] = raw_data[:65536].tobytes()
+				arr = array.array('H')
+				arr.frombytes(raw_16)
+				return arr
+			else:
+				arr = array.array('H', [0] * 65536)
+				for i in range(min(len(raw_data), 65536)):
+					arr[i] = raw_data[i]
+				return arr
 		if isinstance(raw_data, (bytes, bytearray)):
 			if len(raw_data) >= 131072:
 				arr = array.array('H')
 				arr.frombytes(raw_data[:131072])
 				return arr
 			elif len(raw_data) >= 65536:
-				return array.array('H', raw_data[:65536])
+				raw_16 = bytearray(131072)
+				raw_16[0::2] = raw_data[:65536]
+				arr = array.array('H')
+				arr.frombytes(raw_16)
+				return arr
+			else:
+				arr = array.array('H', [0] * 65536)
+				for i in range(min(len(raw_data), 65536)):
+					arr[i] = raw_data[i]
+				return arr
 		return raw_data
 
 	center_blocks = unpack_chunk_blocks(center_blocks)

@@ -760,7 +760,7 @@ def damage_slot(slot, amount=1, is_armor=False):
 	if new_dmg >= max_dur:
 		slot[0] = 0
 		slot[1] = 0
-		set_slot_enchantments(slot, {})
+		set_slot_metadata(slot, {})
 		return True
 	else:
 		set_slot_damage(slot, new_dmg)
@@ -787,6 +787,34 @@ def draw_durability_bar(x, y, damage, max_durability, bar_width=28):
 
 	pyglet.shapes.Rectangle(x, y, fill_w, 2, color=(r, g, b, 255)).draw()
 
+def get_slot_metadata(slot):
+	"""Returns a copy of the metadata dict (enchantments, damage, custom_name) of a slot."""
+	if slot and len(slot) > 2 and isinstance(slot[2], dict) and slot[2]:
+		return dict(slot[2])
+	return {}
+
+def set_slot_metadata(slot, meta):
+	"""Sets the full metadata dict on a slot list without sharing object references."""
+	if not slot:
+		return
+	if meta and isinstance(meta, dict):
+		new_meta = dict(meta)
+		if len(slot) > 2:
+			slot[2] = new_meta
+		else:
+			slot.append(new_meta)
+	else:
+		if len(slot) > 2:
+			del slot[2:]
+
+def copy_slot(slot):
+	"""Returns a deep clone of a slot list [item_id, count, metadata_dict] so that dicts are never shared."""
+	if not slot:
+		return [0, 0]
+	if len(slot) > 2 and isinstance(slot[2], dict) and slot[2]:
+		return [slot[0], slot[1], dict(slot[2])]
+	return [slot[0], slot[1]]
+
 def get_slot_enchantments(slot):
 	"""Returns the enchantments dict from a slot list, or empty dict if not enchanted."""
 	if slot and len(slot) > 2 and isinstance(slot[2], dict):
@@ -797,20 +825,38 @@ def get_slot_enchantments(slot):
 	return {}
 
 def set_slot_enchantments(slot, enchants):
-	"""Sets enchantments dict on a slot list, preserving other metadata like damage."""
+	"""Sets enchantments dict on a slot list, preserving other metadata like damage without in-place mutation aliasing."""
 	if not slot:
 		return
+	dmg = 0
+	custom_name = None
 	if len(slot) > 2 and isinstance(slot[2], dict):
 		dmg = slot[2].get("damage", 0)
-		slot[2].clear()
-		if enchants:
-			for k, v in enchants.items():
-				if k != "damage":
-					slot[2][k] = v
-		if dmg > 0:
-			slot[2]["damage"] = dmg
-	elif enchants:
-		slot.append(dict(enchants))
+		custom_name = slot[2].get("custom_name", None)
+	if enchants and isinstance(enchants, dict):
+		if dmg == 0 and "damage" in enchants:
+			dmg = enchants.get("damage", 0)
+		if custom_name is None and "custom_name" in enchants:
+			custom_name = enchants.get("custom_name", None)
+
+	new_meta = {}
+	if enchants and isinstance(enchants, dict):
+		for k, v in enchants.items():
+			if k not in ("damage", "custom_name"):
+				new_meta[k] = v
+	if dmg > 0:
+		new_meta["damage"] = int(dmg)
+	if custom_name:
+		new_meta["custom_name"] = str(custom_name)
+
+	if new_meta:
+		if len(slot) > 2:
+			slot[2] = new_meta
+		else:
+			slot.append(new_meta)
+	else:
+		if len(slot) > 2:
+			del slot[2:]
 
 def is_slot_enchanted(slot):
 	"""Returns True if the slot possesses one or more enchantments."""
@@ -1373,7 +1419,7 @@ class InventoryGUI:
 			slot[1] -= 1
 			if slot[1] == 0:
 				slot[0] = 0
-				set_slot_enchantments(slot, {})
+				set_slot_metadata(slot, {})
 
 	def consume_item(self, item_id, count=1):
 		if getattr(self.window, "flying", False):
@@ -1387,7 +1433,7 @@ class InventoryGUI:
 			count -= take
 			if active_slot[1] == 0:
 				active_slot[0] = 0
-				set_slot_enchantments(active_slot, {})
+				set_slot_metadata(active_slot, {})
 			if count <= 0:
 				return True
 
@@ -1399,7 +1445,7 @@ class InventoryGUI:
 				count -= take
 				if slot[1] == 0:
 					slot[0] = 0
-					set_slot_enchantments(slot, {})
+					set_slot_metadata(slot, {})
 				if count <= 0:
 					return True
 
@@ -1411,7 +1457,7 @@ class InventoryGUI:
 				count -= take
 				if slot[1] == 0:
 					slot[0] = 0
-					set_slot_enchantments(slot, {})
+					set_slot_metadata(slot, {})
 				if count <= 0:
 					return True
 		return False
@@ -1419,20 +1465,26 @@ class InventoryGUI:
 	def add_item_to_inventory(self, item_id, count=1, enchantments=None):
 		return self.add_item(item_id, count, enchantments=enchantments)
 
-	def can_add_item(self, block_id, count=1, enchantments=None):
+	def can_add_item(self, block_id, count=1, enchantments=None, metadata=None):
 		"""Returns True if the player's inventory has capacity to receive at least part of this item stack."""
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
 			return True
 
 		max_stack = get_max_stack_size(block_id)
-		ench = dict(enchantments) if enchantments else {}
+		final_meta = {}
+		if metadata and isinstance(metadata, dict):
+			final_meta.update(metadata)
+		if enchantments and isinstance(enchantments, dict):
+			final_meta.update(enchantments)
 
-		if max_stack > 1 and not ench:
+		is_special = bool(final_meta)
+
+		if max_stack > 1 and not is_special:
 			for slot in self.survival_hotbar:
-				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 					return True
 			for slot in self.survival_inventory:
-				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 					return True
 
 		for slot in self.survival_hotbar:
@@ -1444,17 +1496,23 @@ class InventoryGUI:
 
 		return False
 
-	def add_item(self, block_id, count=1, enchantments=None):
+	def add_item(self, block_id, count=1, enchantments=None, metadata=None):
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
 			return True
 
 		max_stack = get_max_stack_size(block_id)
-		ench = dict(enchantments) if enchantments else {}
+		final_meta = {}
+		if metadata and isinstance(metadata, dict):
+			final_meta.update(metadata)
+		if enchantments and isinstance(enchantments, dict):
+			final_meta.update(enchantments)
 
-		if max_stack > 1 and not ench:
+		is_special = bool(final_meta)
+
+		if max_stack > 1 and not is_special:
 			# 1. Stack into existing hotbar matching non-enchanted slots
 			for slot in self.survival_hotbar:
-				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 					addable = min(count, max_stack - slot[1])
 					slot[1] += addable
 					count -= addable
@@ -1463,7 +1521,7 @@ class InventoryGUI:
 
 			# 2. Stack into existing inventory matching non-enchanted slots
 			for slot in self.survival_inventory:
-				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 					addable = min(count, max_stack - slot[1])
 					slot[1] += addable
 					count -= addable
@@ -1475,7 +1533,7 @@ class InventoryGUI:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
 				slot[1] = min(count, max_stack)
-				set_slot_enchantments(slot, ench)
+				set_slot_metadata(slot, final_meta)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -1485,7 +1543,7 @@ class InventoryGUI:
 			if slot[0] == 0 or slot[1] == 0:
 				slot[0] = block_id
 				slot[1] = min(count, max_stack)
-				set_slot_enchantments(slot, ench)
+				set_slot_metadata(slot, final_meta)
 				count -= slot[1]
 				if count == 0:
 					return True
@@ -1568,13 +1626,13 @@ class InventoryGUI:
 
 	def serialize_inventory(self):
 		return {
-			'hotbar': [list(slot) for slot in self.survival_hotbar],
-			'inventory': [list(slot) for slot in self.survival_inventory],
-			'creative_hotbar': [list(slot) for slot in self.creative_hotbar],
-			'armor_slots': [list(slot) for slot in self.armor_slots],
-			'crafting_grid_2x2': [list(slot) for slot in self.crafting_grid_2x2],
-			'crafting_grid_3x3': [list(slot) for slot in self.crafting_grid_3x3],
-			'crafting_result': list(self.crafting_result),
+			'hotbar': [copy_slot(slot) for slot in self.survival_hotbar],
+			'inventory': [copy_slot(slot) for slot in self.survival_inventory],
+			'creative_hotbar': [copy_slot(slot) for slot in self.creative_hotbar],
+			'armor_slots': [copy_slot(slot) for slot in self.armor_slots],
+			'crafting_grid_2x2': [copy_slot(slot) for slot in self.crafting_grid_2x2],
+			'crafting_grid_3x3': [copy_slot(slot) for slot in self.crafting_grid_3x3],
+			'crafting_result': copy_slot(self.crafting_result),
 			'selected_slot': self.selected_slot
 		}
 
@@ -1582,21 +1640,21 @@ class InventoryGUI:
 		if not data:
 			return
 		if 'hotbar' in data:
-			self.survival_hotbar = [list(slot) for slot in data['hotbar']]
+			self.survival_hotbar = [copy_slot(slot) for slot in data['hotbar']]
 		if 'inventory' in data:
-			self.survival_inventory = [list(slot) for slot in data['inventory']]
+			self.survival_inventory = [copy_slot(slot) for slot in data['inventory']]
 		if 'creative_hotbar' in data:
-			self.creative_hotbar = [list(slot) for slot in data['creative_hotbar']]
+			self.creative_hotbar = [copy_slot(slot) for slot in data['creative_hotbar']]
 		if 'armor_slots' in data:
-			self.armor_slots = [list(slot) for slot in data['armor_slots']]
+			self.armor_slots = [copy_slot(slot) for slot in data['armor_slots']]
 		if 'crafting_grid_2x2' in data:
-			self.crafting_grid_2x2 = [list(slot) for slot in data['crafting_grid_2x2']]
+			self.crafting_grid_2x2 = [copy_slot(slot) for slot in data['crafting_grid_2x2']]
 		if 'crafting_grid_3x3' in data:
-			self.crafting_grid_3x3 = [list(slot) for slot in data['crafting_grid_3x3']]
+			self.crafting_grid_3x3 = [copy_slot(slot) for slot in data['crafting_grid_3x3']]
 		elif 'crafting_grid' in data and len(data['crafting_grid']) == 9:
-			self.crafting_grid_3x3 = [list(slot) for slot in data['crafting_grid']]
+			self.crafting_grid_3x3 = [copy_slot(slot) for slot in data['crafting_grid']]
 		if 'crafting_result' in data:
-			self.crafting_result = list(data['crafting_result'])
+			self.crafting_result = copy_slot(data['crafting_result'])
 		if 'selected_slot' in data:
 			self.selected_slot = data['selected_slot']
 
@@ -2429,22 +2487,22 @@ class InventoryGUI:
 			for grid in (self.crafting_grid_2x2, self.crafting_grid_3x3):
 				for slot in grid:
 					if slot[0] != 0 and slot[1] > 0:
-						ench = get_slot_enchantments(slot)
-						self.add_item(slot[0], slot[1], enchantments=ench)
+						meta = get_slot_metadata(slot)
+						self.add_item(slot[0], slot[1], metadata=meta)
 						slot[0] = 0
 						slot[1] = 0
-						set_slot_enchantments(slot, {})
+						set_slot_metadata(slot, {})
 			if hasattr(self, "enchant_item_slot") and self.enchant_item_slot[0] != 0 and self.enchant_item_slot[1] > 0:
-				ench = get_slot_enchantments(self.enchant_item_slot)
-				self.add_item(self.enchant_item_slot[0], self.enchant_item_slot[1], enchantments=ench)
+				meta = get_slot_metadata(self.enchant_item_slot)
+				self.add_item(self.enchant_item_slot[0], self.enchant_item_slot[1], metadata=meta)
 				self.enchant_item_slot = [0, 0, {}]
 			if hasattr(self, "enchant_lapis_slot") and self.enchant_lapis_slot[0] != 0 and self.enchant_lapis_slot[1] > 0:
 				self.add_item(self.enchant_lapis_slot[0], self.enchant_lapis_slot[1])
 				self.enchant_lapis_slot = [0, 0, {}]
-			self.crafting_result = [0, 0]
+			self.crafting_result = [0, 0, {}]
 			if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
-				held_ench = get_slot_enchantments(self.held_stack)
-				self.add_item(self.held_stack[0], self.held_stack[1], enchantments=held_ench)
+				held_meta = get_slot_metadata(self.held_stack)
+				self.add_item(self.held_stack[0], self.held_stack[1], metadata=held_meta)
 			self.held_stack = None
 			self.active_chest1 = None
 			self.active_chest2 = None
@@ -2495,14 +2553,27 @@ class InventoryGUI:
 		if self.inventory_open and self.held_stack and self.held_stack[0] in self.icon_textures:
 			b_id, cnt = self.held_stack[0], self.held_stack[1]
 			img = self.icon_textures[b_id]
-			spr = pyglet.sprite.Sprite(img, x=self.mouse_x - 16, y=self.mouse_y - 16)
-			spr.scale_x = 32.0 / img.width
-			spr.scale_y = 32.0 / img.height
-			spr.draw()
+			self.slot_sprite.image = img
+			self.slot_sprite.x = self.mouse_x - 16
+			self.slot_sprite.y = self.mouse_y - 16
+			self.slot_sprite.scale_x = 32.0 / img.width
+			self.slot_sprite.scale_y = 32.0 / img.height
+			self.slot_sprite.draw()
+
+			if is_slot_enchanted(self.held_stack):
+				draw_enchanted_glint(self.mouse_x - 16, self.mouse_y - 16, 32, len(get_slot_enchantments(self.held_stack)))
+
+			max_dur = get_item_max_durability(b_id)
+			cur_dmg = get_slot_damage(self.held_stack)
+			if max_dur > 0 and cur_dmg > 0:
+				draw_durability_bar(self.mouse_x - 14, self.mouse_y - 14, cur_dmg, max_dur, bar_width=28)
 
 			if cnt > 1 or not self.window.flying:
-				cnt_lbl = pyglet.text.Label(str(cnt), font_name="Arial", font_size=10, x=self.mouse_x + 14, y=self.mouse_y - 14, anchor_x="right", anchor_y="bottom", color=(255, 255, 255, 255))
-				cnt_lbl.draw()
+				self.count_label.text = str(cnt)
+				self.count_label.font_size = 10
+				self.count_label.x = self.mouse_x + 14
+				self.count_label.y = self.mouse_y - 14
+				self.count_label.draw()
 
 		gl.glDepthMask(gl.GL_TRUE)
 		gl.glEnable(gl.GL_DEPTH_TEST)
@@ -2676,6 +2747,12 @@ class InventoryGUI:
 			self.xp_level_label.draw()
 
 	def _draw_boss_bar(self):
+		dim = getattr(self.window, "dimension", None)
+		if dim is None and hasattr(self.window, "world"):
+			dim = getattr(self.window.world, "dimension", None)
+		if dim != "end":
+			return
+
 		dragon = getattr(self.window, "ender_dragon", None)
 		if dragon is None and hasattr(self.window, "world"):
 			dragon = getattr(self.window.world, "ender_dragon", None)
@@ -3618,7 +3695,7 @@ class InventoryGUI:
 						slot[1] -= 1
 						if slot[1] == 0:
 							slot[0] = 0
-							set_slot_enchantments(slot, {})
+							set_slot_metadata(slot, {})
 				self.evaluate_crafting()
 			return
 
@@ -3626,14 +3703,15 @@ class InventoryGUI:
 			return
 
 		b_id, cnt = target_slot[0], target_slot[1]
+		meta = get_slot_metadata(target_slot)
 		ench = get_slot_enchantments(target_slot)
 		max_stack = get_max_stack_size(b_id)
 
 		if stype in ("furnace_output", "furnace_input", "furnace_fuel"):
-			if self.add_item(b_id, cnt, enchantments=ench):
+			if self.add_item(b_id, cnt, metadata=meta):
 				target_slot[0] = 0
 				target_slot[1] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 				if stype == "furnace_output" and self.active_furnace and hasattr(self.active_furnace, 'accumulated_xp') and self.active_furnace.accumulated_xp > 0:
 					import math, random
 					earned_xp = int(math.floor(self.active_furnace.accumulated_xp))
@@ -3645,24 +3723,24 @@ class InventoryGUI:
 			return
 
 		if stype == "chest":
-			if self.add_item(b_id, cnt, enchantments=ench):
+			if self.add_item(b_id, cnt, metadata=meta):
 				target_slot[0] = 0
 				target_slot[1] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 			return
 
 		if stype == "armor":
-			if self.add_item(b_id, cnt, enchantments=ench):
+			if self.add_item(b_id, cnt, metadata=meta):
 				target_slot[0] = 0
 				target_slot[1] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 			return
 
 		if stype in ("enchant_item", "enchant_lapis"):
-			if self.add_item(b_id, cnt, enchantments=ench):
+			if self.add_item(b_id, cnt, metadata=meta):
 				target_slot[0] = 0
 				target_slot[1] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 				self.update_enchantment_offers()
 			return
 
@@ -3680,18 +3758,18 @@ class InventoryGUI:
 					target_slot[1] -= addable
 					if target_slot[1] <= 0:
 						target_slot[0] = 0
-						set_slot_enchantments(target_slot, {})
+						set_slot_metadata(target_slot, {})
 					self.update_enchantment_offers()
 					return
 			elif enchanting.is_enchantable(b_id) and getattr(self, "enchant_item_slot", [0])[0] == 0:
 				# Enchantable item: Move 1 into item slot
 				self.enchant_item_slot[0] = b_id
 				self.enchant_item_slot[1] = 1
-				set_slot_enchantments(self.enchant_item_slot, ench)
+				set_slot_metadata(self.enchant_item_slot, meta)
 				target_slot[1] -= 1
 				if target_slot[1] <= 0:
 					target_slot[0] = 0
-					set_slot_enchantments(target_slot, {})
+					set_slot_metadata(target_slot, {})
 				self.update_enchantment_offers()
 				return
 
@@ -3702,11 +3780,11 @@ class InventoryGUI:
 			if arm_slot[0] == 0:
 				arm_slot[0] = b_id
 				arm_slot[1] = 1
-				set_slot_enchantments(arm_slot, ench)
+				set_slot_metadata(arm_slot, meta)
 				target_slot[1] -= 1
 				if target_slot[1] <= 0:
 					target_slot[0] = 0
-					set_slot_enchantments(target_slot, {})
+					set_slot_metadata(target_slot, {})
 				return
 
 		if self.crafting_mode in ("single_chest", "double_chest") and stype in ("inv", "hotbar"):
@@ -3714,10 +3792,10 @@ class InventoryGUI:
 			if self.crafting_mode == "double_chest" and self.active_chest2:
 				chests.append(self.active_chest2)
 
-			if max_stack > 1 and not ench:
+			if max_stack > 1 and not meta:
 				for ch in chests:
 					for slot in ch.slots:
-						if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+						if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 							addable = min(cnt, max_stack - slot[1])
 							slot[1] += addable
 							cnt -= addable
@@ -3730,7 +3808,7 @@ class InventoryGUI:
 						if slot[0] == 0 or slot[1] == 0:
 							slot[0] = b_id
 							slot[1] = min(cnt, max_stack)
-							set_slot_enchantments(slot, ench)
+							set_slot_metadata(slot, meta)
 							cnt -= slot[1]
 							if cnt == 0: break
 					if cnt == 0: break
@@ -3738,7 +3816,7 @@ class InventoryGUI:
 			target_slot[1] = cnt
 			if cnt == 0:
 				target_slot[0] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 			return
 
 		if self.crafting_mode == "furnace" and self.active_furnace and stype in ("inv", "hotbar"):
@@ -3750,7 +3828,7 @@ class InventoryGUI:
 					f_slot[1] += cnt
 					target_slot[0] = 0
 					target_slot[1] = 0
-					set_slot_enchantments(target_slot, {})
+					set_slot_metadata(target_slot, {})
 					return
 			if b_id in SMELTING_RECIPES:
 				i_slot = self.active_furnace.input_slot
@@ -3760,20 +3838,20 @@ class InventoryGUI:
 					i_slot[1] += cnt
 					target_slot[0] = 0
 					target_slot[1] = 0
-					set_slot_enchantments(target_slot, {})
+					set_slot_metadata(target_slot, {})
 					return
 
 		if stype == "craft":
-			if self.add_item(b_id, cnt, enchantments=ench):
+			if self.add_item(b_id, cnt, metadata=meta):
 				target_slot[0] = 0
 				target_slot[1] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 				self.evaluate_crafting()
 		elif stype == "inv":
 			# Move from storage inventory into hotbar
-			if max_stack > 1 and not ench:
+			if max_stack > 1 and not meta:
 				for slot in self.survival_hotbar:
-					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 						addable = min(cnt, max_stack - slot[1])
 						slot[1] += addable
 						cnt -= addable
@@ -3783,18 +3861,18 @@ class InventoryGUI:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
 						slot[1] = min(cnt, max_stack)
-						set_slot_enchantments(slot, ench)
+						set_slot_metadata(slot, meta)
 						cnt -= slot[1]
 						if cnt == 0: break
 			target_slot[1] = cnt
 			if cnt == 0:
 				target_slot[0] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 		elif stype == "hotbar":
 			# Move from hotbar into storage inventory
-			if max_stack > 1 and not ench:
+			if max_stack > 1 and not meta:
 				for slot in self.survival_inventory:
-					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+					if slot[0] == b_id and slot[1] < max_stack and not is_slot_enchanted(slot) and not get_slot_damage(slot):
 						addable = min(cnt, max_stack - slot[1])
 						slot[1] += addable
 						cnt -= addable
@@ -3804,13 +3882,13 @@ class InventoryGUI:
 					if slot[0] == 0 or slot[1] == 0:
 						slot[0] = b_id
 						slot[1] = min(cnt, max_stack)
-						set_slot_enchantments(slot, ench)
+						set_slot_metadata(slot, meta)
 						cnt -= slot[1]
 						if cnt == 0: break
 			target_slot[1] = cnt
 			if cnt == 0:
 				target_slot[0] = 0
-				set_slot_enchantments(target_slot, {})
+				set_slot_metadata(target_slot, {})
 
 	def _update_left_drag(self):
 		if not self.drag_visited_keys or not self.drag_initial_held:
@@ -3818,7 +3896,7 @@ class InventoryGUI:
 
 		b_id = self.drag_initial_held[0]
 		total_cnt = self.drag_initial_held[1]
-		ench = get_slot_enchantments(self.drag_initial_held)
+		meta = get_slot_metadata(self.drag_initial_held)
 		max_stack = get_max_stack_size(b_id)
 
 		n_slots = len(self.drag_visited_keys)
@@ -3828,12 +3906,10 @@ class InventoryGUI:
 		for key in self.drag_visited_keys:
 			slot_ref = self._get_slot_ref_by_key(key)
 			if slot_ref is not None and key in self.drag_slot_snapshots:
-				orig_b = self.drag_slot_snapshots[key][0]
-				orig_c = self.drag_slot_snapshots[key][1]
-				orig_e = get_slot_enchantments(self.drag_slot_snapshots[key])
-				slot_ref[0] = orig_b
-				slot_ref[1] = orig_c
-				set_slot_enchantments(slot_ref, orig_e)
+				snap = self.drag_slot_snapshots[key]
+				slot_ref[0] = snap[0]
+				slot_ref[1] = snap[1]
+				set_slot_metadata(slot_ref, get_slot_metadata(snap))
 
 		# 2. Distribute per_slot into each visited slot
 		allocated = 0
@@ -3843,17 +3919,17 @@ class InventoryGUI:
 				if slot_ref is not None and key in self.drag_slot_snapshots:
 					orig_c = self.drag_slot_snapshots[key][1]
 					space = max_stack - orig_c
-					addable = min(per_slot, max(0, space))
+					addable = min(per_slot, max_stack - orig_c)
 					slot_ref[0] = b_id
 					slot_ref[1] = orig_c + addable
 					if orig_c == 0:
-						set_slot_enchantments(slot_ref, ench)
+						set_slot_metadata(slot_ref, meta)
 					allocated += addable
 
 		remainder = total_cnt - allocated
 		if remainder > 0:
 			self.held_stack = [b_id, remainder]
-			set_slot_enchantments(self.held_stack, ench)
+			set_slot_metadata(self.held_stack, meta)
 		else:
 			self.held_stack = None
 
@@ -3940,31 +4016,33 @@ class InventoryGUI:
 					total = target_slot[1]
 					take = (total + 1) // 2  # math.ceil(total / 2)
 					leave = total - take
-					ench = get_slot_enchantments(target_slot)
+					meta = get_slot_metadata(target_slot)
 					
-					self.held_stack = [target_slot[0], take, dict(ench)]
+					self.held_stack = [target_slot[0], take, dict(meta)]
 					if leave > 0:
 						target_slot[1] = leave
 					else:
 						target_slot[0] = 0
 						target_slot[1] = 0
-						set_slot_enchantments(target_slot, {})
+						set_slot_metadata(target_slot, {})
 				return
 			else:
 				# Right click when HOLDING an item: Place 1 item into target slot!
 				b_id = held[0]
 				held_ench = get_slot_enchantments(held)
 				target_ench = get_slot_enchantments(target_slot)
+				held_dmg = get_slot_damage(held)
+				target_dmg = get_slot_damage(target_slot)
 				max_stack = get_max_stack_size(b_id)
 
 				if target_slot[0] == 0 or target_slot[1] == 0:
 					target_slot[0] = b_id
 					target_slot[1] = 1
-					set_slot_enchantments(target_slot, held_ench)
+					set_slot_metadata(target_slot, get_slot_metadata(held))
 					held[1] -= 1
 					if held[1] <= 0:
 						self.held_stack = None
-				elif target_slot[0] == b_id and target_ench == held_ench and not held_ench and target_slot[1] < max_stack:
+				elif target_slot[0] == b_id and target_ench == held_ench and not held_ench and held_dmg == 0 and target_dmg == 0 and target_slot[1] < max_stack:
 					target_slot[1] += 1
 					held[1] -= 1
 					if held[1] <= 0:
@@ -4136,18 +4214,17 @@ class InventoryGUI:
 						# Start Left Click equal-split drag
 						self.is_dragging = True
 						self.drag_button = pyglet.window.mouse.LEFT
-						self.drag_initial_held = list(self.held_stack)
+						self.drag_initial_held = copy_slot(self.held_stack)
 						self.drag_visited_keys = [key]
-						self.drag_slot_snapshots = {key: list(target_slot)}
+						self.drag_slot_snapshots = {key: copy_slot(target_slot)}
 						self._update_left_drag()
 						return True
 					elif button == pyglet.window.mouse.RIGHT and is_drag_compatible:
 						# Place 1 item and start Right Click single-item drag
-						ench = get_slot_enchantments(self.held_stack)
 						if target_slot[0] == 0 or target_slot[1] == 0:
 							target_slot[0] = b_id
 							target_slot[1] = 1
-							set_slot_enchantments(target_slot, ench)
+							set_slot_metadata(target_slot, get_slot_metadata(self.held_stack))
 							self.held_stack[1] -= 1
 						elif target_slot[0] == b_id and target_slot[1] < max_stack:
 							target_slot[1] += 1
@@ -4240,7 +4317,7 @@ class InventoryGUI:
 				return
 
 			self.drag_visited_keys.append(key)
-			self.drag_slot_snapshots[key] = list(target_slot)
+			self.drag_slot_snapshots[key] = copy_slot(target_slot)
 			self._update_left_drag()
 
 		elif self.drag_button == pyglet.window.mouse.RIGHT:
@@ -4249,16 +4326,15 @@ class InventoryGUI:
 				return
 
 			b_id = self.held_stack[0]
-			ench = get_slot_enchantments(self.held_stack)
 			max_stack = get_max_stack_size(b_id)
 
 			if target_slot[0] == 0 or target_slot[1] == 0:
 				target_slot[0] = b_id
 				target_slot[1] = 1
-				set_slot_enchantments(target_slot, ench)
+				set_slot_metadata(target_slot, get_slot_metadata(self.held_stack))
 				self.held_stack[1] -= 1
 				self.drag_visited_keys.append(key)
-			elif target_slot[0] == b_id and target_slot[1] < max_stack and not is_slot_enchanted(target_slot):
+			elif target_slot[0] == b_id and target_slot[1] < max_stack and not is_slot_enchanted(target_slot) and not get_slot_damage(target_slot):
 				target_slot[1] += 1
 				self.held_stack[1] -= 1
 				self.drag_visited_keys.append(key)
@@ -4291,20 +4367,23 @@ class InventoryGUI:
 			if ARMOR_SLOT_TYPES.get(b_id) != slot_idx:
 				return held
 		if held is None or held[0] == 0:
-			new_held = list(target_slot)
+			new_held = copy_slot(target_slot)
 			target_slot[0] = 0
 			target_slot[1] = 0
-			set_slot_enchantments(target_slot, {})
+			set_slot_metadata(target_slot, {})
 			return new_held if new_held[0] != 0 else None
 		else:
 			held_ench = get_slot_enchantments(held)
 			target_ench = get_slot_enchantments(target_slot)
+			held_dmg = get_slot_damage(held)
+			target_dmg = get_slot_damage(target_slot)
+
 			if target_slot[0] == 0 or target_slot[1] == 0:
 				target_slot[0] = held[0]
 				target_slot[1] = held[1]
-				set_slot_enchantments(target_slot, held_ench)
+				set_slot_metadata(target_slot, get_slot_metadata(held))
 				return None
-			elif target_slot[0] == held[0] and target_ench == held_ench and not held_ench:
+			elif target_slot[0] == held[0] and target_ench == held_ench and not held_ench and held_dmg == 0 and target_dmg == 0:
 				max_stack = get_max_stack_size(target_slot[0])
 				space = max_stack - target_slot[1]
 				addable = min(space, held[1])
@@ -4312,10 +4391,10 @@ class InventoryGUI:
 				held[1] -= addable
 				return held if held[1] > 0 else None
 			else:
-				old_target = list(target_slot)
+				old_target = copy_slot(target_slot)
 				target_slot[0] = held[0]
 				target_slot[1] = held[1]
-				set_slot_enchantments(target_slot, held_ench)
+				set_slot_metadata(target_slot, get_slot_metadata(held))
 				return old_target
 
 	def on_mouse_scroll(self, scroll_y):
@@ -4372,7 +4451,7 @@ class InventoryGUI:
 					)
 				slot[0] = 0
 				slot[1] = 0
-				set_slot_enchantments(slot, {})
+				set_slot_metadata(slot, {})
 
 		# 1. Hotbar slots
 		for slot in self.survival_hotbar:
@@ -4391,7 +4470,7 @@ class InventoryGUI:
 			drop_slot(slot)
 		for slot in self.crafting_grid_3x3:
 			drop_slot(slot)
-		self.crafting_result = [0, 0]
+		self.crafting_result = [0, 0, {}]
 
 		# 5. Cursor held stack
 		if self.held_stack and self.held_stack[0] != 0 and self.held_stack[1] > 0:
