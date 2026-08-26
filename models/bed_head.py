@@ -1,0 +1,52 @@
+transparent = True
+transparency = 2
+is_cube = False
+glass = False
+translucent = False
+
+colliders = [
+	[
+		(-0.5, -0.5, -0.5),
+		( 0.5,  0.0625,  0.5)
+	]
+]
+
+# Minecraft Bed Head: Height 9/16 blocks (0.5625 blocks, y from -0.5 to 0.0625)
+# Faces: 0=right (+X), 1=left (-X), 2=top (+Y), 3=bottom (-Y), 4=front/head-end (+Z), 5=back/foot-conn (-Z)
+vertex_positions = [
+	[ 0.5,  0.0625,  0.5,   0.5, -0.5,  0.5,   0.5, -0.5, -0.5,   0.5,  0.0625, -0.5], # 0: right (+X)
+	[-0.5,  0.0625, -0.5,  -0.5, -0.5, -0.5,  -0.5, -0.5,  0.5,  -0.5,  0.0625,  0.5], # 1: left (-X)
+	[ 0.5,  0.0625,  0.5,   0.5,  0.0625, -0.5,  -0.5,  0.0625, -0.5,  -0.5,  0.0625,  0.5], # 2: top (+Y)
+	[-0.5, -0.5,  0.5,  -0.5, -0.5, -0.5,   0.5, -0.5, -0.5,   0.5, -0.5,  0.5], # 3: bottom (-Y)
+	[-0.5,  0.0625,  0.5,  -0.5, -0.5,  0.5,   0.5, -0.5,  0.5,   0.5,  0.0625,  0.5], # 4: front / head end (+Z)
+	[ 0.5,  0.0625, -0.5,   0.5, -0.5, -0.5,  -0.5, -0.5, -0.5,  -0.5,  0.0625, -0.5], # 5: back / foot conn (-Z)
+]
+
+tex_coords = [
+	# 0: Right (+X): +Z is head end (U=1.0, pillow + leg), -Z is foot conn (U=0.0, blanket, no leg)
+	[1.0, 0.5625, 0.0,  1.0, 0.0, 0.0,  0.0, 0.0, 0.0,  0.0, 0.5625, 0.0],
+	# 1: Left (-X): -Z is foot conn (U=0.0, blanket, no leg), +Z is head end (U=1.0, pillow + leg)
+	[0.0, 0.5625, 0.0,  0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.5625, 0.0],
+	# 2: Top (+Y): In bed_head_top.png, U=0.0 is blanket, U=1.0 is pillow.
+	# We map +Z (head end) to U=1.0 (pillow) and -Z (foot conn) to U=0.0 (blanket)
+	# Vertex 0 (+X, +Z) -> U=1.0, V=1.0
+	# Vertex 1 (+X, -Z) -> U=0.0, V=1.0
+	# Vertex 2 (-X, -Z) -> U=0.0, V=0.0
+	# Vertex 3 (-X, +Z) -> U=1.0, V=0.0
+	[1.0, 1.0, 0.0,     0.0, 1.0, 0.0,  0.0, 0.0, 0.0,  1.0, 0.0, 0.0],
+	# 3: Bottom (-Y): Planks
+	[0.0, 1.0, 0.0,     0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 1.0, 0.0],
+	# 4: Front (+Z, head end): bed_head_end (pillow + legs at corners)
+	[0.0, 0.5625, 0.0,  0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.5625, 0.0],
+	# 5: Back (-Z, foot conn): Planks / internal
+	[0.0, 0.5625, 0.0,  0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.5625, 0.0],
+]
+
+shading_values = [
+	[0.6, 0.6, 0.6, 0.6],
+	[0.6, 0.6, 0.6, 0.6],
+	[1.0, 1.0, 1.0, 1.0],
+	[0.4, 0.4, 0.4, 0.4],
+	[0.8, 0.8, 0.8, 0.8],
+	[0.8, 0.8, 0.8, 0.8],
+]

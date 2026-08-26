@@ -42,6 +42,9 @@ import models.end_portal_frame
 import models.end_portal
 import models.iron_bars
 import models.enchanting_table
+import models.bed
+import models.bed_foot
+import models.bed_head
 
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'save', 'chunks')
 MAX_RENDER_DISTANCE = 32
@@ -74,10 +77,9 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 		except Exception:
 			pass
 
-	flat_bytes = bytearray(chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH)
-
-	seed_offset_x = float((seed * 10007) % 50000)
-	seed_offset_z = float((seed * 16007) % 50000)
+	import array
+	import biome
+	flat_bytes = array.array('H', [0] * (chunk.CHUNK_WIDTH * chunk.CHUNK_HEIGHT * chunk.CHUNK_LENGTH))
 
 	rng = Random((x * 341873128712 + z * 132897987541 + seed) & ((1 << 64) - 1))
 	surface_heights = [0] * 256  # 16x16 column surface heights
@@ -85,60 +87,23 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	chunk_offset_x = x * chunk.CHUNK_WIDTH
 	chunk_offset_z = z * chunk.CHUNK_LENGTH
 
-	# 1. Heightmap Calculation (Minecraft Java Edition Mean Surface & Biome Scaling)
+	# 1. Heightmap Calculation (Smooth continuous biome blending)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
-			wx = chunk_offset_x + i + seed_offset_x
-			wz = chunk_offset_z + k + seed_offset_z
-
-			cont = pnoise2(wx / 350.0, wz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
-			peaks_raw = pnoise2((wx + 1000.0) / 85.0, (wz + 1000.0) / 85.0, octaves=4, persistence=0.5, lacunarity=2.0)
-			ridge = 1.0 - abs(peaks_raw * 2.0)
-
-			if cont < -0.32:
-				# Deep Ocean & Ocean basin
-				t = max(0.0, min(1.0, (cont - (-0.50)) / 0.18))
-				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 38.0 + smooth_t * 16.0 + (peaks_raw * 1.5)
-			elif cont < -0.22:
-				# Narrow Coastal / Shoreline Transition & Beaches
-				t = (cont - (-0.32)) / 0.10
-				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 54.0 + smooth_t * 10.0 + (ridge * 1.5)
-			else:
-				# Vast Continents: Plains, Forests & Lowlands (Mean Surface ~66-68)
-				t = min(1.0, (cont - (-0.22)) / 0.50)
-				smooth_t = 3.0 * t * t - 2.0 * t * t * t
-				target_y = 65.0 + smooth_t * 6.0 + (ridge * 2.0)
-
-				# Occasional Standalone Mountain Clusters (3 to 4 Peaks & Semi-Ridges)
-				mtn_mask = pnoise2((wx + 5000.0) / 450.0, (wz + 5000.0) / 450.0, octaves=1)
-				if mtn_mask > 0.36:
-					t_mtn = min(1.0, (mtn_mask - 0.36) / 0.10)
-					smooth_mtn = 3.0 * t_mtn * t_mtn - 2.0 * t_mtn * t_mtn * t_mtn
-					peak_noise = pnoise2((wx + 1000.0) / 60.0, (wz + 1000.0) / 60.0, octaves=1)
-					semi_ridge = 1.0 - abs(peak_noise * 1.5)
-					summit = max(0.0, semi_ridge) ** 1.4
-					mtn_height = (smooth_mtn * 14.0) + (smooth_mtn * summit * 32.0)
-					target_y += mtn_height
-
-			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
-			if river_raw < 0.028:
-				t_r = 1.0 - (river_raw / 0.028)
-				r_blend = (t_r * t_r) * 3.0
-				target_y = min(target_y, 61.0 - r_blend)
-
-			sculpt = pnoise3(wx / 25.0, target_y / 15.0, wz / 25.0) * 2.0
-			final_y = math.floor(target_y + sculpt)
-			final_y = max(4, min(final_y, chunk.CHUNK_HEIGHT - 6))
+			wx = chunk_offset_x + i
+			wz = chunk_offset_z + k
+			final_y = biome.get_blended_height(wx, wz, seed=seed)
 			surface_heights[i * 16 + k] = final_y
 
 	# Helper for flat 1D indexing into flat_bytes
 	def set_b(i, j, k, val):
-		flat_bytes[i * 4096 + j * 16 + k] = val
+		if 0 <= i < 16 and 0 <= j < 256 and 0 <= k < 16:
+			flat_bytes[i * 4096 + j * 16 + k] = val
 
 	def get_b(i, j, k):
-		return flat_bytes[i * 4096 + j * 16 + k]
+		if 0 <= i < 16 and 0 <= j < 256 and 0 <= k < 16:
+			return flat_bytes[i * 4096 + j * 16 + k]
+		return 0
 
 	# 2. Fill Solid Terrain, Surface Layers & Sea Water (Sea Level = 63)
 	for i in range(chunk.CHUNK_WIDTH):
@@ -147,11 +112,11 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			wz = chunk_offset_z + k
 			sy = surface_heights[i * 16 + k]
 
-			set_b(i, 0, k, 14)  # Bedrock
+			set_b(i, 0, k, biome.BLOCK_BEDROCK)
 
 			sub_depth = max(1, sy - 3)
 			for j in range(1, sub_depth):
-				block_num = 5  # Stone
+				block_num = biome.BLOCK_STONE
 				if 30 <= j and rng.randrange(100) < 4:
 					block_num = 16  # Coal Ore
 				elif 10 <= j <= 50 and rng.randrange(100) < 2:
@@ -159,49 +124,33 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 				elif 2 <= j <= 15 and rng.randrange(1000) < 3:
 					block_num = 18  # Diamond Ore
 				elif 10 <= j <= 32 and rng.randrange(1000) < 8:
-					block_num = 212  # Lapis Lazuli Ore (peaks around Y=13-17)
+					block_num = 212  # Lapis Lazuli Ore
 				elif 15 <= j <= 65 and rng.randrange(100) < 3:
-					block_num = 77  # Gravel pocket
+					block_num = biome.BLOCK_GRAVEL
 				set_b(i, j, k, block_num)
 
-			cont = pnoise2(wx / 350.0, wz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
-			river_raw = abs(pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
-			is_river = river_raw < 0.028
-			gravel_noise = pnoise2((wx + 4500.0) / 22.0, (wz + 4500.0) / 22.0, octaves=2)
-
-			if sy > 105:
-				for j in range(sub_depth, sy):
-					set_b(i, j, k, 5)
-				set_b(i, sy, k, 2)
-			elif sy > 85:
-				for j in range(sub_depth, sy + 1):
-					set_b(i, j, k, 5)
-			elif sy < 63:
-				# Ocean, deep sea, and riverbed generation with natural Gravel, Sand, and Dirt patches
-				if gravel_noise > 0.12:
-					underwater_mat = 77  # Gravel patch
-				elif cont < -0.22 or (cont < -0.15 and sy < 58):
-					underwater_mat = 6   # Sand patch
-				else:
-					underwater_mat = 4   # Dirt floor
-
-				for j in range(sub_depth, sy + 1):
-					set_b(i, j, k, underwater_mat)
-			elif cont < -0.15 and not is_river:
-				# Beach sand & occasional gravel beaches
-				beach_mat = 77 if gravel_noise > 0.38 else 6
-				for j in range(sub_depth, sy + 1):
-					set_b(i, j, k, beach_mat)
-			else:
-				for j in range(sub_depth, sy):
-					set_b(i, j, k, 4)
-				set_b(i, sy, k, 2)
+			top_mat, sub1_mat, sub2_mat = biome.get_surface_column(wx, wz, sy, seed=seed)
 
 			if sy < 63:
+				# Underwater column
+				for j in range(sub_depth, sy + 1):
+					set_b(i, j, k, sub1_mat)
+				# Fill water up to sea level 63 (or ice if freezing)
+				t = biome.get_temperature(wx, wz, seed=seed)
+				water_mat = biome.BLOCK_ICE if (t < 0.16 and sy >= 60) else biome.BLOCK_WATER
 				for water_y in range(sy + 1, 64):
-					set_b(i, water_y, k, 9)
+					set_b(i, water_y, k, water_mat)
+			else:
+				# Above water column
+				for j in range(sub_depth, max(sub_depth, sy - 2)):
+					set_b(i, j, k, sub2_mat)
+				if sy - 1 >= sub_depth:
+					set_b(i, sy - 1, k, sub1_mat)
+				if sy - 2 >= sub_depth:
+					set_b(i, sy - 2, k, sub2_mat)
+				set_b(i, sy, k, top_mat)
 
-	# 3. Carve 3D Caves (Worm tunnels, chambers, surface openings, and ravines)
+	# 3. 3D Caves (Worms, Cheese, Ravines)
 	for i in range(chunk.CHUNK_WIDTH):
 		for k in range(chunk.CHUNK_LENGTH):
 			wx = chunk_offset_x + i
@@ -219,17 +168,16 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 				max_cave_y = min(sy + 1 if (is_surface_open or is_ravine) else sy - 4, 115)
 
 			for j in range(9, max_cave_y):
-				if get_b(i, j, k) == 14:  # Bedrock
+				if get_b(i, j, k) == biome.BLOCK_BEDROCK:
 					continue
 
 				c1 = pnoise3(wx / 22.0, j / 12.0, wz / 22.0)
 				c2 = pnoise3((wx + 400.0) / 22.0, j / 12.0, (wz + 400.0) / 22.0)
 				cheese = pnoise3((wx - 200.0) / 32.0, j / 20.0, (wz - 200.0) / 32.0)
 
-				# Dynamic threshold expanding near surface opening
 				tunnel_thresh = 0.0070
 				if is_surface_open and j >= sy - 8:
-					tunnel_thresh = 0.0130  # Wider tunnel breaches out of hillside
+					tunnel_thresh = 0.0130
 
 				is_tunnel = (c1 * c1 + c2 * c2) < tunnel_thresh
 				is_chamber = (cheese > 0.52 and j < 55)
@@ -245,7 +193,7 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 				if get_b(i, j, k) == 0:
 					set_b(i, j, k, 15)
 
-	# 5. Underground Cave Lava Lakes & Water Pools (Probability of lava increases with lower Y)
+	# 5. Underground Cave Lava Lakes & Water Pools
 	if rng.randrange(100) < 65:
 		for _ in range(rng.randrange(1, 4)):
 			pool_lx = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
@@ -253,14 +201,12 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 			
 			found_y = None
 			for check_y in range(11, 52):
-				if get_b(pool_lx, check_y, pool_lz) == 0 and get_b(pool_lx, check_y - 1, pool_lz) in (5, 1, 16, 17, 18, 77):
+				if get_b(pool_lx, check_y, pool_lz) == 0 and get_b(pool_lx, check_y - 1, pool_lz) in (5, 1, 16, 17, 18, 77, biome.BLOCK_SANDSTONE):
 					found_y = check_y
 					break
 
 			if found_y is not None:
 				pool_ly = found_y
-				# Probability of lava increases with lower Y:
-				# Y=11..18 -> ~90% lava. Y=25 -> ~65% lava. Y=40 -> ~28% lava. Y=50 -> ~5% lava.
 				lava_prob = max(0.05, min(0.92, 1.0 - ((pool_ly - 10.0) / 42.0)))
 				liquid_type = 15 if (rng.random() < lava_prob) else 9
 
@@ -279,165 +225,158 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 							elif dist_sq <= (lake_rad + 1) * (lake_rad + 1):
 								for ry in range(pool_ly - 1, pool_ly + 2):
 									if get_b(px, ry, pz) == 0:
-										set_b(px, ry, pz, 5)  # Regular stone (5) border
+										set_b(px, ry, pz, 5)
 
-	# 6. Surface Water Lakes (Carved & filled at a single uniform Y level, 100% bounded by solid dirt/stone retaining walls)
-	if rng.randrange(100) < 40:
+	# 6. Surface Water Lakes (outside deserts)
+	center_wx = chunk_offset_x + 8
+	center_wz = chunk_offset_z + 8
+	primary_biome = biome.get_biome_at(center_wx, center_wz, seed=seed)
+
+	if primary_biome != biome.BIOME_DESERT and rng.randrange(100) < 35:
 		lake_cx = rng.randrange(3, chunk.CHUNK_WIDTH - 3)
 		lake_cz = rng.randrange(3, chunk.CHUNK_LENGTH - 3)
 		radius = rng.randrange(3, 6)
-		sample_heights = []
-
-		for dx in range(-radius - 1, radius + 2):
-			for dz in range(-radius - 1, radius + 2):
-				px, pz = lake_cx + dx, lake_cz + dz
-				if 0 <= px < chunk.CHUNK_WIDTH and 0 <= pz < chunk.CHUNK_LENGTH:
-					sample_heights.append(surface_heights[px * 16 + pz])
+		sample_heights = [surface_heights[px * 16 + pz] for px in range(lake_cx - radius - 1, lake_cx + radius + 2) for pz in range(lake_cz - radius - 1, lake_cz + radius + 2) if 0 <= px < 16 and 0 <= pz < 16]
 
 		if sample_heights:
 			min_h = min(sample_heights)
 			max_h = max(sample_heights)
-
 			if (max_h - min_h <= 3) and (min_h >= 62):
-				lake_surface_y = min_h  # Single uniform flat surface height for entire lake
-
+				lake_surface_y = min_h
 				for dx in range(-radius - 1, radius + 2):
 					for dz in range(-radius - 1, radius + 2):
 						dist_sq = dx * dx + dz * dz
 						px, pz = lake_cx + dx, lake_cz + dz
 						if 0 <= px < chunk.CHUNK_WIDTH and 0 <= pz < chunk.CHUNK_LENGTH:
 							col_h = surface_heights[px * 16 + pz]
-
 							if dist_sq <= radius * radius:
-								# Clear terrain blocks above lake surface to keep lake open to sky
 								for cy in range(lake_surface_y + 1, col_h + 1):
 									set_b(px, cy, pz, 0)
-
-								# Perfectly flat water surface
-								set_b(px, lake_surface_y, pz, 9)       # Water source top
-								set_b(px, lake_surface_y - 1, pz, 9)   # Water source in body
-								
-								# Basin floor with Gravel patches, Dirt, Sand, and Stone
-								gx = chunk_offset_x + px
-								gz = chunk_offset_z + pz
-								pond_gravel = pnoise2((gx + 1200.0) / 12.0, (gz + 1200.0) / 12.0)
-								if pond_gravel > 0.05:
-									floor_block = 77  # Gravel patch in pond!
-								else:
-									f_roll = rng.randrange(100)
-									if f_roll < 65:
-										floor_block = 4  # Dirt
-									elif f_roll < 85:
-										floor_block = 6  # Sand
-									else:
-										floor_block = 5  # Stone
-
-								set_b(px, lake_surface_y - 2, pz, floor_block)
-								set_b(px, lake_surface_y - 3, pz, 77 if pond_gravel > 0.15 else 5)
+								set_b(px, lake_surface_y, pz, 9)
+								set_b(px, lake_surface_y - 1, pz, 9)
+								set_b(px, lake_surface_y - 2, pz, 4)
+								set_b(px, lake_surface_y - 3, pz, 5)
 							elif dist_sq <= (radius + 1) * (radius + 1):
-								# Watertight solid dirt/stone/gravel retaining wall rim extending 1 block above water level
-								gx = chunk_offset_x + px
-								gz = chunk_offset_z + pz
-								pond_gravel = pnoise2((gx + 1200.0) / 12.0, (gz + 1200.0) / 12.0)
-								if pond_gravel > 0.20:
-									shore_block = 77  # Gravel shore patch
-								else:
-									s_roll = rng.randrange(100)
-									if s_roll < 60:
-										shore_block = 4  # Dirt
-									elif s_roll < 80:
-										shore_block = 6  # Sand
-									else:
-										shore_block = 5  # Stone
 								for ry in range(lake_surface_y - 2, lake_surface_y + 2):
 									b_curr = get_b(px, ry, pz)
 									if b_curr == 0 or b_curr in (9, 19, 15, 20):
-										set_b(px, ry, pz, shore_block)
+										set_b(px, ry, pz, 4)
 
-	# 7. Surface Lava Pools (Slightly bigger, 100% bounded by regular STONE 5 retaining walls)
-	if rng.randrange(100) < 12:
-		pool_x = rng.randrange(4, chunk.CHUNK_WIDTH - 4)
-		pool_z = rng.randrange(4, chunk.CHUNK_LENGTH - 4)
-		pool_surface_y = surface_heights[pool_x * 16 + pool_z]  # Single uniform flat surface height for entire pool
+	# 7. Procedural Tree & Flora Generation per Biome
+	tree_count_by_biome = {
+		biome.BIOME_DESERT: 0,
+		biome.BIOME_SAVANNA: 1 if rng.random() < 0.60 else 0, # Low density: sparse open savanna grasslands with occasional solitary acacia
+		biome.BIOME_PLAINS: 1 if rng.random() < 0.25 else 0,
+		biome.BIOME_FOREST: rng.randint(4, 7),
+		biome.BIOME_BIRCH_FOREST: rng.randint(6, 9),
+		biome.BIOME_SPRUCE_TAIGA: rng.randint(6, 9),
+		biome.BIOME_SNOW_FOREST: rng.randint(5, 8),
+		biome.BIOME_JUNGLE: rng.randint(16, 26), # High density: dense lush tropical rainforest canopy & undergrowth
+		biome.BIOME_HILLS: rng.randint(1, 3),
+		biome.BIOME_MOUNTAINS: 1 if rng.random() < 0.35 else 0,
+	}
 
-		if 62 <= pool_surface_y <= 85:
-			lava_rad = rng.randrange(3, 5)  # Bigger radius (3 to 4 blocks = 7 to 9 block diameter)
-			for dx in range(-lava_rad - 1, lava_rad + 2):
-				for dz in range(-lava_rad - 1, lava_rad + 2):
-					dist_sq = dx * dx + dz * dz
-					px, pz = pool_x + dx, pool_z + dz
-					if 0 <= px < chunk.CHUNK_WIDTH and 0 <= pz < chunk.CHUNK_LENGTH:
-						col_h = surface_heights[px * 16 + pz]
+	num_trees = tree_count_by_biome.get(primary_biome, 2)
+	planted_trees = []
 
-						if dist_sq <= lava_rad * lava_rad:
-							# Clear terrain blocks above pool
-							for cy in range(pool_surface_y + 1, col_h + 1):
-								set_b(px, cy, pz, 0)
+	import village
+	attempts = max(12, num_trees * 3) if num_trees > 0 else 0
+	for _ in range(attempts):
+		if len(planted_trees) >= num_trees:
+			break
+		tx = rng.randrange(2, chunk.CHUNK_WIDTH - 2)
+		tz = rng.randrange(2, chunk.CHUNK_LENGTH - 2)
+		gy = surface_heights[tx * 16 + tz]
+		ground_b = get_b(tx, gy, tz)
+		col_wx = chunk_offset_x + tx
+		col_wz = chunk_offset_z + tz
+		col_biome = biome.get_biome_at(col_wx, col_wz, seed=seed)
 
-							# Perfectly flat lava surface
-							set_b(px, pool_surface_y, pz, 15)       # Lava source top
-							set_b(px, pool_surface_y - 1, pz, 15)   # Lava source in body
-							floor_mat = 24 if rng.random() < 0.20 else 5  # Obsidian/Stone floor
-							set_b(px, pool_surface_y - 2, pz, floor_mat)
-						elif dist_sq <= (lava_rad + 1) * (lava_rad + 1):
-							# Watertight regular STONE (5) retaining wall rim extending 1 block above lava level
-							for ry in range(pool_surface_y - 2, pool_surface_y + 2):
-								b_curr = get_b(px, ry, pz)
-								if b_curr == 0 or b_curr in (9, 19, 15, 20):
-									set_b(px, ry, pz, 5)
+		if 62 <= gy < 100 and gy + 15 < chunk.CHUNK_HEIGHT and ground_b in (biome.BLOCK_GRASS, biome.BLOCK_DIRT, biome.BLOCK_PODZOL, biome.BLOCK_SNOW_BLOCK):
+			if not village.is_in_village(col_wx, col_wz, seed):
+				min_dist = 2 if col_biome == biome.BIOME_JUNGLE else 3
+				if not any(abs(tx - px) <= min_dist and abs(tz - pz) <= min_dist for px, pz in planted_trees):
+					if col_biome == biome.BIOME_BIRCH_FOREST:
+						biome.generate_birch_tree(flat_bytes, tx, gy + 1, tz, rng)
+					elif col_biome in (biome.BIOME_SPRUCE_TAIGA, biome.BIOME_SNOW_FOREST):
+						biome.generate_spruce_tree(flat_bytes, tx, gy + 1, tz, rng)
+					elif col_biome == biome.BIOME_JUNGLE:
+						if rng.random() < 0.45:
+							biome.generate_jungle_bush(flat_bytes, tx, gy + 1, tz, rng)
+						else:
+							biome.generate_jungle_tree(flat_bytes, tx, gy + 1, tz, rng)
+					elif col_biome == biome.BIOME_SAVANNA:
+						biome.generate_acacia_tree(flat_bytes, tx, gy + 1, tz, rng)
+					elif col_biome == biome.BIOME_FOREST:
+						if rng.random() < 0.40:
+							biome.generate_birch_tree(flat_bytes, tx, gy + 1, tz, rng)
+						else:
+							biome.generate_oak_tree(flat_bytes, tx, gy + 1, tz, rng)
+					else:
+						biome.generate_oak_tree(flat_bytes, tx, gy + 1, tz, rng)
+					planted_trees.append((tx, tz))
 
-	# 7. Tree Generation
-	trees = []
-	for _ in range(8):
-		tree_x = rng.randrange(1, chunk.CHUNK_WIDTH - 1)
-		tree_z = rng.randrange(1, chunk.CHUNK_LENGTH - 1)
-		gy = surface_heights[tree_x * 16 + tree_z]
+	# 8. Biome-Specific Flora & Ground Decoration
+	for _ in range(rng.randint(6, 16)):
+		fx = rng.randrange(1, chunk.CHUNK_WIDTH - 1)
+		fz = rng.randrange(1, chunk.CHUNK_LENGTH - 1)
+		gy = surface_heights[fx * 16 + fz]
+		ground_b = get_b(fx, gy, fz)
+		col_wx = chunk_offset_x + fx
+		col_wz = chunk_offset_z + fz
+		col_biome = biome.get_biome_at(col_wx, col_wz, seed=seed)
 
-		if (62 <= gy < 85 and gy + 8 < chunk.CHUNK_HEIGHT and get_b(tree_x, gy, tree_z) == 2):
-			# Do not plant trees inside village perimeter
-			import village
-			if not village.is_in_village(chunk_offset_x + tree_x, chunk_offset_z + tree_z, seed):
-				has_adjacent_tree = any((tree_x + dx, gy, tree_z + dz) in trees for dx in range(-2, 3) for dz in range(-2, 3))
-				if not has_adjacent_tree:
-					trunk_y = gy + 1
-					for n in range(5):
-						set_b(tree_x, trunk_y + n, tree_z, 8)
+		if gy + 1 < chunk.CHUNK_HEIGHT and get_b(fx, gy + 1, fz) == 0:
+			if col_biome == biome.BIOME_DESERT and ground_b == biome.BLOCK_SAND:
+				if rng.random() < 0.45:
+					c_height = rng.randint(1, 3)
+					for cy in range(1, c_height + 1):
+						set_b(fx, gy + cy, fz, biome.BLOCK_CACTUS)
+				else:
+					set_b(fx, gy + 1, fz, biome.BLOCK_DEAD_BUSH)
+			elif col_biome == biome.BIOME_JUNGLE and ground_b == biome.BLOCK_GRASS:
+				if rng.random() < 0.15:
+					set_b(fx, gy + 1, fz, biome.BLOCK_MELON)
+				else:
+					set_b(fx, gy + 1, fz, biome.BLOCK_FERN)
+			elif col_biome == biome.BIOME_SPRUCE_TAIGA and ground_b in (biome.BLOCK_GRASS, biome.BLOCK_PODZOL):
+				if rng.random() < 0.10:
+					set_b(fx, gy + 1, fz, 82)
+				else:
+					set_b(fx, gy + 1, fz, biome.BLOCK_FERN)
+			elif col_biome == biome.BIOME_PLAINS and ground_b == biome.BLOCK_GRASS:
+				flower_choice = rng.choice([biome.BLOCK_DANDELION, biome.BLOCK_ROSE, biome.BLOCK_RED_TULIP, biome.BLOCK_ORANGE_TULIP, biome.BLOCK_OXEYE_DAISY])
+				set_b(fx, gy + 1, fz, flower_choice)
+			elif col_biome in (biome.BIOME_FOREST, biome.BIOME_BIRCH_FOREST) and ground_b == biome.BLOCK_GRASS:
+				flower_choice = rng.choice([biome.BLOCK_DANDELION, biome.BLOCK_ROSE, biome.BLOCK_OXEYE_DAISY])
+				set_b(fx, gy + 1, fz, flower_choice)
+			elif col_biome == biome.BIOME_SAVANNA and ground_b == biome.BLOCK_GRASS:
+				if rng.random() < 0.60:
+					set_b(fx, gy + 1, fz, biome.BLOCK_DANDELION)
 
-					leaves_height = trunk_y + 3
-					for dx in range(-2, 3):
-						for dz in range(-2, 3):
-							if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
-								set_b(tree_x + dx, leaves_height, tree_z + dz, 13)
-								set_b(tree_x + dx, leaves_height + 1, tree_z + dz, 13)
-					for dx in range(-1, 2):
-						for dz in range(-1, 2):
-							if 0 <= tree_x + dx < chunk.CHUNK_WIDTH and 0 <= tree_z + dz < chunk.CHUNK_LENGTH:
-								set_b(tree_x + dx, leaves_height + 2, tree_z + dz, 13)
-					trees.append((tree_x, gy, tree_z))
-
-	# 8. Village Structures Generation (High Priority: Overwrite terrain & trees)
+	# 9. Village Structures Generation (High Priority)
 	try:
 		import village
 		v_blocks, v_air, _ = village.get_village_blocks_for_chunk(x, z, seed)
 		if v_blocks or v_air:
-			# 1. Clear air volumes above/inside structures, roads, and wells
 			for (lx, ly, lz) in v_air:
 				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
 					set_b(lx, ly, lz, 0)
-			# 2. Place structure blocks (cobblestone, wood, doors, crops, chests, etc.)
 			for (lx, ly, lz), b_id in v_blocks.items():
 				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
 					set_b(lx, ly, lz, b_id)
 	except Exception as e:
 		print(f"[Village Error in chunk {x}, {z}]: {e}")
 
-	# 9. Stronghold Structures Generation (Underground stone brick corridors, rooms, libraries, prison, portal room)
+	# 10. Stronghold Structures Generation
 	try:
 		import stronghold_manager
 		stronghold_manager.stamp_stronghold_blocks_for_chunk(x, z, flat_bytes, seed=seed)
 	except Exception as e:
 		pass
 
+	if hasattr(flat_bytes, 'tobytes'):
+		return flat_bytes.tobytes()
 	return bytes(flat_bytes)
 
 
@@ -637,6 +576,26 @@ def build_end_chunk_blocks_process(x, z, save_dir, seed=0):
 def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None, burning_blocks=None):
 	"""Standalone worker function for ProcessPoolExecutor.
 	Meshes a single 16x16x16 vertical section of a chunk with 100% process pool isolation (zero GIL contention)."""
+	def unpack_chunk_blocks(raw_data):
+		if raw_data is None:
+			return None
+		if isinstance(raw_data, array.array):
+			return raw_data
+		if isinstance(raw_data, (bytes, bytearray)):
+			if len(raw_data) >= 131072:
+				arr = array.array('H')
+				arr.frombytes(raw_data[:131072])
+				return arr
+			elif len(raw_data) >= 65536:
+				return array.array('H', raw_data[:65536])
+		return raw_data
+
+	center_blocks = unpack_chunk_blocks(center_blocks)
+	north_blocks = unpack_chunk_blocks(north_blocks)
+	south_blocks = unpack_chunk_blocks(south_blocks)
+	east_blocks = unpack_chunk_blocks(east_blocks)
+	west_blocks = unpack_chunk_blocks(west_blocks)
+
 	min_y = section_y * 16
 	max_y = min_y + 16
 
@@ -773,6 +732,13 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					elif rot_facing == "WEST": return (vz, vy, -vx)
 					return (vx, vy, vz)
 
+				def rotate_bed_vertex(vx, vy, vz, rot_facing):
+					if rot_facing == "SOUTH": return (vx, vy, vz)
+					elif rot_facing == "NORTH": return (-vx, vy, -vz)
+					elif rot_facing == "EAST": return (vz, vy, -vx)
+					elif rot_facing == "WEST": return (-vz, vy, vx)
+					return (vx, vy, vz)
+
 				def add_custom_box(min_pt, max_pt, face_tex_indices, rot_facing="NORTH"):
 					nonlocal opaque_vert_count, trans_vert_count
 					pos_arr = trans_pos if is_translucent else opaque_pos
@@ -876,7 +842,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 				if b_info['is_cube']:
 					is_dir = b_num in (27, 54, 55, 56, 37, 57, 58, 59)
-					is_log = b_num in (8, 60, 61)
+					is_log = b_num in (8, 60, 61, 223, 233, 243, 253, 263)
 
 					for face_idx, (dx, dy, dz) in enumerate(neighbor_offsets):
 						nx, ny, nz = local_x + dx, local_y + dy, local_z + dz
@@ -900,7 +866,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 									add_face(face_idx, is_translucent)
 						else:
 							n_info = block_types_info.get(neighbor_num)
-							if not n_info or n_info['transparent']:
+							if not n_info or n_info['transparent'] or not n_info.get('is_cube', True):
 								if is_dir:
 									tc_i = get_dir_tex_idx(b_num, face_idx, facing)
 									add_face(face_idx, is_translucent, custom_tc_idx=tc_i)
@@ -913,9 +879,9 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 				else:
 					# Non-Cube Custom Model Geometry using native 3D model definitions + BlockState parameters
-					rot_f = facing if b_num in (41, 42, 73, 74, 92, 93, 178, 179, 181, 182, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72, 75, 76) else "NORTH"
+					rot_f = facing if b_num in (41, 42, 73, 74, 92, 93, 178, 179, 181, 182, 43, 44, 45, 46, 65, 66, 67, 68, 47, 48, 49, 50, 69, 70, 71, 72, 75, 76, 227, 237, 247, 257, 267, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269, 230, 240, 250, 260, 270, 272, 273, 274, 275, 276) else "NORTH"
 
-					if b_num in (38, 39, 40, 62, 63, 64, 95, 180):
+					if b_num in (38, 39, 40, 62, 63, 64, 95, 180, 226, 236, 246, 256, 266):
 						# Slabs (Bottom, Top, Double)
 						sl_h = "TOP" if b_num in (62, 63, 64) else half
 						if sl_h == "DOUBLE":
@@ -925,7 +891,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						else:
 							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.0, 0.5), [0, 0, 0, 0, 0, 0])
 
-					elif b_num in (41, 42, 73, 74, 92, 93, 178, 179):
+					elif b_num in (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267):
 						# Stairs (Facing, Half, Shape)
 						is_top_stair = (b_num in (73, 74, 93, 179) or half in ("TOP", "UPPER"))
 						y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
@@ -945,7 +911,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						else:
 							add_custom_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
-					elif b_num in (43, 44, 45, 46, 65, 66, 67, 68):
+					elif b_num in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 						# Doors (Facing, Hinge, Half, Open)
 						d_open = open_state or (b_num in (44, 46, 66, 68))
 						if d_open:
@@ -956,7 +922,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 						else:
 							add_custom_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
-					elif b_num in (47, 48, 49, 50, 69, 70, 71, 72):
+					elif b_num in (47, 48, 49, 50, 69, 70, 71, 72, 230, 240, 250, 260, 270):
 						# Trapdoors (Facing, Half, Open)
 						is_top = b_num in (69, 70, 71, 72) or half == "TOP"
 						td_open = open_state or (b_num in (48, 50, 70, 72))
@@ -969,7 +935,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							else:
 								add_custom_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
-					elif b_num in (75, 76):
+					elif b_num in (75, 76, 272, 273, 274, 275, 276):
 						# Fence Gates (Facing, Open)
 						gate_open = open_state or (b_num == 76)
 						if gate_open:
@@ -982,8 +948,8 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							add_custom_box((0.375, -0.5, -0.125), (0.5, 0.5, 0.125), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 							add_custom_box((-0.375, -0.375, -0.0625), (0.375, 0.375, 0.0625), [0, 0, 0, 0, 0, 0], rot_facing=rot_f)
 
-					elif b_num in (51, 52, 53, 91, 99):
-						# Fences (51, 91), Walls (52), Glass Panes (53), Iron Bars (99)
+					elif b_num in (51, 52, 53, 91, 99, 231, 241, 251, 261, 271):
+						# Fences (51, 91, 231, 241, 251, 261, 271), Walls (52), Glass Panes (53), Iron Bars (99)
 						nb_n = get_nb(local_x, local_y, local_z - 1)
 						nb_s = get_nb(local_x, local_y, local_z + 1)
 						nb_w = get_nb(local_x - 1, local_y, local_z)
@@ -991,12 +957,12 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						def can_conn(nb, d_key):
 							if conns and d_key in conns: return conns[d_key]
-							if nb in (0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81, 88, 89, 94, 181, 182, 183):
+							if nb in (0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81, 88, 89, 94, 156, 181, 182, 183, 190, 191, 192, 193, 194, 195, 196, 197, 204, 205, 206, 207, 210, 213, 218, 219, 220, 221, 224, 225, 228, 229, 230, 234, 235, 238, 239, 240, 244, 245, 248, 249, 250, 254, 255, 258, 259, 260, 264, 265, 268, 269, 270, 279, 280, 283, 284, 285):
 								return False
-							if b_num in (51, 91):
-								return nb in (51, 91, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+							if b_num in (51, 91, 231, 241, 251, 261, 271):
+								return nb in (51, 91, 231, 241, 251, 261, 271, 75, 76, 272, 273, 274, 275, 276) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num == 52:
-								return nb in (52, 53, 99, 75, 76) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
+								return nb in (52, 53, 99, 75, 76, 272, 273, 274, 275, 276) or (block_types_info.get(nb, {}).get('is_cube', False) and not block_types_info.get(nb, {}).get('transparent', False))
 							elif b_num in (53, 99):
 								# Glass panes and iron bars connect to other panes/bars, walls, fences, gates, stairs, slabs, and solid blocks!
 								return True
@@ -1009,7 +975,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						is_straight = (c_n and c_s and not c_w and not c_e) or (c_w and c_e and not c_n and not c_s)
 
-						if b_num in (51, 91):
+						if b_num in (51, 91, 231, 241, 251, 261, 271):
 							add_custom_box((-0.125, -0.5, -0.125), (0.125, 0.5, 0.125), [0, 0, 0, 0, 0, 0])
 							if c_n:
 								add_custom_box((-0.08, 0.15, -0.5), (0.08, 0.35, -0.125), [0, 0, 0, 0, 0, 0])
@@ -1096,6 +1062,34 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							pos_arr = trans_pos if is_translucent else opaque_pos
 							for vi in range(4):
 								pos_arr.extend((vp[vi * 3 + 0] + x, vp[vi * 3 + 1] + y, vp[vi * 3 + 2] + z))
+
+							if is_translucent:
+								trans_vert_count += 4
+								trans_tex.extend(tc)
+								trans_shd.extend(sh)
+							else:
+								opaque_vert_count += 4
+								opaque_tex.extend(tc)
+								opaque_shd.extend(sh)
+					elif b_num in (220, 221):
+						# Bed Foot (220) and Bed Head (221) directional rotation
+						bed_facing = facing if facing in ("NORTH", "SOUTH", "EAST", "WEST") else "SOUTH"
+						for face_idx in range(len(b_info['vertex_positions'])):
+							vp = b_info['vertex_positions'][face_idx]
+							sh = b_info['shading_values'][face_idx]
+							tc = b_info['tex_coords'][face_idx] if face_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
+
+							c = trans_vert_count if is_translucent else opaque_vert_count
+							idx_arr = trans_idx if is_translucent else opaque_idx
+							idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+
+							pos_arr = trans_pos if is_translucent else opaque_pos
+							for vi in range(4):
+								vx = vp[vi * 3 + 0]
+								vy = vp[vi * 3 + 1]
+								vz = vp[vi * 3 + 2]
+								rx, ry, rz = rotate_bed_vertex(vx, vy, vz, bed_facing)
+								pos_arr.extend((rx + x, ry + y, rz + z))
 
 							if is_translucent:
 								trans_vert_count += 4
@@ -1264,7 +1258,7 @@ class World:
 		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, subfolder)
 		os.makedirs(self.save_dir, exist_ok=True)
 
-		self.texture_manager = texture_manager.Texture_manager(16, 16, 256)
+		self.texture_manager = texture_manager.Texture_manager(16, 16, 1024)
 		self.block_types = [None]
 
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cobblestone", block_face_textures={"all": "cobblestone"}, break_time=1.5, requires_tool=True))
@@ -1276,10 +1270,10 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="planks", block_face_textures={"all": "planks"}, break_time=0.9, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="log", block_face_textures={"top": "log_top", "bottom": "log_top", "sides": "log_side"}, break_time=0.9, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="water", block_face_textures={"all": "water"}, model=models.liquid, transparent=True, break_time=float('inf'), requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="rose", block_face_textures={"all": "rose"}, model=models.plant, break_time=0.15, requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="cactus", block_face_textures={"top": "cactus_top", "bottom": "cactus_bottom", "sides": "cactus_side"}, model=models.cactus, break_time=0.4, requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="dead_bush", block_face_textures={"all": "dead_bush"}, model=models.plant, break_time=0.15, requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="leaves", block_face_textures={"all": "leaves"}, model=models.leaves, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="rose", block_face_textures={"all": "rose"}, model=models.plant, transparent=True, break_time=0.15, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="cactus", block_face_textures={"top": "cactus_top", "bottom": "cactus_bottom", "sides": "cactus_side"}, model=models.cactus, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dead_bush", block_face_textures={"all": "dead_bush"}, model=models.plant, transparent=True, break_time=0.15, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="leaves", block_face_textures={"all": "leaves"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="bedrock", block_face_textures={"all": "bedrock"}, break_time=float('inf'), requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="lava", block_face_textures={"all": "lava"}, model=models.liquid, transparent=True, break_time=float('inf'), requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="coal_ore", block_face_textures={"all": "coal_ore"}, break_time=2.0, requires_tool=True))
@@ -1299,7 +1293,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="diamond_block", block_face_textures={"all": "diamond_block"}, break_time=2.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="snow", block_face_textures={"all": "snow"}, break_time=0.3, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="ice", block_face_textures={"all": "ice"}, transparent=True, break_time=0.5, requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="yellow_flower", block_face_textures={"all": "yellow_flower"}, model=models.plant, break_time=0.15, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="yellow_flower", block_face_textures={"all": "yellow_flower"}, model=models.plant, transparent=True, break_time=0.15, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="sponge", block_face_textures={"all": "sponge"}, break_time=0.6, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="gold_ore", block_face_textures={"all": "gold_ore"}, break_time=2.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="redstone_ore", block_face_textures={"all": "redstone_ore"}, break_time=2.0, requires_tool=True))
@@ -1417,14 +1411,174 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="lapis_ore", block_face_textures={"all": "lapis_ore"}, break_time=3.0, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="enchanting_table", block_face_textures={"top": "enchanting_table_top", "bottom": "obsidian", "sides": "enchanting_table_side"}, model=models.enchanting_table, transparent=True, break_time=5.0, requires_tool=True))
 
-		# Pad slots up to 219 for items (214: Lapis, 215: Paper, 216: Book, 217: Enchanted Book, 218: Bottle o' Enchanting)
-		while len(self.block_types) < 219:
+		# Pad slots up to 220 for items (214: Lapis, 215: Paper, 216: Book, 217: Enchanted Book, 218: Bottle o' Enchanting, 219: Bed item)
+		while len(self.block_types) < 220:
 			curr_id = len(self.block_types)
 			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+
+		# Bed Blocks (220 = Bed Foot, 221 = Bed Head)
+		self.block_types.append(block_type.Block_type(
+			self.texture_manager,
+			name="bed_foot",
+			block_face_textures={
+				"top": "bed_feet_top",
+				"bottom": "planks",
+				"right": "bed_feet_side",
+				"left": "bed_feet_side",
+				"back": "bed_feet_end",
+				"front": "planks"
+			},
+			model=models.bed_foot,
+			transparent=True,
+			break_time=0.3,
+			requires_tool=False
+		))
+		self.block_types.append(block_type.Block_type(
+			self.texture_manager,
+			name="bed_head",
+			block_face_textures={
+				"top": "bed_head_top",
+				"bottom": "planks",
+				"right": "bed_head_side",
+				"left": "bed_head_side",
+				"front": "bed_head_end",
+				"back": "planks"
+			},
+			model=models.bed_head,
+			transparent=True,
+			break_time=0.3,
+			requires_tool=False
+		))
+
+		# -------------------------------------------------------------------
+		# Birch Family (222-231, 272)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_planks", block_face_textures={"all": "planks_birch"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_log", block_face_textures={"top": "log_birch_top", "bottom": "log_birch_top", "sides": "log_birch"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_leaves", block_face_textures={"all": "leaves_birch"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_sapling", block_face_textures={"all": "sapling_birch"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_slab", block_face_textures={"all": "planks_birch"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_stairs", block_face_textures={"all": "planks_birch"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_door", block_face_textures={"all": "door_birch_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_door_top", block_face_textures={"all": "door_birch_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_trapdoor", block_face_textures={"all": "trapdoor_birch"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_fence", block_face_textures={"all": "planks_birch"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Spruce Family (232-241, 273)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_planks", block_face_textures={"all": "planks_spruce"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_log", block_face_textures={"top": "log_spruce_top", "bottom": "log_spruce_top", "sides": "log_spruce"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_leaves", block_face_textures={"all": "leaves_spruce"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_sapling", block_face_textures={"all": "sapling_spruce"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_slab", block_face_textures={"all": "planks_spruce"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_stairs", block_face_textures={"all": "planks_spruce"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_door", block_face_textures={"all": "door_spruce_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_door_top", block_face_textures={"all": "door_spruce_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_trapdoor", block_face_textures={"all": "trapdoor_spruce"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_fence", block_face_textures={"all": "planks_spruce"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Jungle Family (242-251, 274)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_planks", block_face_textures={"all": "planks_jungle"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_log", block_face_textures={"top": "log_jungle_top", "bottom": "log_jungle_top", "sides": "log_jungle"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_leaves", block_face_textures={"all": "leaves_jungle"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_sapling", block_face_textures={"all": "sapling_jungle"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_slab", block_face_textures={"all": "planks_jungle"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_stairs", block_face_textures={"all": "planks_jungle"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_door", block_face_textures={"all": "door_jungle_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_door_top", block_face_textures={"all": "door_jungle_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_trapdoor", block_face_textures={"all": "trapdoor_jungle"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_fence", block_face_textures={"all": "planks_jungle"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Acacia Family (252-261, 275)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_planks", block_face_textures={"all": "planks_acacia"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_log", block_face_textures={"top": "log_acacia_top", "bottom": "log_acacia_top", "sides": "log_acacia"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_leaves", block_face_textures={"all": "leaves_acacia"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_sapling", block_face_textures={"all": "sapling_acacia"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_slab", block_face_textures={"all": "planks_acacia"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_stairs", block_face_textures={"all": "planks_acacia"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_door", block_face_textures={"all": "door_acacia_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_door_top", block_face_textures={"all": "door_acacia_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_trapdoor", block_face_textures={"all": "trapdoor_acacia"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_fence", block_face_textures={"all": "planks_acacia"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Dark Oak Family (262-271, 276)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_planks", block_face_textures={"all": "planks_big_oak"}, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_log", block_face_textures={"top": "log_big_oak_top", "bottom": "log_big_oak_top", "sides": "log_big_oak"}, break_time=0.9, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_leaves", block_face_textures={"all": "leaves_big_oak"}, model=models.leaves, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_sapling", block_face_textures={"all": "sapling_roofed_oak"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_slab", block_face_textures={"all": "planks_big_oak"}, model=models.slab, transparent=True, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_stairs", block_face_textures={"all": "planks_big_oak"}, model=models.stairs, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_door", block_face_textures={"all": "door_dark_oak_lower"}, model=models.door, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_door_top", block_face_textures={"all": "door_dark_oak_upper"}, model=models.door_top, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_trapdoor", block_face_textures={"all": "trapdoor_dark_oak"}, model=models.trapdoor, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_fence", block_face_textures={"all": "planks_big_oak"}, model=models.fence, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Fence Gates (272-276)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="birch_fence_gate", block_face_textures={"all": "planks_birch"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="spruce_fence_gate", block_face_textures={"all": "planks_spruce"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="jungle_fence_gate", block_face_textures={"all": "planks_jungle"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="acacia_fence_gate", block_face_textures={"all": "planks_acacia"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="dark_oak_fence_gate", block_face_textures={"all": "planks_big_oak"}, model=models.fence_gate, transparent=True, break_time=0.6, requires_tool=False))
+
+		# -------------------------------------------------------------------
+		# Biome Terrain & Flora (277-285)
+		# -------------------------------------------------------------------
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="sandstone", block_face_textures={"top": "sandstone_top", "bottom": "sandstone_bottom", "sides": "sandstone_normal"}, break_time=0.8, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="podzol", block_face_textures={"top": "dirt_podzol_top", "bottom": "dirt", "sides": "dirt_podzol_side"}, break_time=0.5, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="fern", block_face_textures={"all": "fern"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="vines", block_face_textures={"all": "vine"}, model=models.plant, transparent=True, break_time=0.2, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="red_sand", block_face_textures={"all": "red_sand"}, break_time=0.4, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="packed_ice", block_face_textures={"all": "ice_packed"}, break_time=0.5, requires_tool=True))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="red_tulip", block_face_textures={"all": "flower_tulip_red"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="orange_tulip", block_face_textures={"all": "flower_tulip_orange"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="oxeye_daisy", block_face_textures={"all": "flower_oxeye_daisy"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
 
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
+
+		# Wood Variant & Biome Textures
+		for wood in ("birch", "spruce", "jungle", "acacia", "big_oak"):
+			self.texture_manager.add_texture(f"planks_{wood}")
+			self.texture_manager.add_texture(f"log_{wood}")
+			self.texture_manager.add_texture(f"log_{wood}_top")
+			self.texture_manager.add_texture(f"leaves_{wood}")
+		self.texture_manager.add_texture("sapling_birch")
+		self.texture_manager.add_texture("sapling_spruce")
+		self.texture_manager.add_texture("sapling_jungle")
+		self.texture_manager.add_texture("sapling_acacia")
+		self.texture_manager.add_texture("sapling_roofed_oak")
+		self.texture_manager.add_texture("door_birch_lower")
+		self.texture_manager.add_texture("door_birch_upper")
+		self.texture_manager.add_texture("door_spruce_lower")
+		self.texture_manager.add_texture("door_spruce_upper")
+		self.texture_manager.add_texture("door_jungle_lower")
+		self.texture_manager.add_texture("door_jungle_upper")
+		self.texture_manager.add_texture("door_acacia_lower")
+		self.texture_manager.add_texture("door_acacia_upper")
+		self.texture_manager.add_texture("door_dark_oak_lower")
+		self.texture_manager.add_texture("door_dark_oak_upper")
+		self.texture_manager.add_texture("sandstone_top")
+		self.texture_manager.add_texture("sandstone_bottom")
+		self.texture_manager.add_texture("sandstone_normal")
+		self.texture_manager.add_texture("dirt_podzol_top")
+		self.texture_manager.add_texture("dirt_podzol_side")
+		self.texture_manager.add_texture("fern")
+		self.texture_manager.add_texture("vine")
+		self.texture_manager.add_texture("red_sand")
+		self.texture_manager.add_texture("ice_packed")
+		self.texture_manager.add_texture("flower_tulip_red")
+		self.texture_manager.add_texture("flower_tulip_orange")
+		self.texture_manager.add_texture("flower_oxeye_daisy")
 
 		for stage in range(8):
 			self.texture_manager.add_texture(f"wheat_stage_{stage}")
@@ -1462,6 +1616,13 @@ class World:
 		for frame in range(4):
 			self.texture_manager.add_texture(f"experience_orb_{frame}")
 		self.texture_manager.add_texture("lapis_ore")
+		self.texture_manager.add_texture("bed_feet_top")
+		self.texture_manager.add_texture("bed_feet_side")
+		self.texture_manager.add_texture("bed_feet_end")
+		self.texture_manager.add_texture("bed_head_top")
+		self.texture_manager.add_texture("bed_head_side")
+		self.texture_manager.add_texture("bed_head_end")
+		self.texture_manager.add_texture("items/bed")
 		self.texture_manager.add_texture("enchanting_table_top")
 		self.texture_manager.add_texture("enchanting_table_side")
 		self.texture_manager.generate_mipmaps()
@@ -1758,7 +1919,7 @@ class World:
 				info[idx] = {
 					'name': b.name,
 					'is_cube': b.is_cube,
-					'transparent': b.transparent,
+					'transparent': b.transparent or getattr(b.model, "transparent", False) or (not b.is_cube),
 					'translucent': b.translucent or b.name in ('water', 'under_water'),
 					'vertex_positions': b.vertex_positions,
 					'tex_coords': b.tex_coords,
@@ -1772,32 +1933,7 @@ class World:
 		self.render_distance = max(2, min(12, new_rd))
 		self.unload_distance = self.render_distance + 3
 		self._load_queue.clear()
-
-		for x in range(-2, 3):
-			for z in range(-2, 3):
-				cpos = (x, 0, z)
-				if cpos not in self.chunks:
-					chk_bytes = self.generate_chunk(x, z, blocks_only=True)
-					self.chunks[cpos] = chunk.Chunk(self, cpos, blocks=chk_bytes)
-
-		info = self.get_block_types_info()
-		for cpos, chk in list(self.chunks.items()):
-			cx, _, cz = cpos
-			c_bytes = bytes(chk.blocks)
-			e_bytes = bytes(self.chunks[(cx + 1, 0, cz)].blocks) if (cx + 1, 0, cz) in self.chunks else None
-			w_bytes = bytes(self.chunks[(cx - 1, 0, cz)].blocks) if (cx - 1, 0, cz) in self.chunks else None
-			s_bytes = bytes(self.chunks[(cx, 0, cz + 1)].blocks) if (cx, 0, cz + 1) in self.chunks else None
-			n_bytes = bytes(self.chunks[(cx, 0, cz - 1)].blocks) if (cx, 0, cz - 1) in self.chunks else None
-
-			for sy in range(16):
-				b_blocks = {
-					(int(pos[0] % 16), int(pos[1]), int(pos[2] % 16)): list(data['faces'])
-					for pos, data in self.burning_blocks.items()
-					if math.floor(pos[0] / 16) == cx and math.floor(pos[2] / 16) == cz and (pos[1] // 16) == sy
-				} if self.burning_blocks else None
-				res = build_section_mesh_process(cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, dict(self.water_levels), dict(self.lava_levels), burning_blocks=b_blocks)
-				_, _, _, op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx, missing = res
-				chk.send_section_mesh_to_gpu(sy, op_pos, op_tex, op_shd, op_idx, tr_pos, tr_tex, tr_shd, tr_idx)
+		self._last_player_chunk = None
 
 	def generate_chunk(self, x, z, blocks_only=False):
 		chunk_position = (x, 0, z)
@@ -2022,7 +2158,7 @@ class World:
 			nb_st = self.get_block_state(nb_pos)
 
 			# 1. Stairs shape recalculation
-			if nb_b in (41, 42, 73, 74, 92, 93):
+			if nb_b in (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267):
 				if not nb_st:
 					nb_st = block_state.BlockState(nb_b)
 				new_shape = block_state.calculate_stair_shape(self, nb_pos, nb_st.facing, nb_st.half)
@@ -2031,7 +2167,7 @@ class World:
 					self.set_block_state(nb_pos, nb_st)
 
 			# 2. Fence connection recalculation
-			elif nb_b in (51, 91):
+			elif nb_b in (51, 91, 231, 241, 251, 261, 271):
 				if not nb_st:
 					nb_st = block_state.BlockState(nb_b)
 				new_conn = block_state.calculate_fence_connections(self, nb_pos, nb_b)
@@ -2049,9 +2185,9 @@ class World:
 					self.set_block_state(nb_pos, nb_st)
 
 			# 4. Pane connection recalculation
-			elif nb_b in (53,):
+			elif nb_b in (53, 99):
 				if not nb_st:
-					nb_st = block_state.BlockState(53)
+					nb_st = block_state.BlockState(nb_b)
 				new_conn = block_state.calculate_pane_connections(self, nb_pos, nb_b)
 				if new_conn != nb_st.connections:
 					nb_st.connections = new_conn
@@ -2065,11 +2201,12 @@ class World:
 
 	def is_passable_for_gravity(self, pos):
 		"""Returns True if a falling sand/gravel block can fall into this position."""
+		import block_state
 		x, y, z = pos
 		if y < 1 or y >= chunk.CHUNK_HEIGHT:
 			return False
 		b_num = self.get_block_number(pos)
-		return b_num == 0 or b_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 183)
+		return b_num in block_state.PASSABLE_BLOCKS
 
 	def check_and_activate_end_portal(self, frame_pos):
 		"""
@@ -2704,7 +2841,8 @@ class World:
 				state_map[f"{lx},{ly},{lz}"] = st.to_dict()
 
 		state_bytes = json.dumps(state_map).encode('utf-8')
-		data = bytes(chk.blocks) + b"|STATE_DATA|" + state_bytes
+		raw_blocks = chk.blocks.tobytes() if hasattr(chk.blocks, 'tobytes') else bytes(chk.blocks)
+		data = raw_blocks + b"|STATE_DATA|" + state_bytes
 
 		def write_content(path, content):
 			try:

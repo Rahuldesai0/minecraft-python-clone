@@ -9,9 +9,9 @@ class Block_type:
 
 		# create members based on model attributes
 
-		self.transparent = transparent
 		self.model = model
-		self.is_cube = model.is_cube
+		self.is_cube = getattr(model, "is_cube", True)
+		self.transparent = transparent or getattr(model, "transparent", False) or (not self.is_cube)
 		self.translucent = getattr(model, "translucent", False)
 
 		# replace data contained in numbers.py with model specific data

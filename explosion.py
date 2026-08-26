@@ -77,6 +77,7 @@ BLAST_RESISTANCE = {
 	81: 0.0,           # Wheat Crops
 	82: 6.0,           # Mossy Cobblestone
 	83: 0.8,           # White Wool
+	88: 0.0, 89: 0.0,  # Nether Portal X & Z (Broken/extinguished by explosions, never drops items)
 	90: 6.0, 91: 6.0, 92: 6.0, 93: 6.0, 95: 6.0, # Nether Brick blocks
 	96: 6.0, 97: 6.0, 98: 6.0, # Stone Bricks
 	99: 6.0,           # Iron Bars
@@ -85,6 +86,7 @@ BLAST_RESISTANCE = {
 	183: 3600000.0,    # End Portal (Indestructible)
 	188: 9.0,          # End Stone (Blast resistance 9.0)
 	189: 9.0,          # Dragon Egg
+	220: 0.2, 221: 0.2, # Bed Foot & Head
 }
 
 
@@ -164,6 +166,14 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 	blocks_to_destroy = set()
 	tnt_blocks_to_prime = set()
 
+	if item_drop_manager is None:
+		if hasattr(world, "item_drop_manager") and world.item_drop_manager:
+			item_drop_manager = world.item_drop_manager
+		elif gui and hasattr(gui, "window") and hasattr(gui.window, "item_drop_manager"):
+			item_drop_manager = gui.window.item_drop_manager
+		elif camera and hasattr(camera, "window") and hasattr(camera.window, "item_drop_manager"):
+			item_drop_manager = camera.window.item_drop_manager
+
 	# 1. Ray-based Block Propagation Calculation
 	for rx, ry, rz in _RAY_DIRECTIONS:
 		ray_power = power * (0.7 + random.uniform(0.0, 0.6))
@@ -199,6 +209,7 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 	# 2. TNT Chain Reaction: Prime all affected TNT blocks
 	for tnt_pos in tnt_blocks_to_prime:
 		world.set_block(tnt_pos, 0)
+		world.set_block_state(tnt_pos, None)
 		if tnt_manager:
 			# Calculate explosion impulse on newly primed TNT
 			tx, ty, tz = tnt_pos[0] + 0.5, tnt_pos[1], tnt_pos[2] + 0.5
@@ -218,7 +229,47 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 			short_fuse = random.randint(10, 30)
 			tnt_manager.spawn_primed_tnt((tx, ty, tz), velocity=init_vel, fuse_ticks=short_fuse)
 
-	# 3. Destroy Blocks & Spawn Drops
+	# 3. Destroy Existing Dropped Items & XP Orbs in Blast Radius
+	if item_drop_manager:
+		if hasattr(item_drop_manager, "drops"):
+			i = 0
+			while i < len(item_drop_manager.drops):
+				drop = item_drop_manager.drops[i]
+				ix, iy, iz = drop.position
+				dx = ix - ex_x
+				dy = iy - ex_y
+				dz = iz - ex_z
+				dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+				if dist <= max_radius:
+					drop_box = (ix - 0.2, ix + 0.2, iy - 0.2, iy + 0.4, iz - 0.2, iz + 0.2)
+					exposure = calculate_exposure(world, position, drop_box)
+					impact = (1.0 - (dist / max_radius)) * exposure
+					if impact > 0.0 or dist <= 1.5:
+						drop.destroyed = True
+						item_drop_manager.drops.pop(i)
+						continue
+				i += 1
+
+		if hasattr(item_drop_manager, "xp_orbs"):
+			j = 0
+			while j < len(item_drop_manager.xp_orbs):
+				orb = item_drop_manager.xp_orbs[j]
+				ox, oy, oz = orb.position
+				dx = ox - ex_x
+				dy = oy - ex_y
+				dz = oz - ex_z
+				dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+				if dist <= max_radius:
+					orb_box = (ox - 0.15, ox + 0.15, oy - 0.15, oy + 0.15, oz - 0.15, oz + 0.15)
+					exposure = calculate_exposure(world, position, orb_box)
+					impact = (1.0 - (dist / max_radius)) * exposure
+					if impact > 0.0 or dist <= 1.5:
+						orb.destroyed = True
+						item_drop_manager.xp_orbs.pop(j)
+						continue
+				j += 1
+
+	# 4. Destroy Blocks & Spawn Drops
 	drop_chance = 1.0 if power >= 4.0 else (1.0 / power)
 	chunks_to_remesh = set()
 
@@ -228,6 +279,7 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 			continue
 
 		world.set_block(b_pos, 0)
+		world.set_block_state(b_pos, None)
 
 		# Track modified chunk coordinates
 		cx = b_pos[0] >> 4
@@ -236,13 +288,23 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 
 		# Probabilistic block item drops
 		if item_drop_manager and random.random() < drop_chance:
-			drop_item_id = b_id
-			# Drop conversions (Stone -> Cobble 1, Grass -> Dirt 4, Coal Ore -> Coal 121, etc.)
-			if b_id in (2, 3): drop_item_id = 4
-			elif b_id == 5: drop_item_id = 1
-			elif b_id == 16: drop_item_id = 121
-			elif b_id == 18: drop_item_id = 122
-			elif b_id == 21: drop_item_id = None  # Glass drops nothing
+			# Non-droppable blocks: Air, Fluids, Bedrock, Glass, Panes, Fire, Portals, Frames, Monster Eggs
+			if b_id in (0, 9, 14, 15, 19, 20, 21, 53, 78, 88, 89, 181, 182, 183, 184, 185, 186, 187):
+				drop_item_id = None
+			else:
+				drop_item_id = b_id
+				# Drop conversions (Stone -> Cobble 1, Grass -> Dirt 4, Coal Ore -> Coal 121, etc.)
+				if b_id in (2, 3): drop_item_id = 4
+				elif b_id == 5: drop_item_id = 1
+				elif b_id == 16: drop_item_id = 121
+				elif b_id == 18: drop_item_id = 122
+				elif b_id == 23: drop_item_id = 216
+				elif b_id == 86: drop_item_id = 171
+				elif b_id == 87: drop_item_id = 170
+				elif b_id == 209: drop_item_id = 201
+				elif b_id == 212: drop_item_id = 214
+				elif b_id == 220: drop_item_id = 219
+				elif b_id == 221: drop_item_id = None
 
 			if drop_item_id is not None:
 				item_drop_manager.spawn_drop(
@@ -254,7 +316,7 @@ def create_explosion(world, position, power=4.0, source_entity=None, tnt_manager
 	for cx, cz in chunks_to_remesh:
 		world.queue_chunk_sections_for_meshing(cx, cz)
 
-	# 4. Entity Exposure, Damage & Knockback
+	# 5. Entity Exposure, Damage & Knockback
 	# (a) Player Camera (Immune to damage and knockback in Creative mode)
 	is_creative = getattr(camera, 'flying', False) or getattr(getattr(camera, 'window', None), 'flying', False) if camera else True
 	if camera and not is_creative:

@@ -15,6 +15,7 @@ import random
 import ctypes
 import pyglet
 import pyglet.gl as gl
+import block_state
 
 
 ARROW_VERT_SHADER = """
@@ -159,7 +160,7 @@ class ArrowEntity:
 			bz = int(math.floor(sample_z))
 			
 			b_num = world.get_block_number((bx, by, bz))
-			if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 79, 81):
+			if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 				hit_block_pos = (bx, by, bz)
 				min_block_dist = frac
 				break

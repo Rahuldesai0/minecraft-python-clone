@@ -13,6 +13,7 @@ import mob_model
 import fireball
 import fortress_manager
 import stronghold_manager
+import block_state
 
 
 class MobManager:
@@ -443,9 +444,9 @@ class MobManager:
 				spawn_y = None
 				for y in range(130, 48, -1):
 					b_id = self.world.get_block_number((sx, y, sz))
-					if b_id != 0 and b_id not in (9, 19, 15, 20, 78, 13, 14, 18):
-						# 3 air blocks above for Enderman / 2 for others
-						if self.world.get_block_number((sx, y + 1, sz)) == 0 and self.world.get_block_number((sx, y + 2, sz)) == 0:
+					if b_id != 0 and b_id not in (13, 14, 18, 224, 234, 244, 254, 264) and b_id not in block_state.PASSABLE_BLOCKS:
+						# 3 passable blocks above for Enderman / 2 for others
+						if self.world.get_block_number((sx, y + 1, sz)) in block_state.PASSABLE_BLOCKS and self.world.get_block_number((sx, y + 2, sz)) in block_state.PASSABLE_BLOCKS:
 							spawn_y = y + 1
 							break
 
@@ -475,8 +476,8 @@ class MobManager:
 				spawn_y = None
 				for y in range(54, 12, -1):
 					b_id = self.world.get_block_number((sx, y, sz))
-					if b_id != 0 and b_id not in (9, 19, 15, 20, 78, 13, 14, 18):
-						if self.world.get_block_number((sx, y + 1, sz)) == 0 and self.world.get_block_number((sx, y + 2, sz)) == 0:
+					if b_id != 0 and b_id not in (13, 14, 18, 224, 234, 244, 254, 264) and b_id not in block_state.PASSABLE_BLOCKS:
+						if self.world.get_block_number((sx, y + 1, sz)) in block_state.PASSABLE_BLOCKS and self.world.get_block_number((sx, y + 2, sz)) in block_state.PASSABLE_BLOCKS:
 							# Check for solid ceiling above (cave)
 							has_ceil = False
 							for cy in range(y + 3, min(120, y + 18)):

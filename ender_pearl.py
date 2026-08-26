@@ -22,6 +22,7 @@ import time
 import ctypes
 import pyglet
 import pyglet.gl as gl
+import block_state
 
 PEARL_VERT_SHADER = """
 #version 330
@@ -146,8 +147,8 @@ class EnderPearlEntity:
 
 			if world:
 				b_num = world.get_block_number((bx, by, bz))
-				# Non-solid passable blocks (Air, Waters, Lavas, Fire, End Portal)
-				if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 183):
+				# Non-solid passable blocks (Air, Waters, Lavas, Fire, Flowers, Ferns, End Portal)
+				if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 					# Solid block impact!
 					# Determine impact face normal from previous position
 					prev_bx = int(round(prev_px))
@@ -215,11 +216,11 @@ class EnderPearlEntity:
 			if world:
 				for cy in range(by + 1, by - 6, -1):
 					floor_b = world.get_block_number((adj_x, cy, adj_z))
-					if floor_b != 0 and floor_b not in (9, 19, 15, 20, 78, 183):
+					if floor_b != 0 and floor_b not in block_state.PASSABLE_BLOCKS:
 						# Check if 2 vertical blocks above the floor are passable
 						above1 = world.get_block_number((adj_x, cy + 1, adj_z))
 						above2 = world.get_block_number((adj_x, cy + 2, adj_z))
-						if above1 in (0, 9, 19, 15, 20, 78, 183) and above2 in (0, 9, 19, 15, 20, 78, 183):
+						if above1 in block_state.PASSABLE_BLOCKS and above2 in block_state.PASSABLE_BLOCKS:
 							candidates.append([adj_x + 0.0, cy + 0.5 + eye_off, adj_z + 0.0])
 							break
 

@@ -89,7 +89,7 @@ def calculate_stair_shape(world, pos, facing, half):
 	behind_state = world.get_block_state(behind_pos)
 	behind_b = world.get_block_number(behind_pos)
 
-	if behind_b in (41, 42, 73, 74, 92, 93, 178, 179) and behind_state:
+	if behind_b in (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267) and behind_state:
 		b_half = getattr(behind_state, "half", "BOTTOM")
 		if b_half == half or (half == "BOTTOM" and b_half == "LOWER") or (half == "TOP" and b_half == "UPPER"):
 			if behind_state.facing == RIGHT_DIRECTIONS[facing]:
@@ -103,7 +103,7 @@ def calculate_stair_shape(world, pos, facing, half):
 	front_state = world.get_block_state(front_pos)
 	front_b = world.get_block_number(front_pos)
 
-	if front_b in (41, 42, 73, 74, 92, 93, 178, 179) and front_state:
+	if front_b in (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267) and front_state:
 		f_half = getattr(front_state, "half", "BOTTOM")
 		if f_half == half or (half == "BOTTOM" and f_half == "LOWER") or (half == "TOP" and f_half == "UPPER"):
 			if front_state.facing == RIGHT_DIRECTIONS[facing]:
@@ -120,21 +120,41 @@ def _get_world_info(world):
 	return getattr(world, "block_types_info", {})
 
 
-NON_CONNECTABLE_BLOCKS = {0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81, 88, 89, 94, 181, 182, 183}
+PASSABLE_BLOCKS = {
+	0,
+	# Liquids
+	9, 19, 15, 20,
+	# Flowers, Ferns, Foliage & Vines
+	10, 12, 31, 33, 210, 279, 280, 283, 284, 285,
+	# Saplings
+	156, 225, 235, 245, 255, 265,
+	# Crops & Stems
+	81, 94, 204, 205, 206, 207,
+	# Hazards, Torches, Portals, Redstone components
+	78, 79, 88, 89, 183, 190, 191, 192, 193, 194, 195, 196, 197
+}
+
+NON_CONNECTABLE_BLOCKS = {
+	0, 9, 10, 11, 12, 13, 15, 19, 20, 25, 31, 33, 43, 44, 45, 46, 47, 48, 49, 50,
+	65, 66, 67, 68, 69, 70, 71, 72, 78, 79, 81, 88, 89, 94, 156, 181, 182, 183,
+	190, 191, 192, 193, 194, 195, 196, 197, 204, 205, 206, 207, 210, 213, 218, 219, 220, 221,
+	224, 225, 228, 229, 230, 234, 235, 238, 239, 240, 244, 245, 248, 249, 250,
+	254, 255, 258, 259, 260, 264, 265, 268, 269, 270, 279, 280, 283, 284, 285
+}
 
 
 def is_connectable_fence(nb_b, my_b, world_info):
 	if nb_b in NON_CONNECTABLE_BLOCKS:
 		return False
-	if my_b in (51, 91) and nb_b in (51, 91, 75, 76): return True
-	if my_b == 52 and nb_b in (52, 53, 99, 75, 76): return True
+	if my_b in (51, 91, 231, 241, 251, 261, 271) and nb_b in (51, 91, 231, 241, 251, 261, 271, 75, 76, 272, 273, 274, 275, 276): return True
+	if my_b == 52 and nb_b in (52, 53, 99, 75, 76, 272, 273, 274, 275, 276): return True
 	if my_b in (53, 99):
-		# Glass panes & Iron bars connect to other panes (53), iron bars (99), glass blocks (21), walls (52), fences (51, 91), gates (75, 76), and all solid blocks/stairs/slabs
+		# Glass panes & Iron bars connect to other panes (53), iron bars (99), glass blocks (21), walls (52), fences, gates, and all solid blocks/stairs/slabs
 		return True
 	info = world_info.get(nb_b, {}) if world_info else {}
 	if info:
 		return info.get("is_cube", False) and not info.get("transparent", False)
-	return 1 <= nb_b <= 190
+	return 1 <= nb_b <= 300
 
 
 def calculate_fence_connections(world, pos, my_b):
@@ -188,9 +208,9 @@ def calculate_door_hinge(world, pos, facing, hit_pos=None):
 	l_st = world.get_block_state(l_pos)
 
 	# 1. Double door mirror check: if adjacent block has a door facing same direction
-	if r_st and r_st.facing == facing and r_b in (43, 44, 45, 46, 65, 66, 67, 68):
+	if r_st and r_st.facing == facing and r_b in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 		return "RIGHT" if r_st.hinge == "LEFT" else "LEFT"
-	if l_st and l_st.facing == facing and l_b in (43, 44, 45, 46, 65, 66, 67, 68):
+	if l_st and l_st.facing == facing and l_b in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 		return "LEFT" if l_st.hinge == "RIGHT" else "RIGHT"
 
 	# 2. Solid neighbor blocks
@@ -298,7 +318,7 @@ def ray_intersect_aabb(ray_orig, ray_dir, box):
 
 def get_block_hitboxes(world, pos, block_num):
 	"""Returns list of world-space AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num at pos."""
-	if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183, 81, 204, 205, 206, 207, 210):
+	if block_num in PASSABLE_BLOCKS:
 		return []
 
 	bx, by, bz = pos
@@ -329,8 +349,8 @@ def get_block_hitboxes(world, pos, block_num):
 			bz + max(p1[2], p2[2])
 		)
 
-	# 1. Slabs (38, 39, 40, 62, 63, 64, 95)
-	if block_num in (38, 39, 40, 62, 63, 64, 95):
+	# 1. Slabs (38, 39, 40, 62, 63, 64, 95, 180, 226, 236, 246, 256, 266)
+	if block_num in (38, 39, 40, 62, 63, 64, 95, 180, 226, 236, 246, 256, 266):
 		sl_h = "TOP" if block_num in (62, 63, 64) else half
 		if sl_h == "DOUBLE":
 			return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by + 0.5, bz + 0.5)]
@@ -339,8 +359,8 @@ def get_block_hitboxes(world, pos, block_num):
 		else:
 			return [(bx - 0.5, by - 0.5, bz - 0.5, bx + 0.5, by, bz + 0.5)]
 
-	# 2. Doors (43, 44, 45, 46, 65, 66, 67, 68)
-	if block_num in (43, 44, 45, 46, 65, 66, 67, 68):
+	# 2. Doors (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269)
+	if block_num in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 		d_open = open_state or (block_num in (44, 46, 66, 68))
 		if d_open:
 			if hinge == "RIGHT":
@@ -350,8 +370,8 @@ def get_block_hitboxes(world, pos, block_num):
 		else:
 			return [rotate_box((-0.5, -0.5, -0.5), (0.5, 0.5, -0.3125), facing)]
 
-	# 3. Trapdoors (47, 48, 49, 50, 69, 70, 71, 72)
-	if block_num in (47, 48, 49, 50, 69, 70, 71, 72):
+	# 3. Trapdoors (47, 48, 49, 50, 69, 70, 71, 72, 230, 240, 250, 260, 270)
+	if block_num in (47, 48, 49, 50, 69, 70, 71, 72, 230, 240, 250, 260, 270):
 		is_top = block_num in (69, 70, 71, 72) or half == "TOP"
 		td_open = open_state or (block_num in (48, 50, 70, 72))
 		if td_open:
@@ -362,9 +382,9 @@ def get_block_hitboxes(world, pos, block_num):
 			else:
 				return [rotate_box((-0.5, -0.5, -0.5), (0.5, -0.3125, 0.5), facing)]
 
-	# 4. Stairs (41, 42, 73, 74, 92, 93)
-	if block_num in (41, 42, 73, 74, 92, 93):
-		is_top_stair = (block_num in (73, 74, 93) or half in ("TOP", "UPPER"))
+	# 4. Stairs (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267)
+	if block_num in (41, 42, 73, 74, 92, 93, 178, 179, 227, 237, 247, 257, 267):
+		is_top_stair = (block_num in (73, 74, 93, 179) or half in ("TOP", "UPPER"))
 		y_base_min, y_base_max = (0.0, 0.5) if is_top_stair else (-0.5, 0.0)
 		y_step_min, y_step_max = (-0.5, 0.0) if is_top_stair else (0.0, 0.5)
 
@@ -383,8 +403,8 @@ def get_block_hitboxes(world, pos, block_num):
 			boxes.append(rotate_box((-0.5, y_step_min, -0.5), (0.5, y_step_max, 0.0), facing))
 		return boxes
 
-	# 5. Fences (51, 91)
-	if block_num in (51, 91):
+	# 5. Fences (51, 91, 231, 241, 251, 261, 271)
+	if block_num in (51, 91, 231, 241, 251, 261, 271):
 		if conns is None and world:
 			conns = calculate_fence_connections(world, pos, block_num)
 		boxes = [(bx - 0.125, by - 0.5, bz - 0.125, bx + 0.125, by + 0.5, bz + 0.125)]
@@ -441,8 +461,8 @@ def get_block_hitboxes(world, pos, block_num):
 			]
 		return boxes
 
-	# 8. Fence Gates (75, 76)
-	if block_num in (75, 76):
+	# 8. Fence Gates (75, 76, 272, 273, 274, 275, 276)
+	if block_num in (75, 76, 272, 273, 274, 275, 276):
 		gate_open = open_state or (block_num == 76)
 		if gate_open:
 			return [

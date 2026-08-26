@@ -41,7 +41,7 @@ class DroppedItem:
 						return True
 		return False
 
-	def update(self, dt, world, player_pos):
+	def update(self, dt, world, player_pos, can_pickup=True):
 		self.age += dt
 		if self.pickup_delay > 0:
 			self.pickup_delay -= dt
@@ -79,18 +79,18 @@ class DroppedItem:
 				self.position[1] = ny
 				self.position[2] = nz
 
-		# Magnet attraction toward player when pickup delay is finished
+		# Magnet attraction toward player ONLY when pickup delay is finished AND player has inventory space
 		px, py, pz = player_pos
 		dx = px - self.position[0]
 		dy = (py - 0.8) - self.position[1]
 		dz = pz - self.position[2]
 		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-		if self.pickup_delay <= 0 and dist < 2.5:
+		if self.pickup_delay <= 0 and can_pickup and dist < 2.5:
 			speed = 7.0 * (1.0 - dist / 2.5) + 2.5
-			self.position[0] += (dx / dist) * speed * dt
-			self.position[1] += (dy / dist) * speed * dt
-			self.position[2] += (dz / dist) * speed * dt
+			self.position[0] += (dx / max(0.01, dist)) * speed * dt
+			self.position[1] += (dy / max(0.01, dist)) * speed * dt
+			self.position[2] += (dz / max(0.01, dist)) * speed * dt
 
 class XPOrb:
 	def __init__(self, xp_value, position, velocity=None):
@@ -233,7 +233,8 @@ class ItemDropManager:
 		self.vbo_shd = None
 
 	def spawn_drop(self, block_id, count, position, velocity=None, enchantments=None):
-		if block_id == 0 or count <= 0:
+		# Portal blocks (88, 89, 183), Fire (78), Fluids (9, 19, 15, 20), Bedrock (14) can NEVER be dropped as items
+		if block_id in (0, 9, 14, 15, 19, 20, 78, 88, 89, 181, 182, 183, 184, 185, 186, 187) or count <= 0:
 			return
 		drop = DroppedItem(block_id, count, position, velocity, enchantments=enchantments)
 		if drop.is_in_lava_or_fire(self.world):
@@ -288,28 +289,29 @@ class ItemDropManager:
 		i = 0
 		while i < len(self.drops):
 			drop = self.drops[i]
-			drop.update(dt, self.world, player_pos)
+			can_pickup = gui.can_add_item(drop.block_id, drop.count, enchantments=drop.enchantments) if (gui and hasattr(gui, "can_add_item")) else True
+			drop.update(dt, self.world, player_pos, can_pickup=can_pickup)
 
 			# Remove items destroyed by falling into lava or fire
 			if getattr(drop, "destroyed", False) or drop.is_in_lava_or_fire(self.world):
 				self.drops.pop(i)
 				continue
 
-			# Pickup check when player is within 0.8 blocks and pickup delay is finished
+			# Remove despawned items after 5 minutes (300 seconds)
+			if drop.age >= 300.0:
+				self.drops.pop(i)
+				continue
+
+			# Pickup check when player is within 0.8 blocks, pickup delay is finished, and inventory can accept it
 			dx = px - drop.position[0]
 			dy = (py - 0.8) - drop.position[1]
 			dz = pz - drop.position[2]
 			dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-			if drop.pickup_delay <= 0 and dist < 0.8:
+			if drop.pickup_delay <= 0 and can_pickup and dist < 0.8:
 				if gui.add_item(drop.block_id, drop.count, enchantments=drop.enchantments):
 					self.drops.pop(i)
 					continue
-
-			# Remove ancient drops after 300s
-			if drop.age > 300.0:
-				self.drops.pop(i)
-				continue
 
 			i += 1
 
@@ -408,7 +410,7 @@ class ItemDropManager:
 			b_type = self.world.block_types[b_num] if (0 < b_num < len(self.world.block_types)) else None
 			is_placeholder = (b_type is None) or getattr(b_type, 'name', '').startswith('item_')
 			is_tool_item = (100 <= b_num <= 177)
-			is_door_item = (b_num in (43, 45))
+			is_door_item = (b_num in (43, 45, 228, 238, 248, 258, 268))
 
 			if is_tool_item or is_door_item or is_placeholder:
 				# 2D Flat Item Sprite Card (Tools, weapons, armor, foods, materials, mob drops, pearls, etc.)

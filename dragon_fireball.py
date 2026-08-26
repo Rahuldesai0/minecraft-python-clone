@@ -17,6 +17,7 @@ import time
 import ctypes
 import pyglet
 import pyglet.gl as gl
+import block_state
 
 FIREBALL_VERT_SHADER = """
 #version 330 core
@@ -203,7 +204,7 @@ class DragonFireballEntity:
 
 			if world:
 				b_num = world.get_block_number((bx, by, bz))
-				if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 88, 89, 94, 183):
+				if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 					self.despawn = True
 					self._impact(fireball_manager)
 					return

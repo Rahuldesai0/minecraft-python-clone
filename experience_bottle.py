@@ -16,6 +16,7 @@ import random
 import ctypes
 import pyglet
 import pyglet.gl as gl
+import block_state
 
 EXP_VERT_SHADER = """
 #version 330
@@ -135,8 +136,8 @@ class ExperienceBottleEntity:
 
 			if world:
 				b_num = world.get_block_number((bx, by, bz))
-				# Non-solid passable blocks
-				if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 183):
+				# Non-solid passable blocks (Air, Waters, Lavas, Fire, Flowers, Ferns, End Portal)
+				if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 					self._on_impact(world, item_drop_manager, (px, py, pz))
 					return
 

@@ -51,7 +51,7 @@ PALETTE_ITEMS = [
 	(42, "Cobblestone Stairs", "items/cobblestone_stairs"),
 	(43, "Oak Door", "items/door_wood"),
 	(45, "Iron Door", "items/door_iron"),
-	(47, "Oak Trapdoor", "trapdoor"),
+	(47, "Oak Trapdoor", "items/oak_trapdoor"),
 	(49, "Iron Trapdoor", "iron_trapdoor"),
 	(51, "Oak Fence", "items/oak_fence"),
 	(52, "Cobblestone Wall", "items/cobblestone_wall"),
@@ -92,6 +92,72 @@ PALETTE_ITEMS = [
 	(210, "Sugar Cane", "sugar_cane"),
 	(212, "Lapis Lazuli Ore", "lapis_ore"),
 	(213, "Enchanting Table", "enchanting_table_top"),
+	(219, "Bed", "items/bed"),
+	# Birch Family (222-231, 272)
+	(222, "Birch Planks", "planks_birch"),
+	(223, "Birch Log", "log_birch"),
+	(224, "Birch Leaves", "leaves_birch"),
+	(225, "Birch Sapling", "sapling_birch"),
+	(226, "Birch Slab", "items/birch_slab"),
+	(227, "Birch Stairs", "items/birch_stairs"),
+	(228, "Birch Door", "items/door_birch"),
+	(230, "Birch Trapdoor", "items/birch_trapdoor"),
+	(231, "Birch Fence", "items/birch_fence"),
+	(272, "Birch Fence Gate", "items/birch_fence_gate"),
+	# Spruce Family (232-241, 273)
+	(232, "Spruce Planks", "planks_spruce"),
+	(233, "Spruce Log", "log_spruce"),
+	(234, "Spruce Leaves", "leaves_spruce"),
+	(235, "Spruce Sapling", "sapling_spruce"),
+	(236, "Spruce Slab", "items/spruce_slab"),
+	(237, "Spruce Stairs", "items/spruce_stairs"),
+	(238, "Spruce Door", "items/door_spruce"),
+	(240, "Spruce Trapdoor", "items/spruce_trapdoor"),
+	(241, "Spruce Fence", "items/spruce_fence"),
+	(273, "Spruce Fence Gate", "items/spruce_fence_gate"),
+	# Jungle Family (242-251, 274)
+	(242, "Jungle Planks", "planks_jungle"),
+	(243, "Jungle Log", "log_jungle"),
+	(244, "Jungle Leaves", "leaves_jungle"),
+	(245, "Jungle Sapling", "sapling_jungle"),
+	(246, "Jungle Slab", "items/jungle_slab"),
+	(247, "Jungle Stairs", "items/jungle_stairs"),
+	(248, "Jungle Door", "items/door_jungle"),
+	(250, "Jungle Trapdoor", "items/jungle_trapdoor"),
+	(251, "Jungle Fence", "items/jungle_fence"),
+	(274, "Jungle Fence Gate", "items/jungle_fence_gate"),
+	# Acacia Family (252-261, 275)
+	(252, "Acacia Planks", "planks_acacia"),
+	(253, "Acacia Log", "log_acacia"),
+	(254, "Acacia Leaves", "leaves_acacia"),
+	(255, "Acacia Sapling", "sapling_acacia"),
+	(256, "Acacia Slab", "items/acacia_slab"),
+	(257, "Acacia Stairs", "items/acacia_stairs"),
+	(258, "Acacia Door", "items/door_acacia"),
+	(260, "Acacia Trapdoor", "items/acacia_trapdoor"),
+	(261, "Acacia Fence", "items/acacia_fence"),
+	(275, "Acacia Fence Gate", "items/acacia_fence_gate"),
+	# Dark Oak Family (262-271, 276)
+	(262, "Dark Oak Planks", "planks_big_oak"),
+	(263, "Dark Oak Log", "log_big_oak"),
+	(264, "Dark Oak Leaves", "leaves_big_oak"),
+	(265, "Dark Oak Sapling", "sapling_roofed_oak"),
+	(266, "Dark Oak Slab", "items/dark_oak_slab"),
+	(267, "Dark Oak Stairs", "items/dark_oak_stairs"),
+	(268, "Dark Oak Door", "items/door_dark_oak"),
+	(270, "Dark Oak Trapdoor", "items/dark_oak_trapdoor"),
+	(271, "Dark Oak Fence", "items/dark_oak_fence"),
+	(276, "Dark Oak Fence Gate", "items/dark_oak_fence_gate"),
+	# Biome Terrain & Flora (277-285)
+	(277, "Sandstone", "sandstone_normal"),
+	(278, "Podzol", "dirt_podzol_top"),
+	(279, "Fern", "fern"),
+	(280, "Vines", "vine"),
+	(281, "Red Sand", "red_sand"),
+	(282, "Packed Ice", "ice_packed"),
+	(283, "Red Tulip", "flower_tulip_red"),
+	(284, "Orange Tulip", "flower_tulip_orange"),
+	(285, "Oxeye Daisy", "flower_oxeye_daisy"),
 ]
 
 TOOL_ITEMS = [
@@ -225,6 +291,14 @@ BLOCK_INFO[186] = ("Infested Cracked Stone Bricks", "stonebrick_cracked")
 BLOCK_INFO[187] = ("Infested Stone", "stone")
 BLOCK_INFO[188] = ("End Stone", "end_stone")
 BLOCK_INFO[189] = ("Dragon Egg", "obsidian")
+BLOCK_INFO[219] = ("Bed", "items/bed")
+BLOCK_INFO[220] = ("Bed (Foot)", "bed_feet_top")
+BLOCK_INFO[221] = ("Bed (Head)", "bed_head_top")
+BLOCK_INFO[229] = ("Birch Door (Top)", "door_birch_upper")
+BLOCK_INFO[239] = ("Spruce Door (Top)", "door_spruce_upper")
+BLOCK_INFO[249] = ("Jungle Door (Top)", "door_jungle_upper")
+BLOCK_INFO[259] = ("Acacia Door (Top)", "door_acacia_upper")
+BLOCK_INFO[269] = ("Dark Oak Door (Top)", "door_dark_oak_upper")
 
 ARMOR_SLOT_TYPES = {
 	130: 0, 134: 0, 138: 0, 142: 0,  # Helmets -> Slot 0
@@ -245,8 +319,8 @@ ARMOR_DEFENSE_POINTS = {
 }
 
 def get_max_stack_size(item_id):
-	"""Returns the maximum stack size for an item ID. Tools, Armor, Bow, Liquid Buckets, & Flint and Steel do not stack (max stack = 1). Empty Buckets and Ender Pearls stack to 16. Others stack to 64."""
-	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151, 157):
+	"""Returns the maximum stack size for an item ID. Tools, Armor, Bow, Liquid Buckets, Flint and Steel, & Beds do not stack (max stack = 1). Empty Buckets and Ender Pearls stack to 16. Others stack to 64."""
+	if (101 <= item_id <= 120) or (130 <= item_id <= 145) or item_id in (148, 149, 151, 157, 219, 220, 221):
 		return 1
 	if item_id in (147, 176):
 		return 16
@@ -320,8 +394,14 @@ SMELTING_RECIPES = {
 	35: (124, 1),   # Gold Ore -> Gold Ingot
 	84: (174, 1),   # Netherrack -> Nether Brick item
 	1:  (5, 1),     # Cobblestone -> Stone
-	8:  (121, 1),   # Oak Log -> Coal (Charcoal)
-	6:  (21, 1),    # Sand -> Glass
+	8:   (121, 1),  # Oak Log -> Coal (Charcoal)
+	223: (121, 1),  # Birch Log -> Charcoal
+	233: (121, 1),  # Spruce Log -> Charcoal
+	243: (121, 1),  # Jungle Log -> Charcoal
+	253: (121, 1),  # Acacia Log -> Charcoal
+	263: (121, 1),  # Dark Oak Log -> Charcoal
+	6:   (21, 1),   # Sand -> Glass
+	281: (21, 1),   # Red Sand -> Glass
 	4:  (22, 1),    # Clay/Dirt -> Bricks
 	125: (128, 1),  # Raw Porkchop -> Cooked Porkchop
 	127: (129, 1),  # Raw Beef -> Steak (Cooked Beef)
@@ -351,8 +431,24 @@ SMELTING_XP = {
 FUEL_BURN_TIMES = {
 	121: 80.0,  # Coal item -> 80s (8 smelts)
 	16:  80.0,  # Coal Ore -> 80s (8 smelts)
-	8:   15.0,  # Oak Log -> 15s (1.5 smelts)
-	7:   15.0,  # Oak Planks -> 15s (1.5 smelts)
+	# Logs
+	8: 15.0, 223: 15.0, 233: 15.0, 243: 15.0, 253: 15.0, 263: 15.0,
+	# Planks
+	7: 15.0, 222: 15.0, 232: 15.0, 242: 15.0, 252: 15.0, 262: 15.0,
+	# Slabs
+	38: 7.5, 226: 7.5, 236: 7.5, 246: 7.5, 256: 7.5, 266: 7.5,
+	# Stairs
+	41: 15.0, 227: 15.0, 237: 15.0, 247: 15.0, 257: 15.0, 267: 15.0,
+	# Doors
+	43: 10.0, 228: 10.0, 238: 10.0, 248: 10.0, 258: 10.0, 268: 10.0,
+	# Trapdoors
+	47: 15.0, 230: 15.0, 240: 15.0, 250: 15.0, 260: 15.0, 270: 15.0,
+	# Fences
+	51: 15.0, 231: 15.0, 241: 15.0, 251: 15.0, 261: 15.0, 271: 15.0,
+	# Gates
+	75: 15.0, 272: 15.0, 273: 15.0, 274: 15.0, 275: 15.0, 276: 15.0,
+	# Saplings
+	156: 5.0, 225: 5.0, 235: 5.0, 245: 5.0, 255: 5.0, 265: 5.0,
 	26:  15.0,  # Crafting Table -> 15s
 	23:  15.0,  # Bookshelf -> 15s
 	101: 10.0,  # Wooden Pickaxe -> 10s
@@ -491,6 +587,9 @@ BLOCK_MINING_PROPERTIES = {
 	93: ("pickaxe", 1, 2.0, 92),   # Nether Brick Stairs Top -> drops Stairs 92
 	94: (None, 0, 0.1, 173),       # Nether Wart Crop -> drops Nether Wart 173
 	95: ("pickaxe", 1, 2.0, 95),   # Nether Brick Slab
+	181: (None, 0, float('inf'), None), # End Portal Frame (Indestructible)
+	182: (None, 0, float('inf'), None), # Filled End Portal Frame (Indestructible)
+	183: (None, 0, float('inf'), None), # End Portal (Indestructible)
 	204: (None, 0, 0.0, 195),      # Carrot Crops
 	205: (None, 0, 0.0, 196),      # Potato Crops
 	206: (None, 0, 0.0, 199),      # Pumpkin Stem
@@ -500,6 +599,78 @@ BLOCK_MINING_PROPERTIES = {
 	210: (None, 0, 0.0, 202),      # Sugar Cane
 	212: ("pickaxe", 2, 3.0, 214), # Lapis Lazuli Ore (Requires Stone Pickaxe+, drops Lapis 214)
 	213: ("pickaxe", 1, 5.0, 213), # Enchanting Table (Requires Wood Pickaxe+)
+	220: (None, 0, 0.3, 219),      # Bed Foot (Drops Bed item 219)
+	221: (None, 0, 0.3, 219),      # Bed Head (Drops Bed item 219)
+	# Birch Family (222-231, 272)
+	222: ("axe", 0, 0.6, 222),      # Birch Planks
+	223: ("axe", 0, 1.5, 223),      # Birch Log
+	224: (None, 0, 0.2, 225),       # Birch Leaves
+	225: (None, 0, 0.0, 225),       # Birch Sapling
+	226: ("axe", 0, 0.4, 226),      # Birch Slab
+	227: ("axe", 0, 0.6, 227),      # Birch Stairs
+	228: ("axe", 0, 0.6, 228),      # Birch Door
+	229: ("axe", 0, 0.6, 228),      # Birch Door Top -> drops 228
+	230: ("axe", 0, 0.6, 230),      # Birch Trapdoor
+	231: ("axe", 0, 0.6, 231),      # Birch Fence
+	272: ("axe", 0, 0.6, 272),      # Birch Fence Gate
+	# Spruce Family (232-241, 273)
+	232: ("axe", 0, 0.6, 232),      # Spruce Planks
+	233: ("axe", 0, 1.5, 233),      # Spruce Log
+	234: (None, 0, 0.2, 235),       # Spruce Leaves
+	235: (None, 0, 0.0, 235),       # Spruce Sapling
+	236: ("axe", 0, 0.4, 236),      # Spruce Slab
+	237: ("axe", 0, 0.6, 237),      # Spruce Stairs
+	238: ("axe", 0, 0.6, 238),      # Spruce Door
+	239: ("axe", 0, 0.6, 238),      # Spruce Door Top -> drops 238
+	240: ("axe", 0, 0.6, 240),      # Spruce Trapdoor
+	241: ("axe", 0, 0.6, 241),      # Spruce Fence
+	273: ("axe", 0, 0.6, 273),      # Spruce Fence Gate
+	# Jungle Family (242-251, 274)
+	242: ("axe", 0, 0.6, 242),      # Jungle Planks
+	243: ("axe", 0, 1.5, 243),      # Jungle Log
+	244: (None, 0, 0.2, 245),       # Jungle Leaves
+	245: (None, 0, 0.0, 245),       # Jungle Sapling
+	246: ("axe", 0, 0.4, 246),      # Jungle Slab
+	247: ("axe", 0, 0.6, 247),      # Jungle Stairs
+	248: ("axe", 0, 0.6, 248),      # Jungle Door
+	249: ("axe", 0, 0.6, 248),      # Jungle Door Top -> drops 248
+	250: ("axe", 0, 0.6, 250),      # Jungle Trapdoor
+	251: ("axe", 0, 0.6, 251),      # Jungle Fence
+	274: ("axe", 0, 0.6, 274),      # Jungle Fence Gate
+	# Acacia Family (252-261, 275)
+	252: ("axe", 0, 0.6, 252),      # Acacia Planks
+	253: ("axe", 0, 1.5, 253),      # Acacia Log
+	254: (None, 0, 0.2, 255),       # Acacia Leaves
+	255: (None, 0, 0.0, 255),       # Acacia Sapling
+	256: ("axe", 0, 0.4, 256),      # Acacia Slab
+	257: ("axe", 0, 0.6, 257),      # Acacia Stairs
+	258: ("axe", 0, 0.6, 258),      # Acacia Door
+	259: ("axe", 0, 0.6, 258),      # Acacia Door Top -> drops 258
+	260: ("axe", 0, 0.6, 260),      # Acacia Trapdoor
+	261: ("axe", 0, 0.6, 261),      # Acacia Fence
+	275: ("axe", 0, 0.6, 275),      # Acacia Fence Gate
+	# Dark Oak Family (262-271, 276)
+	262: ("axe", 0, 0.6, 262),      # Dark Oak Planks
+	263: ("axe", 0, 1.5, 263),      # Dark Oak Log
+	264: (None, 0, 0.2, 265),       # Dark Oak Leaves
+	265: (None, 0, 0.0, 265),       # Dark Oak Sapling
+	266: ("axe", 0, 0.4, 266),      # Dark Oak Slab
+	267: ("axe", 0, 0.6, 267),      # Dark Oak Stairs
+	268: ("axe", 0, 0.6, 268),      # Dark Oak Door
+	269: ("axe", 0, 0.6, 268),      # Dark Oak Door Top -> drops 268
+	270: ("axe", 0, 0.6, 270),      # Dark Oak Trapdoor
+	271: ("axe", 0, 0.6, 271),      # Dark Oak Fence
+	276: ("axe", 0, 0.6, 276),      # Dark Oak Fence Gate
+	# Biome Terrain & Flora (277-285)
+	277: ("pickaxe", 1, 0.8, 277),  # Sandstone (Requires Wood Pickaxe+)
+	278: ("shovel", 0, 0.5, 4),     # Podzol (Drops Dirt without Silk Touch)
+	279: (None, 0, 0.0, None),      # Fern
+	280: ("axe", 0, 0.2, None),     # Vines
+	281: ("shovel", 0, 0.4, 281),   # Red Sand
+	282: ("pickaxe", 1, 0.5, None), # Packed Ice
+	283: (None, 0, 0.0, 283),       # Red Tulip
+	284: (None, 0, 0.0, 284),       # Orange Tulip
+	285: (None, 0, 0.0, 285),       # Oxeye Daisy
 }
 
 # Zero-allocation reusable shape caches for HUD and UI boxes
@@ -828,6 +999,8 @@ def format_slot_hover(slot, prefix=""):
 			lines.append("Enchanted Book")
 	elif b_id == 216:
 		lines.append("Can be enchanted at Enchanting Table")
+	elif b_id in (219, 220, 221):
+		lines.append("Sets respawn point & skips night in Overworld. Explodes in Nether/End!")
 
 	return "\n".join(lines)
 
@@ -1047,6 +1220,18 @@ class InventoryGUI:
 		self.hotbar_num_labels = [pyglet.text.Label(str(i + 1), font_name="Arial", font_size=9, anchor_x="left", anchor_y="top", color=(220, 220, 220, 255)) for i in range(9)]
 		self.veil_rect = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(0, 0, 0, 160))
 		self.hurt_flash = pyglet.shapes.Rectangle(0, 0, 1, 1, color=(255, 0, 0, 140))
+		self.toast_message = ""
+		self.toast_timer = 0.0
+		self.toast_duration = 3.0
+		self.toast_label = pyglet.text.Label("", font_name="Arial", font_size=12, anchor_x="center", anchor_y="center", color=(255, 255, 255, 255))
+
+	def show_message(self, text, duration=3.0):
+		"""Displays an on-screen toast notification message at the top of the HUD."""
+		import time
+		self.toast_message = str(text)
+		self.toast_timer = float(duration)
+		self.toast_duration = float(duration)
+		self._last_toast_draw_time = time.time()
 
 	def get_total_armor_protection(self):
 		"""Returns total defense points (0 to 20) provided by currently equipped armor pieces."""
@@ -1232,6 +1417,31 @@ class InventoryGUI:
 
 	def add_item_to_inventory(self, item_id, count=1, enchantments=None):
 		return self.add_item(item_id, count, enchantments=enchantments)
+
+	def can_add_item(self, block_id, count=1, enchantments=None):
+		"""Returns True if the player's inventory has capacity to receive at least part of this item stack."""
+		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
+			return True
+
+		max_stack = get_max_stack_size(block_id)
+		ench = dict(enchantments) if enchantments else {}
+
+		if max_stack > 1 and not ench:
+			for slot in self.survival_hotbar:
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+					return True
+			for slot in self.survival_inventory:
+				if slot[0] == block_id and slot[1] < max_stack and not is_slot_enchanted(slot):
+					return True
+
+		for slot in self.survival_hotbar:
+			if slot[0] == 0 or slot[1] == 0:
+				return True
+		for slot in self.survival_inventory:
+			if slot[0] == 0 or slot[1] == 0:
+				return True
+
+		return False
 
 	def add_item(self, block_id, count=1, enchantments=None):
 		if getattr(self.window, "flying", False) or block_id in (0, 9, 19, 15, 20, 14):
@@ -1826,19 +2036,33 @@ class InventoryGUI:
 		h = len(matrix)
 		w = len(matrix[0])
 
-		# Recipe 1: 1 Log (8) -> 4 Planks (7)
-		if h == 1 and w == 1 and matrix[0][0] == 8:
-			self.crafting_result = [7, 4]
+		ALL_PLANKS = (7, 222, 232, 242, 252, 262)
+		LOG_TO_PLANKS = {8: 7, 223: 222, 233: 232, 243: 242, 253: 252, 263: 262}
+		PLANK_TO_SLAB = {7: 38, 222: 226, 232: 236, 242: 246, 252: 256, 262: 266, 1: 39, 5: 40, 90: 95, 96: 180}
+		PLANK_TO_STAIRS = {7: 41, 222: 227, 232: 237, 242: 247, 252: 257, 262: 267, 1: 42, 90: 92, 96: 178}
+		PLANK_TO_DOOR = {7: 43, 222: 228, 232: 238, 242: 248, 252: 258, 262: 268}
+		PLANK_TO_TRAPDOOR = {7: 47, 222: 230, 232: 240, 242: 250, 252: 260, 262: 270}
+		PLANK_TO_FENCE = {7: 51, 222: 231, 232: 241, 242: 251, 252: 261, 262: 271, 90: 91}
+		PLANK_TO_GATE = {7: 75, 222: 272, 232: 273, 242: 274, 252: 275, 262: 276}
+
+		# Recipe 1: 1 Log -> 4 Planks
+		if h == 1 and w == 1 and matrix[0][0] in LOG_TO_PLANKS:
+			self.crafting_result = [LOG_TO_PLANKS[matrix[0][0]], 4]
 			return
 
-		# Recipe 2: 2 Planks (7) vertical -> 4 Sticks (100)
-		if h == 2 and w == 1 and matrix[0][0] == 7 and matrix[1][0] == 7:
+		# Recipe 2: 2 Planks vertical -> 4 Sticks (100)
+		if h == 2 and w == 1 and matrix[0][0] in ALL_PLANKS and matrix[1][0] in ALL_PLANKS:
 			self.crafting_result = [100, 4]
 			return
 
-		# Recipe 3: 4 Planks (7) 2x2 -> 1 Crafting Table (26)
-		if h == 2 and w == 2 and matrix == [[7, 7], [7, 7]]:
+		# Recipe 3: 4 Planks 2x2 -> 1 Crafting Table (26)
+		if h == 2 and w == 2 and all(matrix[r][c] in ALL_PLANKS for r in range(2) for c in range(2)):
 			self.crafting_result = [26, 1]
+			return
+
+		# Recipe: Sandstone (4 Sand 6 in 2x2 grid) -> 4 Sandstone (277)
+		if h == 2 and w == 2 and matrix == [[6, 6], [6, 6]]:
+			self.crafting_result = [277, 4]
 			return
 
 		# Recipe 4: Pickaxes (3 top items + 2 vertical sticks) - Requires 3x3 Crafting Table
@@ -1847,8 +2071,8 @@ class InventoryGUI:
 			center_col = [matrix[0][1], matrix[1][1], matrix[2][1]]
 			if center_col[1] == 100 and center_col[2] == 100 and matrix[1][0] == 0 and matrix[1][2] == 0 and matrix[2][0] == 0 and matrix[2][2] == 0:
 				mat = top[0]
-				if top == [mat, mat, mat]:
-					if mat in (7,): self.crafting_result = [101, 1]; return          # Wood Pickaxe (Planks)
+				if top == [mat, mat, mat] or (all(x in ALL_PLANKS for x in top)):
+					if top[0] in ALL_PLANKS and top[1] in ALL_PLANKS and top[2] in ALL_PLANKS: self.crafting_result = [101, 1]; return  # Wood Pickaxe
 					if mat in (1, 5): self.crafting_result = [102, 1]; return        # Stone Pickaxe (Cobblestone / Stone)
 					if mat in (123, 17, 29): self.crafting_result = [103, 1]; return # Iron Pickaxe (Iron Ingot / Ore / Block)
 					if mat in (122, 18, 30): self.crafting_result = [104, 1]; return # Diamond Pickaxe (Diamond / Ore / Block)
@@ -1858,26 +2082,32 @@ class InventoryGUI:
 		if h == 3 and w == 2:
 			# Left-facing Axe
 			mat = matrix[0][0]
-			if matrix[0][1] == mat and matrix[1][0] == mat and matrix[1][1] == 100 and matrix[2][1] == 100 and matrix[2][0] == 0:
-				if mat in (7,): self.crafting_result = [105, 1]; return          # Wood Axe
-				if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
-				if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
-				if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
-				if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
+			if matrix[1][1] == 100 and matrix[2][1] == 100 and matrix[2][0] == 0:
+				heads = [matrix[0][0], matrix[0][1], matrix[1][0]]
+				if all(h_item in ALL_PLANKS for h_item in heads):
+					self.crafting_result = [105, 1]; return          # Wood Axe
+				elif heads[0] == heads[1] == heads[2]:
+					if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
+					if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
+					if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
+					if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
 			# Right-facing Axe
 			mat = matrix[0][1]
-			if matrix[0][0] == mat and matrix[1][1] == mat and matrix[1][0] == 100 and matrix[2][0] == 100 and matrix[2][1] == 0:
-				if mat in (7,): self.crafting_result = [105, 1]; return          # Wood Axe
-				if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
-				if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
-				if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
-				if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
+			if matrix[1][0] == 100 and matrix[2][0] == 100 and matrix[2][1] == 0:
+				heads = [matrix[0][0], matrix[0][1], matrix[1][1]]
+				if all(h_item in ALL_PLANKS for h_item in heads):
+					self.crafting_result = [105, 1]; return          # Wood Axe
+				elif heads[0] == heads[1] == heads[2]:
+					if mat in (1, 5): self.crafting_result = [106, 1]; return        # Stone Axe
+					if mat in (123, 17, 29): self.crafting_result = [107, 1]; return # Iron Axe
+					if mat in (122, 18, 30): self.crafting_result = [108, 1]; return # Diamond Axe
+					if mat in (124, 35, 28): self.crafting_result = [118, 1]; return # Gold Axe
 
 		# Recipe 6: Shovels (1x3 shape: 1 head item + 2 sticks) - Requires 3x3 Crafting Table
 		if h == 3 and w == 1:
 			mat = matrix[0][0]
 			if matrix[1][0] == 100 and matrix[2][0] == 100:
-				if mat in (7,): self.crafting_result = [109, 1]; return          # Wood Shovel
+				if mat in ALL_PLANKS: self.crafting_result = [109, 1]; return      # Wood Shovel
 				if mat in (1, 5): self.crafting_result = [110, 1]; return        # Stone Shovel
 				if mat in (123, 17, 29): self.crafting_result = [111, 1]; return # Iron Shovel
 				if mat in (122, 18, 30): self.crafting_result = [112, 1]; return # Diamond Shovel
@@ -1886,12 +2116,14 @@ class InventoryGUI:
 		# Recipe 7: Swords (1x3 shape: 2 blade items + 1 stick) - Requires 3x3 Crafting Table
 		if h == 3 and w == 1:
 			mat = matrix[0][0]
-			if matrix[1][0] == mat and matrix[2][0] == 100:
-				if mat in (7,): self.crafting_result = [113, 1]; return          # Wood Sword
-				if mat in (1, 5): self.crafting_result = [114, 1]; return        # Stone Sword
-				if mat in (123, 17, 29): self.crafting_result = [115, 1]; return # Iron Sword
-				if mat in (122, 18, 30): self.crafting_result = [116, 1]; return # Diamond Sword
-				if mat in (124, 35, 28): self.crafting_result = [120, 1]; return # Gold Sword
+			if matrix[2][0] == 100:
+				if matrix[0][0] in ALL_PLANKS and matrix[1][0] in ALL_PLANKS:
+					self.crafting_result = [113, 1]; return      # Wood Sword
+				if matrix[0][0] == matrix[1][0]:
+					if mat in (1, 5): self.crafting_result = [114, 1]; return        # Stone Sword
+					if mat in (123, 17, 29): self.crafting_result = [115, 1]; return # Iron Sword
+					if mat in (122, 18, 30): self.crafting_result = [116, 1]; return # Diamond Sword
+					if mat in (124, 35, 28): self.crafting_result = [120, 1]; return # Gold Sword
 
 		# Recipe 8: Furnace (8 Cobblestone 3x3 hollow ring) & Chest (8 Planks 3x3 hollow ring)
 		if h == 3 and w == 3:
@@ -1899,10 +2131,10 @@ class InventoryGUI:
 				ring = [matrix[0][0], matrix[0][1], matrix[0][2],
 				        matrix[1][0],               matrix[1][2],
 				        matrix[2][0], matrix[2][1], matrix[2][2]]
-				mat = ring[0]
-				if mat != 0 and all(x == mat for x in ring):
-					if mat == 1: self.crafting_result = [27, 1]; return   # Furnace (27)
-					if mat == 7: self.crafting_result = [37, 1]; return   # Chest (37)
+				if ring[0] == 1 and all(x == 1 for x in ring):
+					self.crafting_result = [27, 1]; return   # Furnace (27)
+				if all(x in ALL_PLANKS for x in ring):
+					self.crafting_result = [37, 1]; return   # Chest (37)
 
 		# Recipe 9: Helmets (5 materials in 2x3 top arch: [[M, M, M], [M, 0, M]])
 		if h == 2 and w == 3:
@@ -1947,33 +2179,35 @@ class InventoryGUI:
 				if m0 in (123, 17, 29): self.crafting_result = [140, 1]; return  # Iron Leggings
 				if m0 in (122, 18, 30): self.crafting_result = [144, 1]; return  # Diamond Leggings
 
-		# Recipe 13: Slabs (3 horizontal materials: [[M, M, M]]) -> 6 Slabs
+		# Recipe 13: Slabs (3 horizontal matching materials: [[M, M, M]]) -> 6 Slabs
 		if h == 1 and w == 3:
 			m0 = matrix[0][0]
-			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2]:
-				if m0 == 7: self.crafting_result = [38, 6]; return   # Oak Slab (38)
-				if m0 == 1: self.crafting_result = [39, 6]; return   # Cobblestone Slab (39)
-				if m0 == 5: self.crafting_result = [40, 6]; return   # Stone Slab (40)
+			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] and m0 in PLANK_TO_SLAB:
+				self.crafting_result = [PLANK_TO_SLAB[m0], 6]
+				return
 
 		# Recipe 14: Stairs (6 materials in 3x3 stair shape: [[M, 0, 0], [M, M, 0], [M, M, M]]) -> 4 Stairs
 		if h == 3 and w == 3:
 			m0 = matrix[0][0]
-			if m0 != 0 and m0 == matrix[1][0] == matrix[1][1] == matrix[2][0] == matrix[2][1] == matrix[2][2] and matrix[0][1] == 0 and matrix[0][2] == 0 and matrix[1][2] == 0:
-				if m0 == 7: self.crafting_result = [41, 4]; return   # Oak Stairs (41)
-				if m0 == 1: self.crafting_result = [42, 4]; return   # Cobblestone Stairs (42)
+			if (matrix[0][0] != 0 and matrix[0][0] == matrix[1][0] == matrix[1][1] == matrix[2][0] == matrix[2][1] == matrix[2][2] and matrix[0][1] == 0 and matrix[0][2] == 0 and matrix[1][2] == 0) or \
+			   (matrix[0][2] != 0 and matrix[0][2] == matrix[1][1] == matrix[1][2] == matrix[2][0] == matrix[2][1] == matrix[2][2] and matrix[0][0] == 0 and matrix[0][1] == 0 and matrix[1][0] == 0):
+				stair_mat = matrix[2][0]
+				if stair_mat in PLANK_TO_STAIRS:
+					self.crafting_result = [PLANK_TO_STAIRS[stair_mat], 4]
+					return
 
 		# Recipe 15: Doors (6 materials in 2x3 vertical rectangle: [[M, M], [M, M], [M, M]]) -> 3 Doors
 		if h == 3 and w == 2:
 			m0 = matrix[0][0]
 			if m0 != 0 and m0 == matrix[0][1] == matrix[1][0] == matrix[1][1] == matrix[2][0] == matrix[2][1]:
-				if m0 == 7: self.crafting_result = [43, 3]; return   # Oak Door (43)
+				if m0 in PLANK_TO_DOOR: self.crafting_result = [PLANK_TO_DOOR[m0], 3]; return
 				if m0 in (123, 17, 29): self.crafting_result = [45, 3]; return  # Iron Door (45)
 
 		# Recipe 16: Trapdoors & Bars (6 materials in 2x3 horizontal rectangle: [[M, M, M], [M, M, M]])
 		if h == 2 and w == 3:
 			m0 = matrix[0][0]
 			if m0 != 0 and m0 == matrix[0][1] == matrix[0][2] == matrix[1][0] == matrix[1][1] == matrix[1][2]:
-				if m0 == 7: self.crafting_result = [47, 2]; return   # Oak Trapdoor (47)
+				if m0 in PLANK_TO_TRAPDOOR: self.crafting_result = [PLANK_TO_TRAPDOOR[m0], 2]; return
 				if m0 in (123, 17, 29): self.crafting_result = [99, 16]; return  # Iron Bars (99)
 				if m0 == 1: self.crafting_result = [52, 6]; return   # Cobblestone Wall (52)
 				if m0 == 21: self.crafting_result = [53, 16]; return # Glass Pane (53)
@@ -1983,16 +2217,24 @@ class InventoryGUI:
 			self.crafting_result = [49, 1]  # Iron Trapdoor (49)
 			return
 
-		# Recipe 17: Oak Fence (4 Planks + 2 Sticks in 2x3: [[7, 100, 7], [7, 100, 7]]) -> 3 Fences
+		# Recipe 17: Fences (4 Planks + 2 Sticks in 2x3: [[P, 100, P], [P, 100, P]]) -> 3 Fences
 		if h == 2 and w == 3:
-			if matrix[0][0] == 7 and matrix[0][1] == 100 and matrix[0][2] == 7 and matrix[1][0] == 7 and matrix[1][1] == 100 and matrix[1][2] == 7:
-				self.crafting_result = [51, 3]  # Oak Fence (51)
+			p0 = matrix[0][0]
+			if p0 in PLANK_TO_FENCE and p0 == matrix[0][2] == matrix[1][0] == matrix[1][2] and matrix[0][1] == 100 and matrix[1][1] == 100:
+				self.crafting_result = [PLANK_TO_FENCE[p0], 3]
 				return
 
-		# Recipe 18: Oak Fence Gate (4 Sticks + 2 Planks in 2x3: [[100, 7, 100], [100, 7, 100]]) -> 1 Fence Gate
+		# Recipe 18: Fence Gates (4 Sticks + 2 Planks in 2x3: [[100, P, 100], [100, P, 100]]) -> 1 Fence Gate
 		if h == 2 and w == 3:
-			if matrix[0][0] == 100 and matrix[0][1] == 7 and matrix[0][2] == 100 and matrix[1][0] == 100 and matrix[1][1] == 7 and matrix[1][2] == 100:
-				self.crafting_result = [75, 1]  # Oak Fence Gate (75)
+			p0 = matrix[0][1]
+			if p0 in PLANK_TO_GATE and p0 == matrix[1][1] and matrix[0][0] == 100 and matrix[0][2] == 100 and matrix[1][0] == 100 and matrix[1][2] == 100:
+				self.crafting_result = [PLANK_TO_GATE[p0], 1]
+				return
+
+		# Recipe: Bed (3 Wool + 3 Planks: [[83, 83, 83], [P, P, P]]) -> 1 Bed (219)
+		if h == 2 and w == 3:
+			if matrix[0] == [83, 83, 83] and all(x in ALL_PLANKS or x == 5 for x in matrix[1]):
+				self.crafting_result = [219, 1]  # Bed (219)
 				return
 
 		# Recipe 19: Flint and Steel (1 Iron Ingot 123 + 1 Flint 146 in any 2-slot arrangement)
@@ -2014,9 +2256,9 @@ class InventoryGUI:
 					self.crafting_result = [157, 1]  # Bow (157)
 					return
 
-		# Recipe 21: Arrow (1 Flint 146 + 1 Stick 100 + 1 Feather 160 or Sapling 156 in 1x3 vertical column) -> 4 Arrows
+		# Recipe 21: Arrow (1 Flint 146 + 1 Stick 100 + 1 Feather 160 or Sapling in 1x3 vertical column) -> 4 Arrows
 		if h == 3 and w == 1:
-			if matrix[0][0] == 146 and matrix[1][0] == 100 and matrix[2][0] in (160, 156):
+			if matrix[0][0] == 146 and matrix[1][0] == 100 and (matrix[2][0] == 160 or matrix[2][0] in (156, 225, 235, 245, 255, 265)):
 				self.crafting_result = [158, 4]  # 4 Arrows (158)
 				return
 
@@ -2039,11 +2281,11 @@ class InventoryGUI:
 				self.crafting_result = [83, 1]  # White Wool (83)
 				return
 
-		# Recipe 25: TNT (5 Gunpowder 169 + 4 Sand 6 in 3x3 X-pattern) -> 1 TNT Block (25)
+		# Recipe 25: TNT (5 Gunpowder 169 + 4 Sand 6/281 in 3x3 X-pattern) -> 1 TNT Block (25)
 		if h == 3 and w == 3:
-			if (matrix[0][0] == 169 and matrix[0][1] == 6 and matrix[0][2] == 169 and
-				matrix[1][0] == 6 and matrix[1][1] == 169 and matrix[1][2] == 6 and
-				matrix[2][0] == 169 and matrix[2][1] == 6 and matrix[2][2] == 169):
+			if (matrix[0][0] == 169 and matrix[0][1] in (6, 281) and matrix[0][2] == 169 and
+				matrix[1][0] in (6, 281) and matrix[1][1] == 169 and matrix[1][2] in (6, 281) and
+				matrix[2][0] == 169 and matrix[2][1] in (6, 281) and matrix[2][2] == 169):
 				self.crafting_result = [25, 1]  # TNT Block (25)
 				return
 
@@ -2092,21 +2334,25 @@ class InventoryGUI:
 		# Recipe 33: Hoes (2 head items + 2 sticks in 2x3 grid) - Left or Right facing
 		if h == 3 and w == 2:
 			# Left-facing Hoe: [[mat, mat], [0, 100], [0, 100]]
-			if matrix[0][0] == matrix[0][1] and matrix[0][0] != 0 and matrix[1][0] == 0 and matrix[1][1] == 100 and matrix[2][0] == 0 and matrix[2][1] == 100:
+			if matrix[1][0] == 0 and matrix[1][1] == 100 and matrix[2][0] == 0 and matrix[2][1] == 100:
 				mat = matrix[0][0]
-				if mat in (7,): self.crafting_result = [190, 1]; return          # Wood Hoe
-				if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
-				if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
-				if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
-				if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
+				if matrix[0][0] in ALL_PLANKS and matrix[0][1] in ALL_PLANKS:
+					self.crafting_result = [190, 1]; return      # Wood Hoe
+				elif matrix[0][0] == matrix[0][1]:
+					if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
+					if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
+					if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
+					if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
 			# Right-facing Hoe: [[mat, mat], [100, 0], [100, 0]]
-			if matrix[0][0] == matrix[0][1] and matrix[0][0] != 0 and matrix[1][0] == 100 and matrix[1][1] == 0 and matrix[2][0] == 100 and matrix[2][1] == 0:
+			if matrix[1][0] == 100 and matrix[1][1] == 0 and matrix[2][0] == 100 and matrix[2][1] == 0:
 				mat = matrix[0][0]
-				if mat in (7,): self.crafting_result = [190, 1]; return          # Wood Hoe
-				if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
-				if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
-				if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
-				if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
+				if matrix[0][0] in ALL_PLANKS and matrix[0][1] in ALL_PLANKS:
+					self.crafting_result = [190, 1]; return      # Wood Hoe
+				elif matrix[0][0] == matrix[0][1]:
+					if mat in (1, 5): self.crafting_result = [191, 1]; return        # Stone Hoe
+					if mat in (123, 17, 29): self.crafting_result = [192, 1]; return # Iron Hoe
+					if mat in (122, 18, 30): self.crafting_result = [194, 1]; return # Diamond Hoe
+					if mat in (124, 35, 28): self.crafting_result = [193, 1]; return # Gold Hoe
 
 		# Recipe 34: Bread (3 Wheat 154 in 1x3 horizontal row) -> 1 Bread (152)
 		if h == 1 and w == 3 and matrix[0] == [154, 154, 154]:
@@ -2235,6 +2481,9 @@ class InventoryGUI:
 			self._draw_xp_bar()
 
 		self._draw_boss_bar()
+
+		if self.toast_timer > 0 and self.toast_message:
+			self._draw_message_popup()
 
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
@@ -2469,6 +2718,53 @@ class InventoryGUI:
 			for notch in range(1, 10):
 				nx = bar_x + int(bar_w * (notch / 10.0))
 				draw_bordered_box(nx, bar_y, 1, bar_h, 0, (40, 15, 50, 255), (0, 0, 0, 0))
+
+	def _draw_message_popup(self):
+		if self.toast_timer <= 0 or not self.toast_message:
+			return
+
+		import time
+		now = time.time()
+		last_t = getattr(self, "_last_toast_draw_time", now)
+		dt = max(0.0, min(0.5, now - last_t))
+		self._last_toast_draw_time = now
+		self.toast_timer = max(0.0, self.toast_timer - dt)
+
+		if self.toast_timer <= 0:
+			return
+
+		cx = self.window.width // 2
+		cy = self.window.height - 70
+
+		# Fade out alpha in the last 0.5s
+		if self.toast_timer < 0.5:
+			alpha = int(255 * (self.toast_timer / 0.5))
+		else:
+			alpha = 255
+		alpha = max(10, min(255, alpha))
+
+		if not hasattr(self, "toast_label") or self.toast_label is None:
+			self.toast_label = pyglet.text.Label(
+				"",
+				font_name="Arial",
+				font_size=12,
+				anchor_x="center",
+				anchor_y="center",
+				color=(255, 255, 255, 255)
+			)
+
+		self.toast_label.text = self.toast_message
+		self.toast_label.color = (255, 255, 255, alpha)
+		self.toast_label.x = cx
+		self.toast_label.y = cy
+
+		pad_x = 16
+		pad_y = 8
+		bw = self.toast_label.content_width + pad_x * 2
+		bh = self.toast_label.content_height + pad_y * 2
+
+		draw_bordered_box(cx - bw // 2, cy - bh // 2, bw, bh, 2, (15, 15, 20, int(alpha * 0.85)), (255, 215, 0, alpha))
+		self.toast_label.draw()
 
 	def _draw_tooltip(self, hover_text, mouse_x, mouse_y):
 		if not hover_text:

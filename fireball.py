@@ -15,6 +15,7 @@ import random
 import ctypes
 import pyglet
 import pyglet.gl as gl
+import block_state
 
 
 FIREBALL_VERT_SHADER = """
@@ -115,7 +116,7 @@ class SmallFireballEntity:
 
 			if world:
 				b_num = world.get_block_number((bx, by, bz))
-				if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 88, 89, 94):
+				if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 					# Hit solid block! Place fire on adjacent top/side if air
 					if world.get_block_number((bx, by + 1, bz)) == 0 and 0 <= by + 1 < 127:
 						world.set_block((bx, by + 1, bz), 78) # Fire

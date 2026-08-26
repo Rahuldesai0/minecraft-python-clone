@@ -176,6 +176,11 @@ def get_valid_enchantments_for_item(item_id):
 SILK_TOUCH_BLOCK_DROPS = {
 	13: 13,   # Oak Leaves -> Oak Leaves block (13)
 	14: 13,   # Oak Leaves -> Oak Leaves block (13)
+	224: 224, # Birch Leaves
+	234: 234, # Spruce Leaves
+	244: 244, # Jungle Leaves
+	254: 254, # Acacia Leaves
+	264: 264, # Dark Oak Leaves
 	16: 16,   # Coal Ore -> Coal Ore block (16)
 	18: 18,   # Diamond Ore -> Diamond Ore block (18)
 	21: 21,   # Glass -> Glass block (21)
@@ -188,6 +193,9 @@ SILK_TOUCH_BLOCK_DROPS = {
 	212: 212, # Lapis Lazuli Ore -> Lapis Lazuli Ore block (212)
 	2: 2,     # Grass Block -> Grass Block (2)
 	5: 5,     # Stone -> Stone block (5)
+	278: 278, # Podzol -> Podzol block (278)
+	280: 280, # Vines -> Vines block (280)
+	282: 282, # Packed Ice -> Packed Ice block (282)
 }
 
 def get_silk_touch_drop(block_num):

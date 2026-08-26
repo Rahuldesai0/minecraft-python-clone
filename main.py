@@ -249,6 +249,7 @@ class Window(pyglet.window.Window):
 		self.camera.exhaustion = p_data.get('exhaustion', 0.0)
 		saved_xp = p_data.get('total_xp', p_data.get('xp', 0))
 		self.camera.set_xp(saved_xp)
+		self.camera.spawn_point = p_data.get('spawn_point', None)
 		self.flying = p_data.get('flying', False)
 		self.sprinting = p_data.get('sprinting', False)
 
@@ -365,6 +366,7 @@ class Window(pyglet.window.Window):
 				'exhaustion': getattr(self.camera, 'exhaustion', 0.0),
 				'total_xp': getattr(self.camera, 'total_xp', 0),
 				'level': getattr(self.camera, 'level', 0),
+				'spawn_point': getattr(self.camera, 'spawn_point', None),
 				'flying': self.flying,
 				'sprinting': self.sprinting,
 				'dimension': curr_dim
@@ -978,15 +980,14 @@ class Window(pyglet.window.Window):
 										[target_block[0] + 0.5, up_y + 0.5, target_block[2] + 0.5]
 									)
 									up_y += 1
-							elif b_num in (13, 14):  # Oak Leaves
+							elif b_num in (13, 14, 224, 234, 244, 254, 264):  # All Leaves
 								import enchanting
 								held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
 								if enchanting.has_silk_touch(held_slot):
-									actual_drop_id = 13  # Drops Oak Leaves block with Silk Touch
+									actual_drop_id = b_num if b_num != 14 else 13  # Drops exact Leaf block with Silk Touch
 									drop_qty = 1
 								else:
-									# Without Silk Touch: Leaves cannot be mined as block items!
-									# Drops random amount of sticks and sometimes an apple / sapling
+									# Without Silk Touch: Drops random amount of sticks and sometimes sapling / apple
 									import random
 									actual_drop_id = None
 									drop_qty = 0
@@ -999,19 +1000,34 @@ class Window(pyglet.window.Window):
 											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 										)
 
-									# Apple drop (2% chance)
-									if random.random() < 0.02:
+									# Leaf-specific sapling and fruit drops
+									leaf_sapling_map = {
+										13: (156, True),   # Oak -> Sapling 156, can drop Apple
+										14: (156, True),
+										224: (225, False), # Birch -> Sapling 225
+										234: (235, False), # Spruce -> Sapling 235
+										244: (245, False), # Jungle -> Sapling 245
+										254: (255, False), # Acacia -> Sapling 255
+										264: (265, True),  # Dark Oak -> Sapling 265, can drop Apple
+									}
+									sap_id, can_apple = leaf_sapling_map.get(b_num, (156, False))
+
+									# Apple drop (2% chance for oak/dark oak)
+									if can_apple and random.random() < 0.02:
 										self.item_drop_manager.spawn_drop(
 											153, 1,
 											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 										)
 
-									# Oak Sapling drop (5% chance)
+									# Sapling drop (5% chance)
 									if random.random() < 0.05:
 										self.item_drop_manager.spawn_drop(
-											156, 1,
+											sap_id, 1,
 											[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
 										)
+							elif b_num in (220, 221):  # Bed Foot or Bed Head
+								actual_drop_id = 219  # 1 Bed item (219)
+								drop_qty = 1
 							elif b_num in (184, 185, 186, 187):  # Infested Blocks (Monster Egg)
 								actual_drop_id = None
 								if hasattr(self, "mob_manager") and self.mob_manager:
@@ -1038,21 +1054,37 @@ class Window(pyglet.window.Window):
 
 						# Check 2-block door breaking synchronization
 						st_curr = self.world.get_block_state(target_block)
-						if b_num in (43, 44, 45, 46) or (st_curr and st_curr.half == "LOWER"):
+						if b_num in (43, 44, 45, 46, 228, 238, 248, 258, 268):
 							# Lower door half broken -> remove upper door half at y+1
 							top_pos = (target_block[0], target_block[1] + 1, target_block[2])
 							top_b = self.world.get_block_number(top_pos)
-							if top_b in (43, 44, 45, 46, 65, 66, 67, 68):
+							if top_b in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 								self.world.set_block(top_pos, 0)
-						elif b_num in (65, 66, 67, 68) or (st_curr and st_curr.half == "UPPER"):
+								self.world.set_block_state(top_pos, None)
+						elif b_num in (65, 66, 67, 68, 229, 239, 249, 259, 269):
 							# Upper door half broken -> remove lower door half at y-1
 							bot_pos = (target_block[0], target_block[1] - 1, target_block[2])
 							bot_b = self.world.get_block_number(bot_pos)
-							if bot_b in (43, 44, 45, 46, 65, 66, 67, 68):
+							if bot_b in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 								self.world.set_block(bot_pos, 0)
+								self.world.set_block_state(bot_pos, None)
 
+						# Check 2-block bed breaking synchronization (220 = foot, 221 = head)
+						elif b_num in (220, 221):
+							for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+								adj_pos = (target_block[0] + ox, target_block[1], target_block[2] + oz)
+								if self.world.get_block_number(adj_pos) in (220, 221):
+									self.world.set_block(adj_pos, 0)
+									self.world.set_block_state(adj_pos, None)
+									break
+							# Invalidate spawn point if bed is broken
+							if hasattr(self.camera, "spawn_point") and self.camera.spawn_point:
+								sx, sy, sz = self.camera.spawn_point
+								if abs(sx - target_block[0]) <= 2 and abs(sy - target_block[1]) <= 1 and abs(sz - target_block[2]) <= 2:
+									self.camera.spawn_point = None
 
 						self.world.set_block(target_block, 0)
+						self.world.set_block_state(target_block, None)
 						self.camera.add_exhaustion(0.005)
 						if not getattr(self, "flying", False):
 							held_slot = self.gui.get_current_slot() if hasattr(self.gui, "get_current_slot") else None
@@ -1471,29 +1503,16 @@ class Window(pyglet.window.Window):
 
 			# Cache debug noise calls once per block position update
 			if not hasattr(self, '_last_debug_pos') or self._last_debug_pos != (wx, wz):
+				import biome as biome_module
 				self._last_debug_pos = (wx, wz)
-				self._cached_cont = noise.pnoise2(wx / 350.0, wz / 350.0, octaves=3)
-				self._cached_erosion = noise.pnoise2((wx + 1000.0) / 300.0, (wz + 1000.0) / 300.0, octaves=3)
-				self._cached_peaks = noise.pnoise2((wx + 1000.0) / 120.0, (wz + 1000.0) / 120.0, octaves=4)
-				self._cached_river = abs(noise.pnoise2((wx + 2000.0) / 240.0, (wz + 2000.0) / 240.0, octaves=3))
+				self._cached_temp = biome_module.get_temperature(wx, wz, self.world.seed)
+				self._cached_moist = biome_module.get_moisture(wx, wz, self.world.seed)
+				b_id = biome_module.get_biome_at(wx, wz, self.world.seed)
+				self._cached_biome_name = biome_module.BIOME_NAMES.get(b_id, "Plains")
 
-			cont = self._cached_cont
-			erosion = self._cached_erosion
-			peaks = self._cached_peaks
-			river = self._cached_river
-
-			if wy > 110:
-				biome = "Snow-Capped Cone Mountain Peak (Y>110)"
-			elif wy > 88:
-				biome = "High Mountain Range (Y>88)"
-			elif cont < -0.10:
-				biome = "Deep Ocean"
-			elif cont < 0.10:
-				biome = "Beach / Coast"
-			elif cont < 0.20:
-				biome = "Grassy Plains / Hills"
-			else:
-				biome = "Mountain Massif"
+			temp_val = getattr(self, '_cached_temp', 0.5)
+			moist_val = getattr(self, '_cached_moist', 0.5)
+			biome_str = getattr(self, '_cached_biome_name', 'Plains')
 
 			fps = self.fps
 
@@ -1506,12 +1525,10 @@ class Window(pyglet.window.Window):
 				f"Block: {wx} {wy} {wz}",
 				f"Chunk: {cx} {cz} (loaded: {len(self.world.chunks)})",
 				"",
-				f"Terrain Noise Variables:",
-				f" - Continentalness: {cont:+.4f}",
-				f" - Erosion:        {erosion:+.4f}",
-				f" - Peaks/Ridges:   {peaks:+.4f}",
-				f" - River Noise:    {river:+.4f}",
-				f" - Biome:          {biome}",
+				f"Climate & Biome Variables:",
+				f" - Biome:          {biome_str}",
+				f" - Temperature:    {temp_val:.4f}",
+				f" - Moisture:       {moist_val:.4f}",
 				f" - Flying:         {self.flying}",
 				f" - Sprinting:      {self.sprinting}"
 			]
@@ -1965,18 +1982,26 @@ class Window(pyglet.window.Window):
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
-		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187) or (208 <= self.holding <= 210) or (self.holding in (212, 213))
-		INTERACTIVE_BLOCKS = (26, 27, 37, 54, 55, 56, 57, 58, 59, 43, 44, 45, 46, 47, 48, 49, 50, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76, 213)
+		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187) or (208 <= self.holding <= 210) or (212 <= self.holding <= 285)
+		INTERACTIVE_BLOCKS = (
+			26, 27, 37, 54, 55, 56, 57, 58, 59,
+			43, 44, 45, 46, 65, 66, 67, 68,
+			47, 48, 49, 50, 69, 70, 71, 72,
+			75, 76, 213, 220, 221,
+			228, 229, 238, 239, 248, 249, 258, 259, 268, 269,  # Doors
+			230, 240, 250, 260, 270,                            # Trapdoors
+			272, 273, 274, 275, 276                             # Fence Gates
+		)
 		DOOR_TRAPDOOR_TOGGLES = {
-			43: 44, 44: 43,  # Oak Door Bottom Closed <-> Open
-			65: 66, 66: 65,  # Oak Door Top Closed <-> Open
-			45: 46, 46: 45,  # Iron Door Bottom Closed <-> Open
-			67: 68, 68: 67,  # Iron Door Top Closed <-> Open
-			47: 48, 48: 47,  # Oak Trapdoor Bottom Closed <-> Open
-			69: 70, 70: 69,  # Oak Trapdoor Top Closed <-> Open
-			49: 50, 50: 49,  # Iron Trapdoor Bottom Closed <-> Open
-			71: 72, 72: 71,  # Iron Trapdoor Top Closed <-> Open
-			75: 76, 76: 75,  # Oak Fence Gate Closed <-> Open
+			43: 44, 44: 43,
+			65: 66, 66: 65,
+			45: 46, 46: 45,
+			67: 68, 68: 67,
+			47: 48, 48: 47,
+			69: 70, 70: 69,
+			49: 50, 50: 49,
+			71: 72, 72: 71,
+			75: 76, 76: 75,
 		}
 
 		def get_cardinal_dir():
@@ -2000,8 +2025,8 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(37, facing=cardinal_dir)
 				self.world.set_block_state(target_pos, st)
 
-			# 3. Log (8)
-			elif held_item == 8:
+			# 3. Logs (8, 223, 233, 243, 253, 263)
+			elif held_item in (8, 223, 233, 243, 253, 263):
 				if face_vector is not None:
 					if face_vector[1] != 0: axis = "Y"
 					elif face_vector[0] != 0: axis = "X"
@@ -2011,11 +2036,11 @@ class Window(pyglet.window.Window):
 					dx = target_pos[0] - next_pos[0]
 					dz = target_pos[2] - next_pos[2]
 					axis = "X" if dx != 0 else ("Z" if dz != 0 else "Y")
-				st = block_state.BlockState(8, axis=axis)
+				st = block_state.BlockState(held_item, axis=axis)
 				self.world.set_block_state(target_pos, st)
 
-			# 4. Slabs (38, 39, 40, 95, 180)
-			elif held_item in (38, 39, 40, 95, 180):
+			# 4. Slabs (38, 39, 40, 95, 180, 226, 236, 246, 256, 266)
+			elif held_item in (38, 39, 40, 95, 180, 226, 236, 246, 256, 266):
 				# Check slab combination on existing same-type slab
 				target_b = self.world.get_block_number(next_pos)
 				if target_b == held_item:
@@ -2054,13 +2079,14 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, half=half)
 				self.world.set_block_state(target_pos, st)
 
-			# 5. Doors (43, 45) - 2-block structure
-			elif held_item in (43, 45):
+			# 5. Doors (43, 45, 228, 238, 248, 258, 268) - 2-block structure
+			elif held_item in (43, 45, 228, 238, 248, 258, 268):
 				top_pos = (target_pos[0], target_pos[1] + 1, target_pos[2])
 				if self.world.get_block_number(top_pos) == 0 and not self.camera.intersects_player(top_pos):
+					door_top_map = {43: 65, 45: 67, 228: 229, 238: 239, 248: 249, 258: 259, 268: 269}
+					b_bot = held_item
+					b_top = door_top_map.get(held_item, 65)
 					hinge = block_state.calculate_door_hinge(self.world, target_pos, cardinal_dir, hit_pos=hit_pos)
-					b_bot = 43 if held_item == 43 else 45
-					b_top = 65 if held_item == 43 else 67
 
 					st_bot = block_state.BlockState(b_bot, facing=cardinal_dir, half="LOWER", hinge=hinge, open_state=False)
 					st_top = block_state.BlockState(b_top, facing=cardinal_dir, half="UPPER", hinge=hinge, open_state=False)
@@ -2071,8 +2097,8 @@ class Window(pyglet.window.Window):
 					self.holding = self.gui.get_current_block_id()
 					return
 
-			# 6. Trapdoors (47, 49)
-			elif held_item in (47, 49):
+			# 6. Trapdoors (47, 49, 230, 240, 250, 260, 270)
+			elif held_item in (47, 49, 230, 240, 250, 260, 270):
 				if face_vector is not None and face_vector[1] == 0:
 					if face_vector == (0, 0, -1): facing = "NORTH"
 					elif face_vector == (0, 0, 1): facing = "SOUTH"
@@ -2096,8 +2122,8 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, facing=facing, half=half, open_state=False)
 				self.world.set_block_state(target_pos, st)
 
-			# 7. Stairs (41, 42, 92, 178)
-			elif held_item in (41, 42, 92, 178):
+			# 7. Stairs (41, 42, 92, 178, 227, 237, 247, 257, 267)
+			elif held_item in (41, 42, 92, 178, 227, 237, 247, 257, 267):
 				if face_vector == (0, 1, 0):
 					half = "BOTTOM"
 				elif face_vector == (0, -1, 0):
@@ -2112,8 +2138,8 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, facing=facing, half=half, shape=shape)
 				self.world.set_block_state(target_pos, st)
 
-			# 8. Fences (51, 91)
-			elif held_item in (51, 91):
+			# 8. Fences (51, 91, 231, 241, 251, 261, 271)
+			elif held_item in (51, 91, 231, 241, 251, 261, 271):
 				conns = block_state.calculate_fence_connections(self.world, target_pos, held_item)
 				st = block_state.BlockState(held_item, connections=conns)
 				self.world.set_block_state(target_pos, st)
@@ -2130,16 +2156,42 @@ class Window(pyglet.window.Window):
 				st = block_state.BlockState(held_item, connections=conns)
 				self.world.set_block_state(target_pos, st)
 
-			# 11. Oak Fence Gate (75)
-			elif held_item == 75:
+			# 11. Fence Gates (75, 272, 273, 274, 275, 276)
+			elif held_item in (75, 272, 273, 274, 275, 276):
 				facing = block_state.LEFT_DIRECTIONS[cardinal_dir]
-				st = block_state.BlockState(75, facing=facing, open_state=False)
+				st = block_state.BlockState(held_item, facing=facing, open_state=False)
 				self.world.set_block_state(target_pos, st)
 
 			# 12. End Portal Frame (181, 182)
 			elif held_item in (181, 182):
 				st = block_state.BlockState(held_item, facing=cardinal_dir)
 				self.world.set_block_state(target_pos, st)
+
+			# 13. Bed (219, 220, 221) - 2-block structure (Foot & Head)
+			elif held_item in (219, 220, 221):
+				dir_offsets = {
+					"NORTH": (0, -1),
+					"SOUTH": (0, 1),
+					"EAST": (1, 0),
+					"WEST": (-1, 0),
+				}
+				ox, oz = dir_offsets.get(cardinal_dir, (0, 1))
+				head_pos = (target_pos[0] + ox, target_pos[1], target_pos[2] + oz)
+				if self.world.get_block_number(head_pos) == 0 and not self.camera.intersects_player(head_pos):
+					# Check solid ground beneath foot and head
+					g_foot = self.world.get_block_number((target_pos[0], target_pos[1] - 1, target_pos[2]))
+					g_head = self.world.get_block_number((head_pos[0], head_pos[1] - 1, head_pos[2]))
+					if g_foot not in (0, 9, 15, 19, 20) and g_head not in (0, 9, 15, 19, 20):
+						st_foot = block_state.BlockState(220, facing=cardinal_dir)
+						st_head = block_state.BlockState(221, facing=cardinal_dir)
+						self.world.set_block(target_pos, 220)  # Bed Foot
+						self.world.set_block_state(target_pos, st_foot)
+						self.world.set_block(head_pos, 221)    # Bed Head
+						self.world.set_block_state(head_pos, st_head)
+						self.gui.consume_active_item()
+						self.holding = self.gui.get_current_block_id()
+						return
+				return
 
 			else:
 				self.world.set_block(target_pos, held_item)
@@ -2406,13 +2458,13 @@ class Window(pyglet.window.Window):
 							return
 						else:
 							# Normal Right Click -> Toggle Doors/Trapdoors/Fence Gates or Open GUIs
-							if target_b in (43, 44, 45, 46, 65, 66, 67, 68):
+							if target_b in (43, 44, 45, 46, 65, 66, 67, 68, 228, 229, 238, 239, 248, 249, 258, 259, 268, 269):
 								st = self.world.get_block_state(next_block)
 								cur_open = st.open_state if st else (target_b in (44, 46, 66, 68))
 								new_open = not cur_open
 								
 								# Determine vertical pair positions
-								if st and st.half == "UPPER" or target_b in (65, 66, 67, 68):
+								if (st and st.half == "UPPER") or target_b in (65, 66, 67, 68, 229, 239, 249, 259, 269):
 									top_pos = next_block
 									bot_pos = (next_block[0], next_block[1] - 1, next_block[2])
 								else:
@@ -2431,7 +2483,7 @@ class Window(pyglet.window.Window):
 										new_b = DOOR_TRAPDOOR_TOGGLES[p_b] if new_open != (p_b in (44, 46, 66, 68)) else p_b
 										self.world.set_block(p, new_b)
 
-							elif target_b in (47, 48, 49, 50, 69, 70, 71, 72):
+							elif target_b in (47, 48, 49, 50, 69, 70, 71, 72, 230, 240, 250, 260, 270):
 								st = self.world.get_block_state(next_block)
 								if st:
 									st.open_state = not st.open_state
@@ -2441,11 +2493,12 @@ class Window(pyglet.window.Window):
 								elif target_b in DOOR_TRAPDOOR_TOGGLES:
 									self.world.set_block(next_block, DOOR_TRAPDOOR_TOGGLES[target_b])
 
-							elif target_b in (75, 76):
+							elif target_b in (75, 76, 272, 273, 274, 275, 276):
 								st = self.world.get_block_state(next_block)
 								if st:
 									st.open_state = not st.open_state
-									st.block_id = 76 if st.open_state else 75
+									if st.block_id in (75, 76):
+										st.block_id = 76 if st.open_state else 75
 									self.world.set_block_state(next_block, st)
 								elif target_b in DOOR_TRAPDOOR_TOGGLES:
 									self.world.set_block(next_block, DOOR_TRAPDOOR_TOGGLES[target_b])
@@ -2458,6 +2511,41 @@ class Window(pyglet.window.Window):
 								self.gui.open_furnace(self.world.get_furnace(next_block))
 							elif target_b in (37, 57, 58, 59):
 								self.gui.open_chest(next_block, self.world)
+							elif target_b in (220, 221):
+								# Bed interaction
+								dim = getattr(self, "dimension", "overworld")
+								if dim in ("nether", "end"):
+									# Detonate Bed with massive Power 5.0 explosion!
+									self.world.set_block(next_block, 0)
+									for ox, oz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+										adj_pos = (next_block[0] + ox, next_block[1], next_block[2] + oz)
+										if self.world.get_block_number(adj_pos) in (220, 221):
+											self.world.set_block(adj_pos, 0)
+											break
+									import explosion
+									explosion.create_explosion(
+										self.world,
+										(next_block[0] + 0.5, next_block[1] + 0.5, next_block[2] + 0.5),
+										power=5.0,
+										camera=self.camera,
+										mob_manager=getattr(self, "mob_manager", None),
+										tnt_manager=getattr(self, "tnt_manager", None),
+										item_drop_manager=self.item_drop_manager
+									)
+									return
+								else:
+									# Overworld: Set Respawn Point & Sleep / Skip Night
+									self.camera.spawn_point = (next_block[0], next_block[1], next_block[2])
+									tod = self.time_of_day % 1.0
+									is_night = (tod >= 0.75 or tod < 0.23)
+									if is_night:
+										self.time_of_day = 0.25  # Skip night to dawn
+										if hasattr(self, "gui") and hasattr(self.gui, "show_message"):
+											self.gui.show_message("Respawn point set. You wake up at dawn.")
+									else:
+										if hasattr(self, "gui") and hasattr(self.gui, "show_message"):
+											self.gui.show_message("Respawn point set. You can sleep only at night.")
+									return
 							return
 
 					if is_placeable and not self.camera.intersects_player(current_block):

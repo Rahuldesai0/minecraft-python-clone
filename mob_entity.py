@@ -8,11 +8,12 @@ environmental damage (fire, lava, drowning, fall damage), panic fleeing, and fir
 
 import math
 import random
+import block_state
 
 
 def is_liquid_or_fire_block(block_id):
-	"""Returns True if the block is water, lava, fire, or portal (passable without collision)."""
-	return block_id in (9, 19, 15, 20, 78, 88, 89)
+	"""Returns True if the block is passable without collision (liquids, fire, flowers, ferns, saplings, portals)."""
+	return block_id in block_state.PASSABLE_BLOCKS
 
 
 def is_water_block(block_id):
@@ -26,8 +27,8 @@ def is_lava_block(block_id):
 
 
 def is_walkable_ground(block_id):
-	"""Returns True if the block is a valid ground block for mobs to walk on (rejects liquids, fire, and leaves)."""
-	return block_id != 0 and block_id not in (9, 19, 15, 20, 78, 13, 14, 18)
+	"""Returns True if the block is a valid solid ground block for mobs to walk on (rejects liquids, fire, foliage/flowers, and leaves)."""
+	return block_id != 0 and block_id not in block_state.PASSABLE_BLOCKS and block_id not in (13, 14, 18, 224, 234, 244, 254, 264)
 
 
 class RandomStrollGoal:

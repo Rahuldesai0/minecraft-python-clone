@@ -55,6 +55,9 @@ class Camera:
 		self.portal_cooldown = 0.0
 		self.is_inside_portal = False
 
+		# Bed Respawn Point Tracking
+		self.spawn_point = None
+
 	@staticmethod
 	def xp_for_level(level):
 		"""Returns the amount of XP points required to advance from level to level + 1."""
@@ -193,27 +196,63 @@ class Camera:
 		self.exhaustion = 0.0
 		self.absorption = 0.0
 
-		spawn_y = None
-		if world:
-			# Ensure chunk (0, 0) is generated if needed
-			if hasattr(world, 'chunks') and (0, 0, 0) not in world.chunks and hasattr(world, 'generate_chunk'):
-				try:
-					world.chunks[(0, 0, 0)] = world.generate_chunk(0, 0)
-				except Exception:
-					pass
+		eye_h = getattr(self, 'eye_offset', 1.62)
+		spawn_pos = None
 
-			for y in range(255, 0, -1):
-				b = world.get_block_number((0, y, 0))
-				if b != 0 and b not in (9, 19, 15, 20):
-					spawn_y = y
+		if world and self.spawn_point:
+			bx, by, bz = self.spawn_point
+			# Check if bed block still exists at or adjacent to spawn_point
+			is_bed_valid = False
+			bed_center = None
+			for ox, oz in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+				chk_pos = (bx + ox, by, bz + oz)
+				b_num = world.get_block_number(chk_pos)
+				if b_num in (220, 221):
+					is_bed_valid = True
+					bed_center = chk_pos
 					break
 
-		if spawn_y is None:
-			spawn_y = 64
+			if is_bed_valid and bed_center:
+				# Find safe standing spot adjacent to the bed
+				for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
+					stand_pos = (bed_center[0] + dx, bed_center[1], bed_center[2] + dz)
+					ground_b = world.get_block_number((stand_pos[0], stand_pos[1] - 1, stand_pos[2]))
+					body_b = world.get_block_number(stand_pos)
+					head_b = world.get_block_number((stand_pos[0], stand_pos[1] + 1, stand_pos[2]))
+					if ground_b not in (0, 9, 15, 19, 20) and body_b in (0, 10, 12, 31, 33) and head_b in (0, 10, 12, 31, 33):
+						spawn_pos = [stand_pos[0] + 0.5, stand_pos[1] + eye_h, stand_pos[2] + 0.5]
+						break
+				if not spawn_pos:
+					spawn_pos = [bed_center[0] + 0.5, bed_center[1] + 0.6 + eye_h, bed_center[2] + 0.5]
+			else:
+				self.spawn_point = None
+				if hasattr(self, "gui") and self.gui and hasattr(self.gui, "show_message"):
+					self.gui.show_message("Your home bed was missing or obstructed")
 
-		# Position player right on the ground surface at (0, 0) in Overworld
-		eye_h = getattr(self, 'eye_offset', 1.62)
-		self.position = [0.5, spawn_y + 1.0 + eye_h, 0.5]
+		if spawn_pos:
+			self.position = spawn_pos
+		else:
+			spawn_y = None
+			if world:
+				# Ensure chunk (0, 0) is generated if needed
+				if hasattr(world, 'chunks') and (0, 0, 0) not in world.chunks and hasattr(world, 'generate_chunk'):
+					try:
+						world.chunks[(0, 0, 0)] = world.generate_chunk(0, 0)
+					except Exception:
+						pass
+
+				for y in range(255, 0, -1):
+					b = world.get_block_number((0, y, 0))
+					if b != 0 and b not in block_state.PASSABLE_BLOCKS:
+						spawn_y = y
+						break
+
+			if spawn_y is None:
+				spawn_y = 64
+
+			# Position player right on the ground surface at (0, 0) in Overworld
+			self.position = [0.5, spawn_y + 1.0 + eye_h, 0.5]
+
 		self.velocity_y = 0.0
 		self.fall_start_y = None
 		self.fire_timer = 0.0
@@ -628,15 +667,16 @@ class Camera:
 
 	def get_block_boxes(self, block_x, block_y, block_z, block_num, world=None):
 		"""Returns list of AABB bounding boxes (min_x, min_y, min_z, max_x, max_y, max_z) for block_num."""
-		if block_num == 0 or block_num in (9, 19, 15, 20, 10, 12, 31, 33, 78, 88, 89, 94, 183, 81, 204, 205, 206, 207, 210):
+		# Walkthroughable blocks: Air, Liquids, Flowers, Ferns, Vines, Saplings, Crops, Fire, Torches, Portals, Redstone
+		if block_num in block_state.PASSABLE_BLOCKS:
 			return []
 
-		# Oak Fence (51), Nether Brick Fence (91) & Stone Wall (52) - 1.5 blocks tall collision height
-		if block_num in (51, 52, 91):
-			r = 0.25 if block_num in (51, 91) else 0.3
+		# Fences & Stone Walls - 1.5 blocks tall collision height
+		if block_num in (51, 52, 91, 231, 241, 251, 261, 271):
+			r = 0.25 if block_num in (51, 91, 231, 241, 251, 261, 271) else 0.3
 			return [(block_x - r, block_y - 0.5, block_z - r, block_x + r, block_y + 1.0, block_z + r)]
 
-		if block_num in (75, 76):
+		if block_num in (75, 76, 272, 273, 274, 275, 276):
 			st = world.get_block_state((block_x, block_y, block_z)) if world else None
 			gate_open = getattr(st, 'open_state', False) or (block_num == 76)
 			if not gate_open:
@@ -645,6 +685,8 @@ class Camera:
 					return [(block_x - 0.5, block_y - 0.5, block_z - 0.125, block_x + 0.5, block_y + 1.0, block_z + 0.125)]
 				else:
 					return [(block_x - 0.125, block_y - 0.5, block_z - 0.5, block_x + 0.125, block_y + 1.0, block_z + 0.5)]
+			else:
+				return []
 
 		return block_state.get_block_hitboxes(world, (block_x, block_y, block_z), block_num)
 
@@ -743,7 +785,7 @@ class Camera:
 					tx, ty, tz = px - dx * step_d, py - dy * step_d, pz - dz * step_d
 					bx, by, bz = int(round(tx)), int(round(ty)), int(round(tz))
 					b_num = world.get_block_number((bx, by, bz))
-					if b_num != 0 and b_num not in (9, 19, 15, 20):
+					if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 						dist = max(0.5, step_d - 0.3)
 						break
 
@@ -766,7 +808,7 @@ class Camera:
 					tx, ty, tz = px + dx * step_d, py + dy * step_d, pz + dz * step_d
 					bx, by, bz = int(round(tx)), int(round(ty)), int(round(tz))
 					b_num = world.get_block_number((bx, by, bz))
-					if b_num != 0 and b_num not in (9, 19, 15, 20):
+					if b_num != 0 and b_num not in block_state.PASSABLE_BLOCKS:
 						dist = max(0.5, step_d - 0.3)
 						break
 

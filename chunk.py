@@ -131,9 +131,10 @@ class Chunk:
 		self.active_translucent_sections = []
 		self.had_missing_neighbors = False
 
+		import array
 		target_size = CHUNK_WIDTH * CHUNK_HEIGHT * CHUNK_LENGTH  # 65536
 
-		# Store terrain blocks as a flat 1D bytearray (65536 bytes)
+		# Store terrain blocks as a flat 1D uint16 array (65536 elements, values 0..65535)
 		if blocks is not None:
 			if isinstance(blocks, (bytes, bytearray)):
 				# Handle case where raw chunk data includes |STATE_DATA|
@@ -153,26 +154,41 @@ class Chunk:
 				else:
 					block_bytes = blocks
 
-				if len(block_bytes) >= target_size:
-					self.blocks = bytearray(block_bytes[:target_size])
+				if len(block_bytes) >= target_size * 2:
+					self.blocks = array.array('H')
+					self.blocks.frombytes(block_bytes[:target_size * 2])
+				elif len(block_bytes) >= target_size:
+					# Legacy uint8 chunk
+					self.blocks = array.array('H', block_bytes[:target_size])
 				else:
-					self.blocks = bytearray(target_size)
-					self.blocks[:len(block_bytes)] = block_bytes
+					self.blocks = array.array('H', [0] * target_size)
+					for i in range(min(len(block_bytes), target_size)):
+						self.blocks[i] = block_bytes[i]
+			elif isinstance(blocks, array.array):
+				if blocks.typecode == 'H' and len(blocks) >= target_size:
+					self.blocks = array.array('H', blocks[:target_size])
+				else:
+					self.blocks = array.array('H', [0] * target_size)
+					for i in range(min(len(blocks), target_size)):
+						self.blocks[i] = blocks[i]
 			elif isinstance(blocks, list):
-				b = bytearray(target_size)
-				idx = 0
-				for x in range(CHUNK_WIDTH):
-					col_x = blocks[x]
-					for y in range(CHUNK_HEIGHT):
-						col_y = col_x[y]
-						for z in range(CHUNK_LENGTH):
-							b[idx] = col_y[z]
-							idx += 1
-				self.blocks = b
+				self.blocks = array.array('H', [0] * target_size)
+				if blocks and isinstance(blocks[0], list):
+					idx = 0
+					for x in range(CHUNK_WIDTH):
+						col_x = blocks[x]
+						for y in range(CHUNK_HEIGHT):
+							col_y = col_x[y]
+							for z in range(CHUNK_LENGTH):
+								self.blocks[idx] = col_y[z]
+								idx += 1
+				else:
+					for i in range(min(len(blocks), target_size)):
+						self.blocks[i] = blocks[i]
 			else:
-				self.blocks = bytearray(target_size)
+				self.blocks = array.array('H', [0] * target_size)
 		else:
-			self.blocks = bytearray(target_size)
+			self.blocks = array.array('H', [0] * target_size)
 
 	def get_block_number(self, x, y, z):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:

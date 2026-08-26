@@ -114,57 +114,14 @@ REGION_SIZE_CHUNKS = 18  # 18 chunks = 288 blocks per village region
 # Continuous Surface Height Evaluation (Synchronized with World Seed)
 # -------------------------------------------------------------------
 def get_terrain_surface_y(wx, wz, seed=0):
-	"""Exact mathematical surface height matching world generation."""
-	seed_offset_x = float((seed * 10007) % 50000)
-	seed_offset_z = float((seed * 16007) % 50000)
-
-	sx = wx + seed_offset_x
-	sz = wz + seed_offset_z
-
-	cont = pnoise2(sx / 350.0, sz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
-	peaks_raw = pnoise2((sx + 1000.0) / 85.0, (sz + 1000.0) / 85.0, octaves=4, persistence=0.5, lacunarity=2.0)
-	ridge = 1.0 - abs(peaks_raw * 2.0)
-
-	if cont < -0.32:
-		# Deep Ocean & Ocean basin
-		t = max(0.0, min(1.0, (cont - (-0.50)) / 0.18))
-		smooth_t = 3.0 * t * t - 2.0 * t * t * t
-		target_y = 38.0 + smooth_t * 16.0 + (peaks_raw * 1.5)
-	elif cont < -0.22:
-		# Narrow Coastal / Shoreline Transition & Beaches
-		t = (cont - (-0.32)) / 0.10
-		smooth_t = 3.0 * t * t - 2.0 * t * t * t
-		target_y = 54.0 + smooth_t * 10.0 + (ridge * 1.5)
-	else:
-		# Vast Continents: Plains, Forests & Lowlands (Mean Surface ~66-68)
-		t = min(1.0, (cont - (-0.22)) / 0.50)
-		smooth_t = 3.0 * t * t - 2.0 * t * t * t
-		target_y = 65.0 + smooth_t * 6.0 + (ridge * 2.0)
-
-		# Occasional Standalone Mountain Clusters (3 to 4 Peaks & Semi-Ridges)
-		mtn_mask = pnoise2((sx + 5000.0) / 450.0, (sz + 5000.0) / 450.0, octaves=1)
-		if mtn_mask > 0.36:
-			t_mtn = min(1.0, (mtn_mask - 0.36) / 0.10)
-			smooth_mtn = 3.0 * t_mtn * t_mtn - 2.0 * t_mtn * t_mtn * t_mtn
-			peak_noise = pnoise2((sx + 1000.0) / 60.0, (sz + 1000.0) / 60.0, octaves=1)
-			semi_ridge = 1.0 - abs(peak_noise * 1.5)
-			summit = max(0.0, semi_ridge) ** 1.4
-			mtn_height = (smooth_mtn * 14.0) + (smooth_mtn * summit * 32.0)
-			target_y += mtn_height
-
-	river_raw = abs(pnoise2((sx + 2000.0) / 240.0, (sz + 2000.0) / 240.0, octaves=3))
-	if river_raw < 0.028:
-		t_r = 1.0 - (river_raw / 0.028)
-		r_blend = (t_r * t_r) * 3.0
-		target_y = min(target_y, 61.0 - r_blend)
-
-	sculpt = pnoise3(sx / 25.0, target_y / 15.0, sz / 25.0) * 2.0
-	final_y = math.floor(target_y + sculpt)
-	return max(4, min(final_y, 250))
+	"""Exact mathematical surface height matching multi-biome world generation."""
+	import biome
+	return biome.get_blended_height(wx, wz, seed=seed)
 
 
 def is_dry_plains(wx, wz, seed=0):
 	"""Checks if coordinate is on dry land above sea level (64+) and strictly outside ocean/river."""
+	import biome
 	seed_offset_x = float((seed * 10007) % 50000)
 	seed_offset_z = float((seed * 16007) % 50000)
 
@@ -174,8 +131,10 @@ def is_dry_plains(wx, wz, seed=0):
 	cont = pnoise2(sx / 350.0, sz / 350.0, octaves=3, persistence=0.5, lacunarity=2.0)
 	river_raw = abs(pnoise2((sx + 2000.0) / 240.0, (sz + 2000.0) / 240.0, octaves=3))
 	sy = get_terrain_surface_y(wx, wz, seed)
+	b_type = biome.get_biome_at(wx, wz, seed)
 
-	return (sy >= 64) and (cont >= -0.15) and (river_raw >= 0.028)
+	return (sy >= 64) and (cont >= -0.15) and (river_raw >= 0.028) and (b_type in (biome.BIOME_PLAINS, biome.BIOME_SAVANNA, biome.BIOME_FOREST))
+
 
 
 def is_in_village(wx, wz, seed=0):
