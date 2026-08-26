@@ -587,6 +587,7 @@ BLOCK_MINING_PROPERTIES = {
 	93: ("pickaxe", 1, 2.0, 92),   # Nether Brick Stairs Top -> drops Stairs 92
 	94: (None, 0, 0.1, 173),       # Nether Wart Crop -> drops Nether Wart 173
 	95: ("pickaxe", 1, 2.0, 95),   # Nether Brick Slab
+	156: (None, 0, 0.0, 156),      # Oak Sapling
 	181: (None, 0, float('inf'), None), # End Portal Frame (Indestructible)
 	182: (None, 0, float('inf'), None), # Filled End Portal Frame (Indestructible)
 	183: (None, 0, float('inf'), None), # End Portal (Indestructible)

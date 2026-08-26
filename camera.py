@@ -728,11 +728,14 @@ class Camera:
 							return False
 		return True
 
-	def intersects_player(self, block_position):
+	def intersects_player(self, block_position, block_id=None):
 		"""Return True if placing a block at block_position (bx, by, bz)
 		would intersect the player's body bounding box.
-		Allows sneaking edge block placement while preventing block entrapment.
+		Passable/walkthroughable blocks (saplings, flowers, torches) never trap the player.
 		"""
+		if block_id is not None and block_id in block_state.PASSABLE_BLOCKS:
+			return False
+
 		px, py, pz = self.position
 		bx, by, bz = block_position
 

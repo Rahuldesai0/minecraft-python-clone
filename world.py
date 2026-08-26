@@ -1369,10 +1369,13 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_bars", block_face_textures={"all": "iron_bars"}, model=models.iron_bars, transparent=True, break_time=5.0, requires_tool=True))
 
-		# Pad slots 100..177 with placeholder Block_types so block_id index lookups are always valid
+		# Pad slots 100..177 with placeholder Block_types (and Oak Sapling at 156)
 		while len(self.block_types) < 178:
 			curr_id = len(self.block_types)
-			self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
+			if curr_id == 156:
+				self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_sapling", block_face_textures={"all": "sapling"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+			else:
+				self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
 
 		# Stone Brick Stairs & Slabs, End Portal Frames & Portal (178-187)
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="stone_brick_stairs", block_face_textures={"all": "stonebrick"}, model=models.stairs, transparent=True, break_time=1.5, requires_tool=True))
@@ -1552,6 +1555,8 @@ class World:
 			self.texture_manager.add_texture(f"log_{wood}")
 			self.texture_manager.add_texture(f"log_{wood}_top")
 			self.texture_manager.add_texture(f"leaves_{wood}")
+		self.texture_manager.add_texture("sapling")
+		self.texture_manager.add_texture("sapling_oak")
 		self.texture_manager.add_texture("sapling_birch")
 		self.texture_manager.add_texture("sapling_spruce")
 		self.texture_manager.add_texture("sapling_jungle")
@@ -1667,6 +1672,7 @@ class World:
 		self.farmlands = set()
 		self.crops = set()
 		self.sugar_canes = set()
+		self.saplings = set()
 		self._block_info_cache = None
 
 	def schedule_mesh_update(self, position):
@@ -1910,6 +1916,216 @@ class World:
 				if self.get_block_number(above_pos) == 0:
 					self.set_block(above_pos, 210)
 
+		# 4. Sapling Natural Growth (0.003x chance per second: grows in ~3-6 mins)
+		for pos in list(self.saplings):
+			b_num = self.get_block_number(pos)
+			if b_num not in (156, 225, 235, 245, 255, 265):
+				self.saplings.discard(pos)
+				continue
+
+			px, py, pz = pos
+			below_b = self.get_block_number((px, py - 1, pz))
+			import block_state
+			if below_b not in block_state.VALID_SOIL_BLOCKS:
+				self.set_block(pos, 0)
+				self.saplings.discard(pos)
+				if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+					self.item_drop_manager.spawn_drop(b_num, 1, [px + 0.5, py + 0.2, pz + 0.5])
+				continue
+
+			if random.random() < 0.003:
+				if self.can_grow_tree(pos, b_num):
+					self.grow_tree(pos, b_num)
+					self.saplings.discard(pos)
+
+	def can_grow_tree(self, pos, sapling_id=None):
+		"""Checks if there is adequate vertical clearance and space for a sapling to grow into a tree."""
+		x, y, z = pos
+		b_num = self.get_block_number(pos) if sapling_id is None else sapling_id
+		if b_num not in (156, 225, 235, 245, 255, 265):
+			return False
+
+		import block_state
+		below_b = self.get_block_number((x, y - 1, z))
+		if below_b not in block_state.VALID_SOIL_BLOCKS:
+			return False
+
+		req_heights = {
+			156: 5,  # Oak
+			225: 6,  # Birch
+			235: 7,  # Spruce
+			245: 8,  # Jungle
+			255: 6,  # Acacia
+			265: 6,  # Dark Oak
+		}
+		min_h = req_heights.get(b_num, 5)
+
+		if y + min_h >= chunk.CHUNK_HEIGHT:
+			return False
+
+		import block_state
+		leaf_ids = {13, 224, 234, 244, 254, 264}
+
+		# Check vertical trunk column for obstructions (must be air, passable flora, or leaves)
+		for dy in range(1, min_h + 1):
+			chk_b = self.get_block_number((x, y + dy, z))
+			if chk_b != 0 and chk_b not in block_state.PASSABLE_BLOCKS and chk_b not in leaf_ids:
+				return False
+
+		return True
+
+	def grow_tree(self, pos, sapling_id=None, rng=None):
+		"""Grows a sapling at pos into a full tree of its corresponding species if space permits."""
+		if rng is None:
+			import random
+			rng = random.Random()
+
+		x, y, z = pos
+		b_num = self.get_block_number(pos) if sapling_id is None else sapling_id
+
+		if not self.can_grow_tree(pos, b_num):
+			return False
+
+		# Remove the sapling first
+		self.set_block(pos, 0)
+		self.saplings.discard(tuple(pos))
+
+		import block_state
+		passable_and_leaves = block_state.PASSABLE_BLOCKS | {13, 224, 234, 244, 254, 264}
+
+		def set_leaf(lx, ly, lz, leaf_id):
+			if 0 <= ly < chunk.CHUNK_HEIGHT:
+				cur = self.get_block_number((lx, ly, lz))
+				if cur == 0 or cur in passable_and_leaves:
+					self.set_block((lx, ly, lz), leaf_id)
+
+		def set_log(lx, ly, lz, log_id):
+			if 0 <= ly < chunk.CHUNK_HEIGHT:
+				self.set_block((lx, ly, lz), log_id)
+
+		if b_num == 156:
+			# Oak Tree
+			height = rng.randint(4, 6)
+			for dy in range(height):
+				set_log(x, y + dy, z, 8)  # Oak Log
+			top_y = y + height
+			for dy in range(-2, 2):
+				radius = 2 if dy < 0 else (1 if dy == 0 else 0)
+				for dx in range(-radius, radius + 1):
+					for dz in range(-radius, radius + 1):
+						if abs(dx) == radius and abs(dz) == radius and (dy >= 0 or rng.random() < 0.4):
+							continue
+						set_leaf(x + dx, top_y + dy, z + dz, 13)  # Oak Leaves
+			for dx, dz in ((0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)):
+				set_leaf(x + dx, top_y + 1, z + dz, 13)
+
+		elif b_num == 225:
+			# Birch Tree
+			height = rng.randint(5, 7)
+			for dy in range(height):
+				set_log(x, y + dy, z, 223)  # Birch Log
+			top_y = y + height
+			for dy in range(-3, 2):
+				radius = 2 if dy in (-2, -1) else 1
+				for dx in range(-radius, radius + 1):
+					for dz in range(-radius, radius + 1):
+						if abs(dx) == radius and abs(dz) == radius and (dy >= 0 or rng.random() < 0.5):
+							continue
+						set_leaf(x + dx, top_y + dy, z + dz, 224)  # Birch Leaves
+			for dx, dz in ((0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)):
+				set_leaf(x + dx, top_y + 1, z + dz, 224)
+
+		elif b_num == 235:
+			# Spruce / Pine Tree
+			height = rng.randint(7, 10)
+			for dy in range(height):
+				set_log(x, y + dy, z, 233)  # Spruce Log
+			top_y = y + height
+			set_leaf(x, top_y, z, 234)
+			set_leaf(x, top_y + 1, z, 234)
+			current_radius = 1
+			for dy in range(height - 1, 1, -1):
+				cur_y = y + dy
+				rad = current_radius
+				for dx in range(-rad, rad + 1):
+					for dz in range(-rad, rad + 1):
+						if abs(dx) == rad and abs(dz) == rad:
+							continue
+						set_leaf(x + dx, cur_y, z + dz, 234)  # Spruce Leaves
+				current_radius = 2 if current_radius == 1 else 1
+
+		elif b_num == 245:
+			# Jungle Tree
+			height = rng.randint(8, 12)
+			for dy in range(height):
+				set_log(x, y + dy, z, 243)  # Jungle Log
+				if dy >= 2 and rng.random() < 0.45:
+					for v_dx, v_dz in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+						if rng.random() < 0.35:
+							set_leaf(x + v_dx, y + dy, z + v_dz, 280)  # Vines
+			top_y = y + height
+			for dy in range(-2, 2):
+				rad = 3 if dy < 0 else (2 if dy == 0 else 1)
+				for dx in range(-rad, rad + 1):
+					for dz in range(-rad, rad + 1):
+						if abs(dx) == rad and abs(dz) == rad and (dy >= 0 or rng.random() < 0.6):
+							continue
+						set_leaf(x + dx, top_y + dy, z + dz, 244)  # Jungle Leaves
+			for dx, dz in ((0, 1), (0, -1), (1, 0), (-1, 0), (0, 0)):
+				set_leaf(x + dx, top_y + 1, z + dz, 244)
+
+		elif b_num == 255:
+			# Acacia Tree (bent trunk + umbrella canopy)
+			height = rng.randint(5, 7)
+			cur_x, cur_z = x, z
+			for dy in range(3):
+				set_log(cur_x, y + dy, cur_z, 253)  # Acacia Log
+			dir_x = rng.choice([-1, 0, 1])
+			dir_z = rng.choice([-1, 0, 1])
+			if dir_x == 0 and dir_z == 0:
+				dir_x = 1
+			for dy in range(3, height):
+				cur_x += dir_x if dy == 3 else 0
+				cur_z += dir_z if dy == 3 else 0
+				set_log(cur_x, y + dy, cur_z, 253)
+			top_y = y + height
+			for dx in range(-3, 4):
+				for dz in range(-3, 4):
+					if abs(dx) == 3 and abs(dz) == 3:
+						continue
+					set_leaf(cur_x + dx, top_y, cur_z + dz, 254)  # Acacia Leaves
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					if abs(dx) == 2 and abs(dz) == 2:
+						continue
+					set_leaf(cur_x + dx, top_y + 1, cur_z + dz, 254)
+
+		elif b_num == 265:
+			# Dark Oak Tree
+			height = rng.randint(6, 8)
+			can_2x2 = True
+			for dx in (0, 1):
+				for dz in (0, 1):
+					for dy in range(1, height):
+						b = self.get_block_number((x + dx, y + dy, z + dz))
+						if b != 0 and b not in passable_and_leaves and (dx, dy, dz) != (0, 0, 0):
+							can_2x2 = False
+							break
+			trunk_offsets = ((0, 0), (1, 0), (0, 1), (1, 1)) if can_2x2 else ((0, 0),)
+			for tox, toz in trunk_offsets:
+				for dy in range(height):
+					set_log(x + tox, y + dy, z + toz, 263)  # Dark Oak Log
+			top_y = y + height
+			for dy in range(-2, 3):
+				rad = 3 if dy <= 0 else 2
+				for dx in range(-rad, rad + (2 if can_2x2 else 1)):
+					for dz in range(-rad, rad + (2 if can_2x2 else 1)):
+						if (dx == -rad or dx == rad + 1) and (dz == -rad or dz == rad + 1) and dy > 0:
+							continue
+						set_leaf(x + dx, top_y + dy, z + dz, 264)  # Dark Oak Leaves
+
+		return True
+
 	def get_block_types_info(self):
 		if self._block_info_cache is None:
 			info = {}
@@ -2134,6 +2350,8 @@ class World:
 		chk.set_block_state(lx, ly, lz, state)
 		if state and state.block_id in (81, 204, 205, 206, 207):
 			self.crops.add(tuple(position))
+		if state and state.block_id in (156, 225, 235, 245, 255, 265):
+			self.saplings.add(tuple(position))
 		self.dirty_chunks.add(c_pos)
 
 		sy = ly // 16
@@ -2193,8 +2411,20 @@ class World:
 					nb_st.connections = new_conn
 					self.set_block_state(nb_pos, nb_st)
 
-		# Check if block directly above is a gravity block (sand/gravel) needing to fall
+		# Check if block directly above is a flower or sapling needing valid grass/dirt ground support
 		above_pos = (int(px), int(py + 1), int(pz))
+		if py + 1 < chunk.CHUNK_HEIGHT:
+			above_b = self.get_block_number(above_pos)
+			import block_state
+			if above_b in block_state.FLOWERS_AND_SAPLINGS:
+				cur_b = self.get_block_number(position)
+				if cur_b not in block_state.VALID_SOIL_BLOCKS:
+					self.set_block(above_pos, 0)
+					self.saplings.discard(above_pos)
+					if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+						self.item_drop_manager.spawn_drop(above_b, 1, [above_pos[0] + 0.5, above_pos[1] + 0.2, above_pos[2] + 0.5])
+
+		# Check if block directly above is a gravity block (sand/gravel) needing to fall
 		if py + 1 < chunk.CHUNK_HEIGHT and self.get_block_number(above_pos) in (6, 77):
 			if self.is_passable_for_gravity(position):
 				self.gravity_tick_queue.add(above_pos)
@@ -2782,6 +3012,11 @@ class World:
 			self.sugar_canes.add(tuple(position))
 		else:
 			self.sugar_canes.discard(tuple(position))
+
+		if number in (156, 225, 235, 245, 255, 265):
+			self.saplings.add(tuple(position))
+		else:
+			self.saplings.discard(tuple(position))
 
 		px, py, pz = position
 		chk.set_block_number(lx, ly, lz, number)

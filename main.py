@@ -1982,7 +1982,7 @@ class Window(pyglet.window.Window):
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
-		is_placeable = (0 < self.holding < 100) or (178 <= self.holding <= 187) or (208 <= self.holding <= 210) or (212 <= self.holding <= 285)
+		is_placeable = (0 < self.holding < 100) or (self.holding == 156) or (178 <= self.holding <= 187) or (204 <= self.holding <= 285) or (self.holding == 219)
 		INTERACTIVE_BLOCKS = (
 			26, 27, 37, 54, 55, 56, 57, 58, 59,
 			43, 44, 45, 46, 65, 66, 67, 68,
@@ -2014,6 +2014,25 @@ class Window(pyglet.window.Window):
 		def place_block_with_state(target_pos, held_item, next_pos, face_vector=None, hit_pos=None):
 			import block_state
 			cardinal_dir = block_state.get_player_facing(self.camera.rotation)
+
+			# Flowers & Saplings (only placeable on top face of grass and dirt, cannot be placed on other flora)
+			if held_item in block_state.FLOWERS_AND_SAPLINGS:
+				# Must be placed on the top face
+				if face_vector is not None and face_vector != (0, 1, 0):
+					return
+				# Target position must be clear (empty or liquid)
+				cur_target_b = self.world.get_block_number(target_pos)
+				if cur_target_b != 0 and cur_target_b not in (9, 19, 15, 20):
+					return
+				# Clicked block cannot be a flower or sapling
+				clicked_b = self.world.get_block_number(next_pos)
+				if clicked_b in block_state.FLOWERS_AND_SAPLINGS:
+					return
+				# Block underneath target_pos MUST be valid soil (grass or dirt)
+				ground_pos = (target_pos[0], target_pos[1] - 1, target_pos[2])
+				ground_b = self.world.get_block_number(ground_pos)
+				if ground_b not in block_state.VALID_SOIL_BLOCKS:
+					return
 
 			# 1. Furnace (27)
 			if held_item == 27:
@@ -2370,6 +2389,13 @@ class Window(pyglet.window.Window):
 							if above_crop_b in (81, 204, 205, 206, 207):
 								target_pos = above_crop_pos
 								cur_target_b = above_crop_b
+						elif cur_target_b not in (81, 204, 205, 206, 207, 210, 156, 225, 235, 245, 255, 265):
+							# Ground clicked -> check if sapling or crop is on top of clicked block
+							above_pos = (next_block[0], next_block[1] + 1, next_block[2])
+							above_b = self.world.get_block_number(above_pos)
+							if above_b in (156, 225, 235, 245, 255, 265, 81, 204, 205, 206, 207, 210):
+								target_pos = above_pos
+								cur_target_b = above_b
 
 						# Crops & Stems (81=Wheat, 204=Carrot, 205=Potato, 206=Pumpkin Stem, 207=Melon Stem)
 						if cur_target_b in (81, 204, 205, 206, 207):
@@ -2420,32 +2446,19 @@ class Window(pyglet.window.Window):
 								self.holding = self.gui.get_current_block_id()
 								return
 
-						# Oak Sapling (156) -> instantly grow tree
-						elif cur_target_b == 156:
-							sx, sy, sz = target_pos
-							self.world.set_block(target_pos, 0)
-							import random
-							trunk_h = random.randint(4, 5)
-							for th in range(trunk_h):
-								self.world.set_block((sx, sy + th, sz), 8)  # Oak Log
-							for dx in range(-2, 3):
-								for dz in range(-2, 3):
-									for dy in (trunk_h - 2, trunk_h - 1):
-										if dx in (-2, 2) and dz in (-2, 2) and random.random() < 0.5:
-											continue
-										leaf_pos = (sx + dx, sy + dy, sz + dz)
-										if self.world.get_block_number(leaf_pos) == 0:
-											self.world.set_block(leaf_pos, 14)  # Oak Leaves
-							for dx in range(-1, 2):
-								for dz in range(-1, 2):
-									if dx in (-1, 1) and dz in (-1, 1) and random.random() < 0.4:
-										continue
-									leaf_pos = (sx + dx, sy + trunk_h, sz + dz)
-									if self.world.get_block_number(leaf_pos) == 0:
-										self.world.set_block(leaf_pos, 14)  # Oak Leaves
-							self.gui.consume_active_item()
-							self.holding = self.gui.get_current_block_id()
-							return
+						# All 6 Sapling Varieties (156=Oak, 225=Birch, 235=Spruce, 245=Jungle, 255=Acacia, 265=Dark Oak)
+						elif cur_target_b in (156, 225, 235, 245, 255, 265):
+							if self.world.can_grow_tree(target_pos, cur_target_b):
+								import random
+								# High probability (65%) to grow into a tree, 100% in Creative mode
+								if random.random() < 0.65 or getattr(self, "flying", False):
+									self.world.grow_tree(target_pos, cur_target_b)
+								self.gui.consume_active_item()
+								self.holding = self.gui.get_current_block_id()
+								return
+							else:
+								# Not enough vertical space / headroom to grow tree
+								return
 
 						if target_b in INTERACTIVE_BLOCKS and not is_shift_down:
 							pass
@@ -2453,7 +2466,7 @@ class Window(pyglet.window.Window):
 							return
 
 					if target_b in INTERACTIVE_BLOCKS:
-						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block):
+						if is_shift_down and is_placeable and not self.camera.intersects_player(current_block, self.holding):
 							place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
 							return
 						else:
@@ -2548,7 +2561,7 @@ class Window(pyglet.window.Window):
 									return
 							return
 
-					if is_placeable and not self.camera.intersects_player(current_block):
+					if is_placeable and not self.camera.intersects_player(current_block, self.holding):
 						place_block_with_state(current_block, self.holding, next_block, face_vector, hit_pos)
 
 				elif button == pyglet.window.mouse.MIDDLE:
