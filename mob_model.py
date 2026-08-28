@@ -100,6 +100,7 @@ out vec4 fragment_colour;
 
 uniform sampler2D mob_sampler;
 uniform vec4 hurt_color;
+uniform float light_mult;
 
 in vec2 interpolated_tex_coords;
 in float interpolated_shading_value;
@@ -107,7 +108,9 @@ in float interpolated_shading_value;
 void main(void) {
 	vec4 col = texture(mob_sampler, interpolated_tex_coords);
 	if (col.a < 0.1) discard;
-	vec3 final_rgb = mix(col.rgb * interpolated_shading_value, hurt_color.rgb, hurt_color.a);
+	float lm = (light_mult <= 0.0) ? 1.0 : light_mult;
+	vec3 shaded = col.rgb * (interpolated_shading_value * lm);
+	vec3 final_rgb = mix(shaded, hurt_color.rgb, hurt_color.a);
 	fragment_colour = vec4(final_rgb, col.a);
 }
 """
@@ -219,6 +222,7 @@ class BaseMobModel:
 			self.matrix_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"matrix"))
 			self.sampler_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"mob_sampler"))
 			self.hurt_color_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"hurt_color"))
+			self.light_mult_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"light_mult"))
 		except Exception as e:
 			print(f"Error initializing Mob shader: {e}")
 
@@ -263,7 +267,7 @@ class BaseMobModel:
 				tex_data.extend([uv_coords[idx][0], uv_coords[idx][1]])
 				shd_data.append(shading)
 
-	def _draw_mesh(self, camera, pos_data, tex_data, shd_data, hurt_time=0.0):
+	def _draw_mesh(self, camera, pos_data, tex_data, shd_data, hurt_time=0.0, light_mult=1.0):
 		if not self.shader_program:
 			return
 
@@ -278,6 +282,8 @@ class BaseMobModel:
 		if self.hurt_color_loc != -1:
 			alpha = 0.6 if hurt_time > 0.0 else 0.0
 			gl.glUniform4f(self.hurt_color_loc, 1.0, 0.2, 0.2, alpha)
+		if hasattr(self, "light_mult_loc") and self.light_mult_loc != -1:
+			gl.glUniform1f(self.light_mult_loc, light_mult)
 
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glEnable(gl.GL_CULL_FACE)
@@ -388,7 +394,7 @@ class PigModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class CowModel(BaseMobModel):
@@ -481,7 +487,7 @@ class CowModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class SheepModel(BaseMobModel):
@@ -579,7 +585,7 @@ class SheepModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class ChickenModel(BaseMobModel):
@@ -696,7 +702,7 @@ class ChickenModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class ZombieModel(BaseMobModel):
@@ -795,7 +801,7 @@ class ZombieModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class ZombiePigmanModel(BaseMobModel):
@@ -898,7 +904,7 @@ class ZombiePigmanModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class SkeletonModel(BaseMobModel):
@@ -1038,7 +1044,7 @@ class SkeletonModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 class SpiderModel(BaseMobModel):
 	"""3D Spider Model with 8 multi-jointed crawling legs, thorax, abdomen, and wall climb tilt."""
@@ -1118,7 +1124,7 @@ class SpiderModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class CreeperModel(BaseMobModel):
@@ -1217,7 +1223,7 @@ class CreeperModel(BaseMobModel):
 		if is_flashing:
 			shd_data = [s * 1.6 for s in shd_data]
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class BlazeModel(BaseMobModel):
@@ -1302,7 +1308,7 @@ class BlazeModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class EndermanModel(BaseMobModel):
@@ -1418,7 +1424,7 @@ class EndermanModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 
 class SilverfishModel(BaseMobModel):
@@ -1482,6 +1488,6 @@ class SilverfishModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time)
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
 
 

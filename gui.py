@@ -1997,7 +1997,7 @@ class InventoryGUI:
 		)
 		lbl3.draw()
 
-	def draw_settings_menu(self, render_distance=6):
+	def draw_settings_menu(self, render_distance=6, lighting_mode="BLOCK"):
 		gl.glDisable(gl.GL_DEPTH_TEST)
 		gl.glDisable(gl.GL_CULL_FACE)
 		gl.glEnable(gl.GL_BLEND)
@@ -2013,15 +2013,15 @@ class InventoryGUI:
 
 		title_lbl = pyglet.text.Label(
 			"Options / Settings", font_name="Arial", font_size=22,
-			x=cx, y=cy + 100, anchor_x="center", anchor_y="center",
+			x=cx, y=cy + 110, anchor_x="center", anchor_y="center",
 			color=(255, 215, 0, 255)
 		)
 		title_lbl.draw()
 
-		# Render Distance Control Box
+		# 1. Render Distance Control Box
 		ctrl_w = 320
-		ctrl_h = 44
-		ctrl_y = cy + 20
+		ctrl_h = 42
+		ctrl_y = cy + 45
 		draw_bordered_box(cx - ctrl_w // 2, ctrl_y - ctrl_h // 2, ctrl_w, ctrl_h, 2, (20, 20, 25, 230), (140, 140, 160, 255))
 
 		rd_lbl = pyglet.text.Label(
@@ -2051,10 +2051,26 @@ class InventoryGUI:
 		)
 		p_lbl.draw()
 
-		# Done Button
+		# 2. Lighting Mode Control Box
+		light_y = cy - 15
+		is_rt = (lighting_mode == "RAYTRACED")
+		bg_color = (25, 45, 65, 230) if is_rt else (20, 20, 25, 230)
+		border_color = (100, 180, 255, 255) if is_rt else (140, 140, 160, 255)
+		draw_bordered_box(cx - ctrl_w // 2, light_y - ctrl_h // 2, ctrl_w, ctrl_h, 2, bg_color, border_color)
+
+		mode_text = "Lighting:  Ray Traced (Shader)" if is_rt else "Lighting:  Block Lighting (Vanilla)"
+		mode_color = (130, 220, 255, 255) if is_rt else (255, 255, 255, 255)
+		light_lbl = pyglet.text.Label(
+			mode_text, font_name="Arial", font_size=13,
+			x=cx, y=light_y, anchor_x="center", anchor_y="center",
+			color=mode_color
+		)
+		light_lbl.draw()
+
+		# 3. Done Button
 		done_w = 180
 		done_h = 38
-		done_y = cy - 60
+		done_y = cy - 80
 		draw_bordered_box(cx - done_w // 2, done_y - done_h // 2, done_w, done_h, 2, (30, 110, 40, 230), (100, 220, 110, 255))
 		done_lbl = pyglet.text.Label(
 			"Done", font_name="Arial", font_size=13,

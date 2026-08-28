@@ -736,6 +736,386 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		(0, 0, -1),
 	]
 
+	# Build fast lookup tables for transparency & light emission
+	transparent_lookup = bytearray(512)
+	transparent_lookup[0] = 1  # Air is transparent
+	for b_id, b_data in block_types_info.items():
+		if isinstance(b_id, int) and b_id < 512:
+			if b_data.get('transparent', False) or not b_data.get('is_cube', True):
+				transparent_lookup[b_id] = 1
+
+	emitters_lookup = bytearray(512)
+	emitters_lookup[79] = 14   # Torch
+	emitters_lookup[87] = 15   # Glowstone
+	emitters_lookup[15] = 15   # Lava source
+	emitters_lookup[20] = 15   # Flowing lava
+	emitters_lookup[78] = 15   # Fire
+	emitters_lookup[88] = 11   # Nether Portal X
+	emitters_lookup[89] = 11   # Nether Portal Z
+	emitters_lookup[183] = 15  # End Portal
+	emitters_lookup[182] = 7   # End Portal Frame (Filled)
+
+	# 3D Lighting Grids: Sky Light (0-15) and Block Light (0-15)
+	sky_light = bytearray(65536)
+	block_light = bytearray(65536)
+
+	sky_queue = collections.deque()
+	block_queue = collections.deque()
+
+	min_y = section_y * 16
+	max_y = min_y + 16
+
+	# 0. Fast early exit if section contains no blocks
+	has_any_blocks = False
+	for x in range(16):
+		start_idx = x * 4096 + min_y * 16
+		if any(center_blocks[start_idx : start_idx + 256]):
+			has_any_blocks = True
+			break
+
+	if not has_any_blocks:
+		return (
+			chunk_x, chunk_z, section_y,
+			b"", b"", b"", b"",
+			b"", b"", b"", b"",
+			False
+		)
+
+	# 1. Heightmap & Sky Light Range Check
+	heightmap = [0] * 256
+	min_surface_h = 256
+	for x in range(16):
+		base_x = x * 4096
+		for z in range(16):
+			base_xz = base_x + z
+			highest_opaque = -1
+			for y in range(255, -1, -1):
+				idx = base_xz + y * 16
+				b = center_blocks[idx]
+				if not transparent_lookup[b]:
+					highest_opaque = y
+					break
+			heightmap[x * 16 + z] = highest_opaque
+			if highest_opaque < min_surface_h:
+				min_surface_h = highest_opaque
+
+	# Border heights of adjacent neighbor chunks
+	east_h = [0] * 16
+	west_h = [0] * 16
+	south_h = [0] * 16
+	north_h = [0] * 16
+
+	if east_blocks is not None:
+		for z in range(16):
+			for y in range(255, -1, -1):
+				if not transparent_lookup[east_blocks[0 * 4096 + y * 16 + z]]:
+					east_h[z] = y
+					break
+	else:
+		east_h = [heightmap[15 * 16 + z] for z in range(16)]
+
+	if west_blocks is not None:
+		for z in range(16):
+			for y in range(255, -1, -1):
+				if not transparent_lookup[west_blocks[15 * 4096 + y * 16 + z]]:
+					west_h[z] = y
+					break
+	else:
+		west_h = [heightmap[0 * 16 + z] for z in range(16)]
+
+	if south_blocks is not None:
+		for x in range(16):
+			for y in range(255, -1, -1):
+				if not transparent_lookup[south_blocks[x * 4096 + y * 16 + 0]]:
+					south_h[x] = y
+					break
+	else:
+		south_h = [heightmap[x * 16 + 15] for x in range(16)]
+
+	if north_blocks is not None:
+		for x in range(16):
+			for y in range(255, -1, -1):
+				if not transparent_lookup[north_blocks[x * 4096 + y * 16 + 15]]:
+					north_h[x] = y
+					break
+	else:
+		north_h = [heightmap[x * 16 + 0] for x in range(16)]
+
+	def get_height_at(hx, hz):
+		if 0 <= hx < 16 and 0 <= hz < 16:
+			return heightmap[hx * 16 + hz]
+		if hx >= 16: return east_h[hz] if 0 <= hz < 16 else heightmap[15 * 16 + max(0, min(15, hz))]
+		if hx < 0: return west_h[hz] if 0 <= hz < 16 else heightmap[0 * 16 + max(0, min(15, hz))]
+		if hz >= 16: return south_h[hx] if 0 <= hx < 16 else heightmap[max(0, min(15, hx)) * 16 + 15]
+		if hz < 0: return north_h[hx] if 0 <= hx < 16 else heightmap[max(0, min(15, hx)) * 16 + 0]
+		return 64
+
+	# Only compute sky light if this section is within reach of the surface / open sky
+	can_sky_reach = (max_y + 14 >= min_surface_h)
+	has_any_sky = False
+
+	if can_sky_reach:
+		has_any_sky = True
+		for x in range(16):
+			base_xz = x * 4096
+			for z in range(16):
+				col_xz = base_xz + z
+				h = heightmap[x * 16 + z]
+				for y in range(255, h, -1):
+					sky_light[col_xz + y * 16] = 15
+
+		# Fast seed sky_queue for overhangs and tree canopies (including neighbor borders)
+		for x in range(16):
+			for z in range(16):
+				h_own = heightmap[x * 16 + z]
+				base_xz = x * 4096 + z
+				max_nb_h = h_own
+				for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+					nb_h = get_height_at(x + dx, z + dz)
+					if nb_h > max_nb_h:
+						max_nb_h = nb_h
+
+				for y in range(max(0, h_own + 1), min(256, max_nb_h + 1)):
+					idx = base_xz + y * 16
+					if sky_light[idx] == 15:
+						sky_queue.append((x, y, z, 15))
+
+		# Propagate Sky Light in 3D (BFS)
+		while sky_queue:
+			x, y, z, lvl = sky_queue.popleft()
+			nlvl = lvl - 1
+			if nlvl <= 0: continue
+
+			for dx, dy, dz in neighbor_offsets:
+				nx, ny, nz = x + dx, y + dy, z + dz
+				if 0 <= nx < 16 and 0 <= ny < 256 and 0 <= nz < 16:
+					nidx = nx * 4096 + ny * 16 + nz
+					if sky_light[nidx] < nlvl and transparent_lookup[center_blocks[nidx]]:
+						sky_light[nidx] = nlvl
+						if nlvl > 1:
+							sky_queue.append((nx, ny, nz, nlvl))
+
+	# 2. Collect light emitters within vertical reach [min_y - 14, max_y + 14]
+	y_start = max(0, min_y - 14)
+	y_end = min(256, max_y + 14)
+	has_any_emitters = False
+
+	for x in range(16):
+		base_xz = x * 4096
+		for z in range(16):
+			col_xz = base_xz + z
+			for y in range(y_start, y_end):
+				b = center_blocks[col_xz + y * 16]
+				emit = emitters_lookup[b]
+				if emit > 0:
+					has_any_emitters = True
+					block_light[col_xz + y * 16] = emit
+					block_queue.append((x, y, z, emit))
+
+	# Collect light emitters from neighbor chunk borders (full 14-block propagation reach with fast column skips)
+	if east_blocks is not None:
+		for nb_x in range(14):
+			dist = nb_x + 1
+			base_col = nb_x * 4096
+			for nb_z in range(16):
+				col_start = base_col + nb_z + y_start * 16
+				for nb_y in range(y_start, y_end):
+					b = east_blocks[col_start]
+					col_start += 16
+					emit = emitters_lookup[b]
+					if emit > dist:
+						has_any_emitters = True
+						eff = emit - dist
+						idx = 15 * 4096 + nb_y * 16 + nb_z
+						if eff > block_light[idx]:
+							block_light[idx] = eff
+							block_queue.append((15, nb_y, nb_z, eff))
+
+	if west_blocks is not None:
+		for nb_x in range(15, 1, -1):
+			dist = (15 - nb_x) + 1
+			base_col = nb_x * 4096
+			for nb_z in range(16):
+				col_start = base_col + nb_z + y_start * 16
+				for nb_y in range(y_start, y_end):
+					b = west_blocks[col_start]
+					col_start += 16
+					emit = emitters_lookup[b]
+					if emit > dist:
+						has_any_emitters = True
+						eff = emit - dist
+						idx = 0 * 4096 + nb_y * 16 + nb_z
+						if eff > block_light[idx]:
+							block_light[idx] = eff
+							block_queue.append((0, nb_y, nb_z, eff))
+
+	if south_blocks is not None:
+		for nb_z in range(14):
+			dist = nb_z + 1
+			for nb_x in range(16):
+				col_start = nb_x * 4096 + nb_z + y_start * 16
+				for nb_y in range(y_start, y_end):
+					b = south_blocks[col_start]
+					col_start += 16
+					emit = emitters_lookup[b]
+					if emit > dist:
+						has_any_emitters = True
+						eff = emit - dist
+						idx = nb_x * 4096 + nb_y * 16 + 15
+						if eff > block_light[idx]:
+							block_light[idx] = eff
+							block_queue.append((nb_x, nb_y, 15, eff))
+
+	if north_blocks is not None:
+		for nb_z in range(15, 1, -1):
+			dist = (15 - nb_z) + 1
+			for nb_x in range(16):
+				col_start = nb_x * 4096 + nb_z + y_start * 16
+				for nb_y in range(y_start, y_end):
+					b = north_blocks[col_start]
+					col_start += 16
+					emit = emitters_lookup[b]
+					if emit > dist:
+						has_any_emitters = True
+						eff = emit - dist
+						idx = nb_x * 4096 + nb_y * 16 + 0
+						if eff > block_light[idx]:
+							block_light[idx] = eff
+							block_queue.append((nb_x, nb_y, 0, eff))
+
+	if has_any_emitters:
+		# Propagate Block Light in 3D (BFS)
+		while block_queue:
+			x, y, z, lvl = block_queue.popleft()
+			nlvl = lvl - 1
+			if nlvl <= 0: continue
+
+			for dx, dy, dz in neighbor_offsets:
+				nx, ny, nz = x + dx, y + dy, z + dz
+				if 0 <= nx < 16 and 0 <= ny < 256 and 0 <= nz < 16:
+					nidx = nx * 4096 + ny * 16 + nz
+					if block_light[nidx] < nlvl and transparent_lookup[center_blocks[nidx]]:
+						block_light[nidx] = nlvl
+						if nlvl > 1:
+							block_queue.append((nx, ny, nz, nlvl))
+
+	def sample_voxel_light(sx, sy, sz):
+		if sy >= 256: return 15, 0
+		if sy < 0: return 0, 0
+		if 0 <= sx < 16 and 0 <= sz < 16:
+			s_idx = sx * 4096 + sy * 16 + sz
+			return sky_light[s_idx], block_light[s_idx]
+		
+		# Neighbor chunk border lookup
+		nb_h = get_height_at(sx, sz)
+		if sy > nb_h:
+			nb_sky = 15
+		else:
+			nb_sky = max(0, 15 - (nb_h - sy))
+		nb_blk = 0
+
+		nb_blocks = None
+		nb_x, nb_z = sx, sz
+		if sx >= 16:
+			nb_blocks = east_blocks
+			nb_x = 0
+		elif sx < 0:
+			nb_blocks = west_blocks
+			nb_x = 15
+		elif sz >= 16:
+			nb_blocks = south_blocks
+			nb_z = 0
+		elif sz < 0:
+			nb_blocks = north_blocks
+			nb_z = 15
+
+		if nb_blocks is not None:
+			nb_b = nb_blocks[nb_x * 4096 + sy * 16 + nb_z]
+			emit = emitters_lookup[nb_b]
+			if emit > 0:
+				nb_blk = emit
+
+		return nb_sky, nb_blk
+
+	# Corner neighbor offsets for the 4 quad vertices of each face:
+	# face 0 (+X), 1 (-X), 2 (+Y), 3 (-Y), 4 (+Z), 5 (-Z)
+	face_corner_offsets = [
+		# Face 0 (+X, Right)
+		[
+			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
+			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
+		],
+		# Face 1 (-X, Left)
+		[
+			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
+			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
+		],
+		# Face 2 (+Y, Top)
+		[
+			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],
+			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],
+			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
+			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
+		],
+		# Face 3 (-Y, Bottom)
+		[
+			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
+			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
+			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],
+			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],
+		],
+		# Face 4 (+Z, Front)
+		[
+			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],
+			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],
+			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],
+			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],
+		],
+		# Face 5 (-Z, Back)
+		[
+			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],
+			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],
+			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],
+			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],
+		],
+	]
+
+	def get_corner_shd(lx, ly, lz, face_idx, dir_shd, is_emitter, emit_val):
+		if is_emitter:
+			idx = lx * 4096 + ly * 16 + lz
+			sk = float(sky_light[idx]) if has_any_sky else 0.0
+			ev = float(emit_val)
+			return [sk, ev, dir_shd, sk, ev, dir_shd, sk, ev, dir_shd, sk, ev, dir_shd]
+
+		if not has_any_sky and not has_any_emitters:
+			# Fast path for deep unlit caves: direct 0.0 lighting with face shading
+			return [0.0, 0.0, dir_shd, 0.0, 0.0, dir_shd, 0.0, 0.0, dir_shd, 0.0, 0.0, dir_shd]
+
+		dx, dy, dz = neighbor_offsets[face_idx]
+		nx, ny, nz = lx + dx, ly + dy, lz + dz
+		base_sky, base_blk = sample_voxel_light(nx, ny, nz)
+
+		if not has_any_emitters and base_sky == 15.0:
+			if face_idx == 2 or (0 <= nx < 16 and 0 <= nz < 16 and ny > heightmap[nx * 16 + nz]):
+				# Fast path for open daylight: all corners are 15.0
+				return [15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd]
+
+		corners = face_corner_offsets[face_idx]
+		out = []
+		for c_offsets in corners:
+			s_sum, b_sum, cnt = base_sky, base_blk, 1.0
+			for ox, oy, oz in c_offsets:
+				sk, bl = sample_voxel_light(nx + ox, ny + oy, nz + oz)
+				s_sum += sk
+				b_sum += bl
+				cnt += 1.0
+			out.extend([s_sum / cnt, b_sum / cnt, dir_shd])
+		return out
+
 	def get_nb(nx, ny, nz):
 		nonlocal missing_neighbors
 		if ny < 0 or ny >= 256:
@@ -847,20 +1227,21 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					# 6 Quad Faces: Right (+X), Left (-X), Top (+Y), Bottom (-Y), Front (+Z), Back (-Z)
 					quads = [
 						# Right (+X, face 0)
-						([(x2, y2, z2), (x2, y1, z2), (x2, y1, z1), (x2, y2, z1)], face_tex_indices[0], 0.85),
+						([(x2, y2, z2), (x2, y1, z2), (x2, y1, z1), (x2, y2, z1)], face_tex_indices[0], 0.85, (1, 0, 0)),
 						# Left (-X, face 1)
-						([(x1, y2, z1), (x1, y1, z1), (x1, y1, z2), (x1, y2, z2)], face_tex_indices[1], 0.85),
+						([(x1, y2, z1), (x1, y1, z1), (x1, y1, z2), (x1, y2, z2)], face_tex_indices[1], 0.85, (-1, 0, 0)),
 						# Top (+Y, face 2)
-						([(x2, y2, z2), (x2, y2, z1), (x1, y2, z1), (x1, y2, z2)], face_tex_indices[2], 1.00),
+						([(x2, y2, z2), (x2, y2, z1), (x1, y2, z1), (x1, y2, z2)], face_tex_indices[2], 1.00, (0, 1, 0)),
 						# Bottom (-Y, face 3)
-						([(x1, y1, z2), (x1, y1, z1), (x2, y1, z1), (x2, y1, z2)], face_tex_indices[3], 0.50),
+						([(x1, y1, z2), (x1, y1, z1), (x2, y1, z1), (x2, y1, z2)], face_tex_indices[3], 0.50, (0, -1, 0)),
 						# Front (+Z, face 4)
-						([(x1, y2, z2), (x1, y1, z2), (x2, y1, z2), (x2, y2, z2)], face_tex_indices[4], 0.95),
+						([(x1, y2, z2), (x1, y1, z2), (x2, y1, z2), (x2, y2, z2)], face_tex_indices[4], 0.95, (0, 0, 1)),
 						# Back (-Z, face 5)
-						([(x2, y2, z1), (x2, y1, z1), (x1, y1, z1), (x1, y2, z1)], face_tex_indices[5], 0.80),
+						([(x2, y2, z1), (x2, y1, z1), (x1, y1, z1), (x1, y2, z1)], face_tex_indices[5], 0.80, (0, 0, -1)),
 					]
 
-					for quad_verts, tex_idx, shading in quads:
+					emit_val = emitters_lookup[b_num]
+					for quad_idx, (quad_verts, tex_idx, shading, (qdx, qdy, qdz)) in enumerate(quads):
 						t_raw = b_info['tex_coords'][tex_idx] if tex_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
 						c = trans_vert_count if is_translucent else opaque_vert_count
 						idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
@@ -869,56 +1250,70 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							rx, ry, rz = rotate_pt(vx, vy, vz, rot_facing)
 							pos_arr.extend((rx + x, ry + y, rz + z))
 
+						box_shd_vals = get_corner_shd(local_x, local_y, local_z, quad_idx, shading, emit_val > 0, emit_val)
+
 						if is_translucent:
 							trans_vert_count += 4
 							trans_tex.extend(t_raw[:12] if len(t_raw) >= 12 else t_raw * 4)
-							trans_shd.extend([shading] * 4)
+							trans_shd.extend(box_shd_vals)
 						else:
 							opaque_vert_count += 4
 							opaque_tex.extend(t_raw[:12] if len(t_raw) >= 12 else t_raw * 4)
-							opaque_shd.extend([shading] * 4)
+							opaque_shd.extend(box_shd_vals)
 
 				def add_face(face, is_trans, custom_tc_idx=None):
 					nonlocal opaque_vert_count, trans_vert_count
 					vp = b_info['vertex_positions'][face]
 					tc_i = face if custom_tc_idx is None else custom_tc_idx
 					tc = b_info['tex_coords'][tc_i] if tc_i < len(b_info['tex_coords']) else b_info['tex_coords'][0]
-					sh = b_info['shading_values'][face]
+					base_shd = b_info['shading_values'][face]
+					dir_shd = base_shd[0] if (isinstance(base_shd, (list, tuple)) and len(base_shd) > 0) else (1.0 if face==2 else (0.5 if face==3 else (0.8 if face in (4,5) else 0.6)))
+
+					emit_val = emitters_lookup[b_num]
+					face_shd_vals = get_corner_shd(local_x, local_y, local_z, face, dir_shd, emit_val > 0, emit_val)
 
 					if is_trans:
-						pos = trans_pos
-						for i in range(4):
-							pos.append(vp[i * 3 + 0] + x)
-							vy = vp[i * 3 + 1]
-							if is_liquid:
-								pos.append((y - 0.5) + h_scale if vy > 0.0 else y - 0.5)
-							else:
-								pos.append(vy + y)
-							pos.append(vp[i * 3 + 2] + z)
+						if is_liquid:
+							for i in range(4):
+								trans_pos.append(vp[i * 3 + 0] + x)
+								vy = vp[i * 3 + 1]
+								trans_pos.append((y - 0.5) + h_scale if vy > 0.0 else y - 0.5)
+								trans_pos.append(vp[i * 3 + 2] + z)
+						else:
+							trans_pos.extend((
+								vp[0] + x, vp[1] + y, vp[2] + z,
+								vp[3] + x, vp[4] + y, vp[5] + z,
+								vp[6] + x, vp[7] + y, vp[8] + z,
+								vp[9] + x, vp[10] + y, vp[11] + z
+							))
 
 						c = trans_vert_count
 						trans_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
 						trans_vert_count += 4
 
 						trans_tex.extend(tc)
-						trans_shd.extend(sh)
+						trans_shd.extend(face_shd_vals)
 					else:
-						pos = opaque_pos
-						for i in range(4):
-							pos.append(vp[i * 3 + 0] + x)
-							vy = vp[i * 3 + 1]
-							if is_liquid:
-								pos.append((y - 0.5) + h_scale if vy > 0.0 else y - 0.5)
-							else:
-								pos.append(vy + y)
-							pos.append(vp[i * 3 + 2] + z)
+						if is_liquid:
+							for i in range(4):
+								opaque_pos.append(vp[i * 3 + 0] + x)
+								vy = vp[i * 3 + 1]
+								opaque_pos.append((y - 0.5) + h_scale if vy > 0.0 else y - 0.5)
+								opaque_pos.append(vp[i * 3 + 2] + z)
+						else:
+							opaque_pos.extend((
+								vp[0] + x, vp[1] + y, vp[2] + z,
+								vp[3] + x, vp[4] + y, vp[5] + z,
+								vp[6] + x, vp[7] + y, vp[8] + z,
+								vp[9] + x, vp[10] + y, vp[11] + z
+							))
 
 						c = opaque_vert_count
 						opaque_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
 						opaque_vert_count += 4
 
 						opaque_tex.extend(tc)
-						opaque_shd.extend(sh)
+						opaque_shd.extend(face_shd_vals)
 
 				def get_dir_tex_idx(b_num, face_idx, facing):
 					if b_num in (27, 54, 55, 56, 37, 57, 58, 59):
@@ -1145,9 +1540,14 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 						t_layer = float(tex_map[t_name]) if (t_name and t_name in tex_map) else (b_info['tex_coords'][0][2] if b_info.get('tex_coords') else 0.0)
 
+						emit_val = emitters_lookup[b_num]
+						own_idx = local_x * 4096 + local_y * 16 + local_z
+						p_sky = float(sky_light[own_idx])
+						p_blk = float(emit_val) if emit_val > 0 else float(block_light[own_idx])
+						plant_shd_vals = [p_sky, p_blk, 1.0, p_sky, p_blk, 1.0, p_sky, p_blk, 1.0, p_sky, p_blk, 1.0]
+
 						for face_idx in range(len(b_info['vertex_positions'])):
 							vp = b_info['vertex_positions'][face_idx]
-							sh = b_info['shading_values'][face_idx]
 							base_tc = b_info['tex_coords'][face_idx] if face_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
 							tc = list(base_tc)
 							for vi in range(4):
@@ -1164,18 +1564,24 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							if is_translucent:
 								trans_vert_count += 4
 								trans_tex.extend(tc)
-								trans_shd.extend(sh)
+								trans_shd.extend(plant_shd_vals)
 							else:
 								opaque_vert_count += 4
 								opaque_tex.extend(tc)
-								opaque_shd.extend(sh)
+								opaque_shd.extend(plant_shd_vals)
 					elif b_num in (220, 221):
 						# Bed Foot (220) and Bed Head (221) directional rotation
 						bed_facing = facing if facing in ("NORTH", "SOUTH", "EAST", "WEST") else "SOUTH"
+						own_idx = local_x * 4096 + local_y * 16 + local_z
+						p_sky = float(sky_light[own_idx])
+						p_blk = float(block_light[own_idx])
+
 						for face_idx in range(len(b_info['vertex_positions'])):
 							vp = b_info['vertex_positions'][face_idx]
-							sh = b_info['shading_values'][face_idx]
+							base_shd = b_info['shading_values'][face_idx]
+							dir_shd = base_shd[0] if (isinstance(base_shd, (list, tuple)) and len(base_shd) > 0) else 0.85
 							tc = b_info['tex_coords'][face_idx] if face_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
+							bed_shd_vals = [p_sky, p_blk, dir_shd, p_sky, p_blk, dir_shd, p_sky, p_blk, dir_shd, p_sky, p_blk, dir_shd]
 
 							c = trans_vert_count if is_translucent else opaque_vert_count
 							idx_arr = trans_idx if is_translucent else opaque_idx
@@ -1192,11 +1598,11 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							if is_translucent:
 								trans_vert_count += 4
 								trans_tex.extend(tc)
-								trans_shd.extend(sh)
+								trans_shd.extend(bed_shd_vals)
 							else:
 								opaque_vert_count += 4
 								opaque_tex.extend(tc)
-								opaque_shd.extend(sh)
+								opaque_shd.extend(bed_shd_vals)
 					else:
 						for face_idx in range(len(b_info['vertex_positions'])):
 							add_face(face_idx, is_translucent)
@@ -1247,7 +1653,7 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 								1.0, 1.0, float(fire_tex_idx)
 							]
 							trans_tex.extend(fire_tc)
-							trans_shd.extend([1.0, 1.0, 1.0, 1.0])
+							trans_shd.extend([15.0, 15.0, 1.0, 15.0, 15.0, 1.0, 15.0, 15.0, 1.0, 15.0, 15.0, 1.0])
 
 	final_trans_idx = array.array('I', [idx + opaque_vert_count for idx in trans_idx])
 
@@ -1334,12 +1740,13 @@ class ChestData:
 
 
 class World:
-	def __init__(self, seed=None, save_folder=None, render_distance=6, dimension="overworld"):
-		self.dimension = dimension  # "overworld" or "nether"
+	def __init__(self, seed=None, save_folder=None, render_distance=6, dimension="overworld", texture_manager_instance=None, block_types_table=None):
+		self.dimension = dimension  # "overworld", "nether", or "end"
 		self.furnaces = {}  # (x, y, z) -> FurnaceData
 		self.chests = {}    # (x, y, z) -> ChestData
 		self.item_drop_manager = None
 		self.tnt_manager = None
+		self.end_portal_blocks = set()
 		if seed is None or seed == "":
 			self.seed = Random().randint(100000, 999999999)
 		elif isinstance(seed, str):
@@ -1356,6 +1763,55 @@ class World:
 		self.save_dir = os.path.join(world_save.SAVES_DIR, self.save_folder, subfolder)
 		os.makedirs(self.save_dir, exist_ok=True)
 
+		if texture_manager_instance is not None and block_types_table is not None:
+			self.texture_manager = texture_manager_instance
+			self.block_types = block_types_table
+		else:
+			self._init_block_types()
+
+		self.chunks = {}
+		self.scale = 500.0
+		self.octaves = 4
+		self.persistence = 0.5
+		self.lacunarity = 2.5
+		self.cave_scale = 15.0
+		self.cave_threshold = 0.1
+
+		self.render_distance = max(2, min(12, render_distance))
+		self.unload_distance = self.render_distance + 3
+		self.dirty_chunks = set()
+		self._last_player_chunk = None
+		self._load_queue = []
+
+		# Multithreaded Executor (3 Workers) balanced to eliminate GIL contention with main Pyglet render loop
+		self.process_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ChunkWorker")
+		self.chunk_generation_futures = {}
+		self.section_mesh_futures = {}
+
+		self._save_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ChunkSaver")
+		self.free_chunk_pool = []  # Deferred handle recycling pool
+
+		self.pending_section_uploads = []
+		self.section_mesh_queue = set()
+
+		self.liquid_levels = {}
+		self.water_levels = {}
+		self.liquid_tick_queue = set()
+		self.liquid_tick_timer = 0.0
+		self.lava_tick_timer = 0.0
+		self.gravity_tick_queue = set()
+		self.gravity_tick_timer = 0.0
+		self.active_fires = {}      # (x, y, z) -> remaining_seconds (for standalone Fire block ID 78)
+		self.burning_blocks = {}    # (x, y, z) -> {'timer': remaining_seconds, 'faces': set([face_idx])} (for masked side face fire)
+		self.farm_tick_timer = 0.0
+		self.farmlands = set()
+		self.crops = set()
+		self.sugar_canes = set()
+		self.saplings = set()
+		self.cacti = set()
+		self._block_info_cache = None
+
+	def _init_block_types(self):
 		self.texture_manager = texture_manager.Texture_manager(16, 16, 1024)
 		self.block_types = [None]
 
@@ -1729,50 +2185,6 @@ class World:
 		self.texture_manager.add_texture("enchanting_table_top")
 		self.texture_manager.add_texture("enchanting_table_side")
 		self.texture_manager.generate_mipmaps()
-
-		self.chunks = {}
-		self.scale = 500.0
-		self.octaves = 4
-		self.persistence = 0.5
-		self.lacunarity = 2.5
-		self.cave_scale = 15.0
-		self.cave_threshold = 0.1
-
-		self.render_distance = max(2, min(12, render_distance))
-		self.unload_distance = self.render_distance + 3
-		self.dirty_chunks = set()
-		self._last_player_chunk = None
-		self._load_queue = []
-
-		os.makedirs(self.save_dir, exist_ok=True)
-
-		# Multithreaded Executor (3 Workers) balanced to eliminate GIL contention with main Pyglet render loop
-		self.process_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ChunkWorker")
-		self.chunk_generation_futures = {}
-		self.section_mesh_futures = {}
-
-		self._save_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ChunkSaver")
-		self.free_chunk_pool = []  # Deferred handle recycling pool
-
-		self.pending_section_uploads = []
-		self.section_mesh_queue = set()
-
-		self.liquid_levels = {}
-		self.water_levels = {}
-		self.liquid_tick_queue = set()
-		self.liquid_tick_timer = 0.0
-		self.lava_tick_timer = 0.0
-		self.gravity_tick_queue = set()
-		self.gravity_tick_timer = 0.0
-		self.active_fires = {}      # (x, y, z) -> remaining_seconds (for standalone Fire block ID 78)
-		self.burning_blocks = {}    # (x, y, z) -> {'timer': remaining_seconds, 'faces': set([face_idx])} (for masked side face fire)
-		self.farm_tick_timer = 0.0
-		self.farmlands = set()
-		self.crops = set()
-		self.sugar_canes = set()
-		self.saplings = set()
-		self.cacti = set()
-		self._block_info_cache = None
 
 	def schedule_mesh_update(self, position):
 		x, y, z = position
@@ -2320,7 +2732,15 @@ class World:
 
 		if blocks_only:
 			return blocks
-		return chunk.Chunk(self, chunk_position, blocks=blocks)
+		chk_obj = chunk.Chunk(self, chunk_position, blocks=blocks)
+		if 183 in chk_obj.blocks:
+			cx, _, cz = chunk_position
+			for lx in range(16):
+				for ly in range(256):
+					for lz in range(16):
+						if chk_obj.blocks[lx * 4096 + ly * 16 + lz] == 183:
+							self.end_portal_blocks.add((cx * 16 + lx, ly, cz * 16 + lz))
+		return chk_obj
 
 	def queue_chunk_sections_for_meshing(self, cx, cz):
 		c_pos = (cx, 0, cz)
@@ -2490,6 +2910,10 @@ class World:
 		lz = int(z % chunk.CHUNK_LENGTH)
 
 		chk.set_block_state(lx, ly, lz, state)
+		if state and state.block_id == 183:
+			self.end_portal_blocks.add(tuple(position))
+		elif state is None or state.block_id != 183:
+			self.end_portal_blocks.discard(tuple(position))
 		if state and state.block_id in (81, 204, 205, 206, 207):
 			self.crops.add(tuple(position))
 		if state and state.block_id in (156, 225, 235, 245, 255, 265):
@@ -3194,9 +3618,16 @@ class World:
 		else:
 			self.cacti.discard(tuple(position))
 
+		if number == 183:
+			self.end_portal_blocks.add(tuple(position))
+		elif old_num == 183:
+			self.end_portal_blocks.discard(tuple(position))
+
 		px, py, pz = position
 		chk.set_block_number(lx, ly, lz, number)
 		self.dirty_chunks.add(c_pos)
+		if hasattr(self, 'shadow_map') and self.shadow_map:
+			self.shadow_map.update_chunk_blocks(c_pos[0], c_pos[2], chk.blocks)
 
 		if old_num in (24, 88, 89) or number == 0:
 			try:
@@ -3217,15 +3648,27 @@ class World:
 							break
 
 		sy = ly // 16
+		is_emitter = (number in (79, 94, 87, 15, 20, 78, 88, 89, 183) or old_num in (79, 94, 87, 15, 20, 78, 88, 89, 183))
+
 		self.section_mesh_queue.add((c_pos[0], c_pos[2], sy))
 
-		if ly % 16 == 0 and sy > 0: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy - 1))
-		if ly % 16 == 15 and sy < 15: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy + 1))
+		if is_emitter:
+			# Light reaches 14 blocks in 3D: queue adjacent vertical sections and adjacent chunk sections
+			if sy > 0: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy - 1))
+			if sy < 15: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy + 1))
+			for dcx, dcz in ((1,0), (-1,0), (0,1), (0,-1), (1,1), (-1,1), (1,-1), (-1,-1)):
+				for dsy in (-1, 0, 1):
+					target_sy = sy + dsy
+					if 0 <= target_sy < 16:
+						self.section_mesh_queue.add((c_pos[0] + dcx, c_pos[2] + dcz, target_sy))
+		else:
+			if ly % 16 == 0 and sy > 0: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy - 1))
+			if ly % 16 == 15 and sy < 15: self.section_mesh_queue.add((c_pos[0], c_pos[2], sy + 1))
 
-		if lx == 15: self.section_mesh_queue.add((c_pos[0] + 1, c_pos[2], sy))
-		if lx == 0: self.section_mesh_queue.add((c_pos[0] - 1, c_pos[2], sy))
-		if lz == 15: self.section_mesh_queue.add((c_pos[0], c_pos[2] + 1, sy))
-		if lz == 0: self.section_mesh_queue.add((c_pos[0], c_pos[2] - 1, sy))
+			if lx == 15: self.section_mesh_queue.add((c_pos[0] + 1, c_pos[2], sy))
+			if lx == 0: self.section_mesh_queue.add((c_pos[0] - 1, c_pos[2], sy))
+			if lz == 15: self.section_mesh_queue.add((c_pos[0], c_pos[2] + 1, sy))
+			if lz == 0: self.section_mesh_queue.add((c_pos[0], c_pos[2] - 1, sy))
 
 		# Gravity checks for Sand (6) and Gravel (77)
 		if number in (6, 77):
@@ -3237,6 +3680,83 @@ class World:
 				self.gravity_tick_queue.add(above_pos)
 
 		self.notify_neighbor_block_change(position)
+
+	def get_light_at(self, position):
+		"""Returns (effective_light, sky_light, block_light) for block coordinates."""
+		x, y, z = int(math.floor(position[0])), int(math.floor(position[1])), int(math.floor(position[2]))
+		if y < 0 or y >= 256:
+			return (15, 15, 0) if y >= 256 else (0, 0, 0)
+
+		# 1. Sky Light calculation
+		if self.dimension in ("nether", "end"):
+			sky_val = 0
+		else:
+			transparent_ids = {0, 9, 10, 11, 12, 13, 15, 19, 20, 31, 33, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 88, 89, 91, 92, 93, 94, 99, 156, 178, 179, 180, 181, 182, 183, 187, 204, 205, 206, 207, 210, 213, 220, 221, 222, 224, 225, 226, 227, 228, 229, 230, 231, 232, 234, 235, 236, 237, 238, 239, 240, 241, 242, 244, 245, 246, 247, 248, 249, 250, 251, 252, 254, 255, 256, 257, 258, 259, 260, 261, 262, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 279, 280, 283, 284, 285}
+			
+			def is_col_open_sky(qx, qy, qz):
+				qcx, qcz = math.floor(qx / 16.0), math.floor(qz / 16.0)
+				qc_pos = (qcx, 0, qcz)
+				if qc_pos not in self.chunks:
+					return True
+				qchk = self.chunks[qc_pos]
+				qlx, qlz = int(qx % 16), int(qz % 16)
+				for q_check_y in range(255, qy, -1):
+					qb = qchk.get_block_number(qlx, q_check_y, qlz)
+					if qb != 0 and qb not in transparent_ids:
+						return False
+				return True
+
+			if is_col_open_sky(x, y, z):
+				sky_val = 15
+			else:
+				# Search for shortest transparent path to an open-sky column (within radius 14)
+				sky_val = 0
+				queue = collections.deque([(x, y, z, 0)])
+				visited = {(x, y, z)}
+				while queue:
+					qx, qy, qz, dist = queue.popleft()
+					if is_col_open_sky(qx, qy, qz):
+						sky_val = max(0, 15 - dist)
+						break
+					if dist < 14:
+						for dx, dy, dz in ((1,0,0), (-1,0,0), (0,1,0), (0,-1,0), (0,0,1), (0,0,-1)):
+							nx, ny, nz = qx + dx, qy + dy, qz + dz
+							if 0 <= ny < 256 and (nx, ny, nz) not in visited:
+								visited.add((nx, ny, nz))
+								ncx, ncz = math.floor(nx / 16.0), math.floor(nz / 16.0)
+								nc_pos = (ncx, 0, ncz)
+								if nc_pos in self.chunks:
+									nchk = self.chunks[nc_pos]
+									nlx, nlz = int(nx % 16), int(nz % 16)
+									nb = nchk.get_block_number(nlx, ny, nlz)
+									if nb == 0 or nb in transparent_ids:
+										queue.append((nx, ny, nz, dist + 1))
+
+		# 2. Block Light calculation
+		block_val = 0
+		LIGHT_EMITTERS = {79: 14, 94: 14, 87: 15, 15: 15, 20: 15, 78: 15, 88: 11, 89: 11, 183: 15, 182: 7}
+		for dx in range(-14, 15):
+			for dz in range(-14, 15):
+				m_dist_xz = abs(dx) + abs(dz)
+				if m_dist_xz > 14: continue
+				qx, qz = x + dx, z + dz
+				qcx, qcz = math.floor(qx / 16.0), math.floor(qz / 16.0)
+				qc_pos = (qcx, 0, qcz)
+				if qc_pos in self.chunks:
+					qchk = self.chunks[qc_pos]
+					qlx, qlz = int(qx % 16), int(qz % 16)
+					for dy in range(-14 + m_dist_xz, 15 - m_dist_xz):
+						qy = y + dy
+						if 0 <= qy < 256:
+							qb = qchk.get_block_number(qlx, qy, qlz)
+							if qb in LIGHT_EMITTERS:
+								emit = LIGHT_EMITTERS[qb]
+								dist = m_dist_xz + abs(dy)
+								if dist < emit:
+									block_val = max(block_val, emit - dist)
+
+		eff_val = max(sky_val, block_val)
+		return eff_val, sky_val, block_val
 
 	def _save_chunk_to_file(self, chunk_position, synchronous=False):
 		if chunk_position not in self.chunks:
@@ -3257,6 +3777,7 @@ class World:
 
 		def write_content(path, content):
 			try:
+				os.makedirs(os.path.dirname(path), exist_ok=True)
 				with gzip.open(path, 'wb', compresslevel=1) as f:
 					f.write(content)
 			except Exception as e:
@@ -3303,6 +3824,16 @@ class World:
 				except Exception:
 					pass
 			self.chunks[chunk_position] = chk
+			if hasattr(self, 'shadow_map') and self.shadow_map:
+				self.shadow_map.update_chunk_blocks(chunk_position[0], chunk_position[2], chk.blocks)
+
+			if 183 in chk.blocks:
+				cx, _, cz = chunk_position
+				for lx in range(16):
+					for ly in range(256):
+						for lz in range(16):
+							if chk.blocks[lx * 4096 + ly * 16 + lz] == 183:
+								self.end_portal_blocks.add((cx * 16 + lx, ly, cz * 16 + lz))
 
 			# Register any village chests generated in this chunk
 			try:
@@ -3387,6 +3918,11 @@ class World:
 			self.dirty_chunks.discard(chunk_position)
 
 		if chunk_position in self.chunks:
+			cx, _, cz = chunk_position
+			min_x, max_x = cx * 16, (cx + 1) * 16
+			min_z, max_z = cz * 16, (cz + 1) * 16
+			if self.end_portal_blocks:
+				self.end_portal_blocks = {p for p in self.end_portal_blocks if not (min_x <= p[0] < max_x and min_z <= p[2] < max_z)}
 			self.chunks[chunk_position].delete()  # Recycles VAO/VBO handles to free_chunk_pool
 			del self.chunks[chunk_position]
 
@@ -3429,3 +3965,95 @@ class World:
 		gl.glDepthMask(gl.GL_TRUE)
 		gl.glDisable(gl.GL_BLEND)
 		gl.glBindVertexArray(0)
+
+	def save_all_chunks(self, synchronous=True):
+		"""Saves all modified dirty chunks to disk."""
+		for cpos in list(self.dirty_chunks):
+			self._save_chunk_to_file(cpos, synchronous=synchronous)
+		self.dirty_chunks.clear()
+
+	def destroy(self):
+		"""Properly cleans up and releases all resources of this World instance:
+		1. Saves all dirty chunks synchronously to disk.
+		2. Cancels pending generation and meshing tasks.
+		3. Shuts down background ThreadPool/ProcessPool executors.
+		4. Frees all chunk section VAOs, VBOs, and IBOs directly from OpenGL.
+		5. Empties and cleans up free_chunk_pool OpenGL handles.
+		6. Clears all tracking structures and entity manager references."""
+		# 1. Save dirty chunks
+		try:
+			self.save_all_chunks(synchronous=True)
+		except Exception as e:
+			print(f"Error saving dirty chunks on destroy: {e}")
+
+		# 2. Cancel and clear futures
+		for fut in list(self.chunk_generation_futures.values()):
+			fut.cancel()
+		self.chunk_generation_futures.clear()
+
+		for fut in list(self.section_mesh_futures.values()):
+			fut.cancel()
+		self.section_mesh_futures.clear()
+
+		self.pending_section_uploads.clear()
+		self.section_mesh_queue.clear()
+		self._load_queue.clear()
+
+		# 3. Shutdown executors
+		if hasattr(self, 'process_executor') and self.process_executor:
+			try:
+				self.process_executor.shutdown(wait=False, cancel_futures=True)
+			except Exception:
+				pass
+			self.process_executor = None
+
+		if hasattr(self, '_save_executor') and self._save_executor:
+			try:
+				self._save_executor.shutdown(wait=False, cancel_futures=True)
+			except Exception:
+				pass
+			self._save_executor = None
+
+		# 4. Free all chunks and delete OpenGL buffers
+		for chk in list(self.chunks.values()):
+			for sec in list(chk.sections.values()):
+				if sec.vao is not None:
+					try:
+						gl.glDeleteVertexArrays(1, sec.vao)
+						gl.glDeleteBuffers(1, sec.vertex_position_vbo)
+						gl.glDeleteBuffers(1, sec.tex_coord_vbo)
+						gl.glDeleteBuffers(1, sec.shading_values_vbo)
+						gl.glDeleteBuffers(1, sec.ibo)
+					except Exception:
+						pass
+					sec.vao = None
+			chk.sections.clear()
+		self.chunks.clear()
+
+		# 5. Free all recycled handles in free_chunk_pool
+		if hasattr(self, 'free_chunk_pool') and self.free_chunk_pool:
+			for vao, vbo_pos, vbo_tex, vbo_shd, ibo in self.free_chunk_pool:
+				try:
+					gl.glDeleteVertexArrays(1, vao)
+					gl.glDeleteBuffers(1, vbo_pos)
+					gl.glDeleteBuffers(1, vbo_tex)
+					gl.glDeleteBuffers(1, vbo_shd)
+					gl.glDeleteBuffers(1, ibo)
+				except Exception:
+					pass
+			self.free_chunk_pool.clear()
+
+		# 6. Clear internal tracking sets
+		self.dirty_chunks.clear()
+		self.end_portal_blocks.clear()
+		self.furnaces.clear()
+		self.chests.clear()
+		self.liquid_levels.clear()
+		self.water_levels.clear()
+		self.active_fires.clear()
+		self.burning_blocks.clear()
+		self.farmlands.clear()
+		self.crops.clear()
+		self.sugar_canes.clear()
+		self.saplings.clear()
+		self.cacti.clear()

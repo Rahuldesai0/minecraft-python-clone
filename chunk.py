@@ -61,11 +61,11 @@ class ChunkSection:
 		gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(1)
 
-		# Upload Shading VBO
+		# Upload Shading VBO (3 floats per vertex: sky_light, block_light, face_shading)
 		shd_bytes = op_shd + tr_shd
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.shading_values_vbo)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, len(shd_bytes), (gl.GLchar * len(shd_bytes)).from_buffer_copy(shd_bytes), gl.GL_STATIC_DRAW)
-		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(2)
 
 		# Upload Index Buffer (IBO)

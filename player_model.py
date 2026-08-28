@@ -165,6 +165,7 @@ PLAYER_FRAG_SHADER = """
 out vec4 fragment_colour;
 
 uniform sampler2D skin_sampler;
+uniform float light_mult;
 
 in vec2 interpolated_tex_coords;
 in float interpolated_shading_value;
@@ -172,7 +173,8 @@ in float interpolated_shading_value;
 void main(void) {
 	vec4 col = texture(skin_sampler, interpolated_tex_coords);
 	if (col.a < 0.1) discard;
-	fragment_colour = vec4(col.rgb * interpolated_shading_value, col.a);
+	float lm = (light_mult <= 0.0) ? 1.0 : light_mult;
+	fragment_colour = vec4(col.rgb * (interpolated_shading_value * lm), col.a);
 }
 """
 
@@ -308,6 +310,7 @@ class StevePlayerModel:
 			self.shader_program = prog
 			self.matrix_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"matrix"))
 			self.sampler_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"skin_sampler"))
+			self.light_mult_loc = gl.glGetUniformLocation(prog, ctypes.create_string_buffer(b"light_mult"))
 		except Exception as e:
 			print(f"Error initializing Player shader: {e}")
 
@@ -539,6 +542,14 @@ class StevePlayerModel:
 			gl.glUniformMatrix4fv(self.matrix_loc, 1, gl.GL_FALSE, (gl.GLfloat * 16)(*flat_matrix))
 		if self.sampler_loc != -1:
 			gl.glUniform1i(self.sampler_loc, 0)
+		if getattr(self, "light_mult_loc", -1) != -1:
+			p_light = 1.0
+			if world:
+				bx, by, bz = int(math.floor(feet_pos[0])), int(math.floor(feet_pos[1])), int(math.floor(feet_pos[2]))
+				_, sky_lvl, blk_lvl = world.get_light_at((bx, by, bz))
+				eff = max(sky_lvl, blk_lvl)
+				p_light = 0.20 + 0.80 * ((eff / 15.0) ** 1.5)
+			gl.glUniform1f(self.light_mult_loc, p_light)
 
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glEnable(gl.GL_CULL_FACE)
@@ -635,6 +646,11 @@ class StevePlayerModel:
 			gl.glUniformMatrix4fv(self.matrix_loc, 1, gl.GL_FALSE, (gl.GLfloat * 16)(*flat_p_matrix))
 		if self.sampler_loc != -1:
 			gl.glUniform1i(self.sampler_loc, 0)
+		if getattr(self, "light_mult_loc", -1) != -1:
+			p_light = 1.0
+			if hasattr(camera, 'position'):
+				px, py, pz = camera.position
+			gl.glUniform1f(self.light_mult_loc, 1.0)
 
 		gl.glActiveTexture(gl.GL_TEXTURE0)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.skin_texture_id)
@@ -681,6 +697,8 @@ class StevePlayerModel:
 		gl.glUseProgram(self.shader_program)
 		gl.glActiveTexture(gl.GL_TEXTURE0)
 		gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id)
+		if getattr(self, "light_mult_loc", -1) != -1:
+			gl.glUniform1f(self.light_mult_loc, 1.0)
 
 		if self.vao_held is None:
 			self.vao_held = gl.GLuint(0); gl.glGenVertexArrays(1, self.vao_held)

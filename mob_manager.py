@@ -658,83 +658,115 @@ class MobManager:
 			return True
 		return False
 
-	def draw(self, camera):
+	def draw(self, camera, world=None, sky_factor=1.0, min_light=0.20):
 		"""Render active 3D models for all passive, hostile, and neutral mobs."""
 		if not self.mobs and not (hasattr(self, 'fireball_manager') and self.fireball_manager and self.fireball_manager.fireballs):
 			return
 
 		for mob in self.mobs:
+			if world:
+				mx, my, mz = mob.position
+				b_coord = (int(math.floor(mx)), int(math.floor(my)), int(math.floor(mz)))
+				if getattr(mob, "_last_light_coord", None) == b_coord and hasattr(mob, "_cached_light_mult"):
+					mob_light = mob._cached_light_mult
+				else:
+					_, sky_lvl, blk_lvl = world.get_light_at(b_coord)
+					eff_sky = sky_lvl * sky_factor
+					eff_light = max(eff_sky, blk_lvl)
+					smooth_ratio = (eff_light / 15.0) ** 1.5
+					mob_light = min_light + (1.0 - min_light) * smooth_ratio
+					mob._last_light_coord = b_coord
+					mob._cached_light_mult = mob_light
+			else:
+				mob_light = 1.0
+
+			# Blaze is intrinsically glowing
+			if mob.mob_type == "blaze":
+				mob_light = max(mob_light, 1.0)
+
 			if mob.mob_type == "pig":
 				self.pig_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
-					mob.walk_time, mob.is_moving, mob.hurt_time
+					mob.walk_time, mob.is_moving, mob.hurt_time,
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "cow":
 				self.cow_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
-					mob.walk_time, mob.is_moving, mob.hurt_time
+					mob.walk_time, mob.is_moving, mob.hurt_time,
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "sheep":
 				self.sheep_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					is_grazing=getattr(mob, "is_grazing", False)
+					is_grazing=getattr(mob, "is_grazing", False),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "chicken":
 				self.chicken_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					wing_flap=getattr(mob, "wing_flap", 0.0)
+					wing_flap=getattr(mob, "wing_flap", 0.0),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "zombie":
 				self.zombie_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					attack_anim_time=getattr(mob, "attack_anim_time", 0.0)
+					attack_anim_time=getattr(mob, "attack_anim_time", 0.0),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "zombie_pigman":
 				self.zombie_pigman_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
 					is_angry=getattr(mob, "is_angry", False),
-					attack_anim_time=getattr(mob, "attack_anim_time", 0.0)
+					attack_anim_time=getattr(mob, "attack_anim_time", 0.0),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "blaze":
 				self.blaze_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					is_charging=getattr(mob, "is_charging", False)
+					is_charging=getattr(mob, "is_charging", False),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "enderman":
 				self.enderman_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
 					target_yaw=getattr(mob, "target_yaw", mob.yaw),
-					is_screaming=getattr(mob, "is_screaming", False)
+					is_screaming=getattr(mob, "is_screaming", False),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "silverfish":
 				self.silverfish_model.draw(
 					camera, mob.position, mob.yaw, mob.pitch,
 					walk_time=mob.walk_time, hurt_time=mob.hurt_time,
-					is_moving=mob.is_moving
+					is_moving=mob.is_moving,
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "skeleton":
 				self.skeleton_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					is_aiming=getattr(mob, "is_aiming", False)
+					is_aiming=getattr(mob, "is_aiming", False),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "spider":
 				self.spider_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					is_climbing=getattr(mob, "is_climbing", False)
+					is_climbing=getattr(mob, "is_climbing", False),
+					light_mult=mob_light
 				)
 			elif mob.mob_type == "creeper":
 				self.creeper_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
 					mob.walk_time, mob.is_moving, mob.hurt_time,
-					fuse_progress=getattr(mob, "fuse_progress", 0.0)
+					fuse_progress=getattr(mob, "fuse_progress", 0.0),
+					light_mult=mob_light
 				)
 
 		# Draw active Small Fireball projectiles

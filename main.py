@@ -33,6 +33,8 @@ import explosion
 import ender_eye
 import ender_pearl
 import experience_bottle
+import entity_shadows
+import player_model
 
 class Window(pyglet.window.Window):
 	def __init__(self, **args):
@@ -42,8 +44,14 @@ class Window(pyglet.window.Window):
 
 		self.world = world.World()
 		self.dimension = "overworld"
-		self.overworld = self.world
+		self.texture_manager = self.world.texture_manager
+		self.block_types = self.world.block_types
+		self.dimension_chests = {}
+		self.dimension_furnaces = {}
+		self.dimension_drops = {}
+		self.overworld = None
 		self.nether_world = None
+		self.end_world = None
 		self.dimension_transitioning = False
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
@@ -64,6 +72,18 @@ class Window(pyglet.window.Window):
 
 		self.shader = shader.Shader("vert.glsl", "frag.glsl")
 		self.shader_sampler_location = self.shader.find_uniform(b"texture_array_sampler")
+		self.sky_light_factor_loc = self.shader.find_uniform(b"sky_light_factor")
+		self.min_light_level_loc = self.shader.find_uniform(b"min_light_level")
+		self.lighting_mode_loc = self.shader.find_uniform(b"lighting_mode")
+		self.sun_direction_loc = self.shader.find_uniform(b"sun_direction")
+		self.camera_pos_loc = self.shader.find_uniform(b"camera_pos")
+		self.game_time_loc = self.shader.find_uniform(b"game_time")
+		self.dimension_id_loc = self.shader.find_uniform(b"dimension_id")
+		self.shadow_heightmap_loc = self.shader.find_uniform(b"shadow_heightmap")
+		self.shadow_origin_loc = self.shader.find_uniform(b"shadow_origin")
+		self.shadow_world_size_loc = self.shader.find_uniform(b"shadow_world_size")
+		self.lighting_mode = "BLOCK"
+		self.total_game_time = 0.0
 		self.shader.use()
 
 		# pyglet stuff
@@ -133,6 +153,11 @@ class Window(pyglet.window.Window):
 		self.player_model = player_model.StevePlayerModel()
 		self.perspective = 0  # 0: First Person, 1: Third Person Back, 2: Third Person Front
 
+		# Entity Directional Shadow Renderer (Player & Mobs) & World Shadow Map (Trees, Mountains)
+		self.entity_shadows = entity_shadows.EntityShadowRenderer()
+		self.world_shadow_map = entity_shadows.WorldDirectionalShadowMap()
+		self.world.shadow_map = self.world_shadow_map
+
 		# Crosshair stuff
 		self.create_crosshair()
 
@@ -155,11 +180,29 @@ class Window(pyglet.window.Window):
 		self.time_of_day = 0.25
 		self.update_sky_color()
 
-		# Initialize fresh World, ItemDropManager & MobManager
-		self.world = world.World(seed=seed_val, save_folder=folder_name, render_distance=self.global_render_distance)
+		if hasattr(self, 'world') and self.world is not None:
+			try:
+				self.world.destroy()
+			except Exception:
+				pass
+
+		self.dimension_chests = {}
+		self.dimension_furnaces = {}
+		self.dimension_drops = {}
+		self.world = world.World(
+			seed=seed_val,
+			save_folder=folder_name,
+			render_distance=self.global_render_distance,
+			dimension="overworld",
+			texture_manager_instance=getattr(self, "texture_manager", None),
+			block_types_table=getattr(self, "block_types", None)
+		)
 		self.dimension = "overworld"
-		self.overworld = self.world
+		self.overworld = None
 		self.nether_world = None
+		self.end_world = None
+		self.world.shadow_map = self.world_shadow_map
+		self.world_shadow_map.needs_initial_rebuild = True
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
 		self.mob_manager = mob_manager.MobManager(self.world)
@@ -212,13 +255,29 @@ class Window(pyglet.window.Window):
 		saved_dim = p_data.get('dimension', w_info.get('dimension', 'overworld'))
 		self.dimension = saved_dim
 
-		self.world = world.World(seed=self.world_seed, save_folder=folder_name, render_distance=rd, dimension=saved_dim)
-		if saved_dim == "nether":
-			self.nether_world = self.world
-			self.overworld = None
-		else:
-			self.overworld = self.world
-			self.nether_world = None
+		if hasattr(self, 'world') and self.world is not None:
+			try:
+				self.world.destroy()
+			except Exception:
+				pass
+
+		self.dimension_chests = {}
+		self.dimension_furnaces = {}
+		self.dimension_drops = {}
+
+		self.world = world.World(
+			seed=self.world_seed,
+			save_folder=folder_name,
+			render_distance=rd,
+			dimension=saved_dim,
+			texture_manager_instance=getattr(self, "texture_manager", None),
+			block_types_table=getattr(self, "block_types", None)
+		)
+		self.overworld = None
+		self.nether_world = None
+		self.end_world = None
+		self.world.shadow_map = self.world_shadow_map
+		self.world_shadow_map.needs_initial_rebuild = True
 
 		self.item_drop_manager = item_drop.ItemDropManager(self.world)
 		self.world.item_drop_manager = self.item_drop_manager
@@ -290,6 +349,7 @@ class Window(pyglet.window.Window):
 				c_obj = world.ChestData()
 				c_obj.slots = slots
 				self.world.chests[pos_key] = c_obj
+			self.dimension_chests[saved_dim] = dict(self.world.chests)
 
 		# Restore Furnace Storage & Smelting State
 		if 'furnaces' in w_data and w_data['furnaces']:
@@ -304,6 +364,11 @@ class Window(pyglet.window.Window):
 				f_obj.max_burn_time = f_dict.get('max_burn_time', 0.0)
 				f_obj.smelt_progress = f_dict.get('smelt_progress', 0.0)
 				self.world.furnaces[pos_key] = f_obj
+			self.dimension_furnaces[saved_dim] = dict(self.world.furnaces)
+
+		# Restore Dragon Defeated state
+		import end_generator
+		end_generator.end_generator.dragon_defeated = w_info.get('dragon_defeated', False)
 
 		self._prepare_spawn_chunks()
 
@@ -346,14 +411,20 @@ class Window(pyglet.window.Window):
 
 	def save_and_quit_to_title(self):
 		if hasattr(self, 'world') and self.active_world_folder:
-			# Save modified dirty chunks synchronously across all initialized dimension worlds
-			for w_inst in (self.world, getattr(self, "overworld", None), getattr(self, "nether_world", None)):
-				if w_inst is not None and hasattr(w_inst, "dirty_chunks"):
-					for cpos in list(w_inst.dirty_chunks):
-						w_inst._save_chunk_to_file(cpos, synchronous=True)
-					w_inst.dirty_chunks.clear()
-
 			curr_dim = getattr(self, 'dimension', 'overworld')
+			if not hasattr(self, "dimension_chests"): self.dimension_chests = {}
+			if not hasattr(self, "dimension_furnaces"): self.dimension_furnaces = {}
+			if not hasattr(self, "dimension_drops"): self.dimension_drops = {}
+
+			# Save modified dirty chunks of active world synchronously
+			if self.world is not None:
+				self.world.save_all_chunks(synchronous=True)
+				if hasattr(self.world, "chests"):
+					self.dimension_chests[curr_dim] = dict(self.world.chests)
+				if hasattr(self.world, "furnaces"):
+					self.dimension_furnaces[curr_dim] = dict(self.world.furnaces)
+				if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+					self.dimension_drops[curr_dim] = list(self.item_drop_manager.drops)
 
 			player_data = {
 				'position': list(self.camera.position),
@@ -372,10 +443,12 @@ class Window(pyglet.window.Window):
 				'dimension': curr_dim
 			}
 
+			import end_generator
 			world_data = {
 				'time_of_day': self.time_of_day,
-				'render_distance': self.world.render_distance,
-				'dimension': curr_dim
+				'render_distance': self.world.render_distance if self.world else self.global_render_distance,
+				'dimension': curr_dim,
+				'dragon_defeated': getattr(end_generator.end_generator, 'dragon_defeated', False)
 			}
 
 			inventory_data = self.gui.serialize_inventory()
@@ -389,31 +462,48 @@ class Window(pyglet.window.Window):
 					'age': d.age,
 					'enchantments': getattr(d, 'enchantments', {})
 				}
-				for d in self.item_drop_manager.drops
+				for d in (self.item_drop_manager.drops if self.item_drop_manager else [])
 			]
 
 			chests_data = {}
-			if hasattr(self.world, 'chests'):
-				for (cx, cy, cz), chest_obj in self.world.chests.items():
-					chests_data[f"{cx},{cy},{cz}"] = chest_obj.slots
+			all_chests = {}
+			if hasattr(self, "dimension_chests"):
+				for dim_dict in self.dimension_chests.values():
+					all_chests.update(dim_dict)
+			if self.world and hasattr(self.world, 'chests'):
+				all_chests.update(self.world.chests)
+			for (cx, cy, cz), chest_obj in all_chests.items():
+				chests_data[f"{cx},{cy},{cz}"] = chest_obj.slots
 
 			furnaces_data = {}
-			if hasattr(self.world, 'furnaces'):
-				for (fx, fy, fz), furnace_obj in self.world.furnaces.items():
-					furnaces_data[f"{fx},{fy},{fz}"] = {
-						'input_slot': furnace_obj.input_slot,
-						'fuel_slot': furnace_obj.fuel_slot,
-						'output_slot': furnace_obj.output_slot,
-						'burn_time_remaining': furnace_obj.burn_time_remaining,
-						'max_burn_time': furnace_obj.max_burn_time,
-						'smelt_progress': furnace_obj.smelt_progress
-					}
+			all_furnaces = {}
+			if hasattr(self, "dimension_furnaces"):
+				for dim_dict in self.dimension_furnaces.values():
+					all_furnaces.update(dim_dict)
+			if self.world and hasattr(self.world, 'furnaces'):
+				all_furnaces.update(self.world.furnaces)
+			for (fx, fy, fz), furnace_obj in all_furnaces.items():
+				furnaces_data[f"{fx},{fy},{fz}"] = {
+					'input_slot': furnace_obj.input_slot,
+					'fuel_slot': furnace_obj.fuel_slot,
+					'output_slot': furnace_obj.output_slot,
+					'burn_time_remaining': furnace_obj.burn_time_remaining,
+					'max_burn_time': furnace_obj.max_burn_time,
+					'smelt_progress': furnace_obj.smelt_progress
+				}
 
 			world_save.save_world(
 				self.active_world_folder, self.world_seed,
 				player_data, world_data, inventory_data, drops_data,
 				chests_data, furnaces_data
 			)
+
+			if self.world is not None:
+				try:
+					self.world.destroy()
+				except Exception:
+					pass
+				self.world = None
 
 		self.mouse_captured = False
 		self.set_exclusive_mouse(False)
@@ -439,6 +529,117 @@ class Window(pyglet.window.Window):
 		self.time_of_day = 0.25  # World starts at Sunrise (0.25)
 		self.cycle_speed = 1.0 / 1200.0  # Exactly 20-minute full day/night cycle (1200 seconds)
 
+	def _save_current_dimension_and_unload(self):
+		"""Saves dirty chunks, containers, drops, and destroys the active world to prevent CPU/GPU memory leaks."""
+		curr_dim = getattr(self, "dimension", "overworld")
+		if hasattr(self, "world") and self.world is not None:
+			try:
+				self.world.save_all_chunks(synchronous=True)
+			except Exception as e:
+				print(f"Error saving chunks during dimension unload: {e}")
+
+			if not hasattr(self, "dimension_chests"): self.dimension_chests = {}
+			if not hasattr(self, "dimension_furnaces"): self.dimension_furnaces = {}
+			if not hasattr(self, "dimension_drops"): self.dimension_drops = {}
+
+			if hasattr(self.world, "chests"):
+				self.dimension_chests[curr_dim] = dict(self.world.chests)
+			if hasattr(self.world, "furnaces"):
+				self.dimension_furnaces[curr_dim] = dict(self.world.furnaces)
+			if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+				self.dimension_drops[curr_dim] = list(self.item_drop_manager.drops)
+
+			if curr_dim == "end" and hasattr(self, "ender_dragon") and self.ender_dragon:
+				self.saved_dragon_health = getattr(self.ender_dragon, "health", 200)
+
+			try:
+				self.world.destroy()
+			except Exception as e:
+				print(f"Error destroying world during dimension unload: {e}")
+
+			self.world = None
+
+		self.overworld = None
+		self.nether_world = None
+		self.end_world = None
+
+	def _load_and_setup_dimension(self, dest_dim):
+		"""Loads a fresh World instance for dest_dim, restoring containers and entity managers."""
+		dest_world = world.World(
+			seed=self.world_seed,
+			save_folder=self.active_world_folder,
+			render_distance=self.global_render_distance,
+			dimension=dest_dim,
+			texture_manager_instance=getattr(self, "texture_manager", None),
+			block_types_table=getattr(self, "block_types", None)
+		)
+
+		if hasattr(self, "dimension_chests") and dest_dim in self.dimension_chests:
+			dest_world.chests.update(self.dimension_chests[dest_dim])
+		if hasattr(self, "dimension_furnaces") and dest_dim in self.dimension_furnaces:
+			dest_world.furnaces.update(self.dimension_furnaces[dest_dim])
+
+		self.dimension = dest_dim
+		self.world = dest_world
+
+		self.item_drop_manager = item_drop.ItemDropManager(dest_world)
+		dest_world.item_drop_manager = self.item_drop_manager
+		if hasattr(self, "dimension_drops") and dest_dim in self.dimension_drops:
+			self.item_drop_manager.drops = self.dimension_drops[dest_dim]
+
+		self.mob_manager = mob_manager.MobManager(dest_world)
+		dest_world.mob_manager = self.mob_manager
+
+		self.arrow_manager = arrow.ArrowManager(dest_world)
+		dest_world.arrow_manager = self.arrow_manager
+
+		self.tnt_manager = tnt_manager.TNTManager(dest_world)
+		dest_world.tnt_manager = self.tnt_manager
+
+		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
+			self.ender_pearl_manager.world = dest_world
+			dest_world.ender_pearl_manager = self.ender_pearl_manager
+
+		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
+			self.exp_bottle_manager.world = dest_world
+			dest_world.exp_bottle_manager = self.exp_bottle_manager
+
+		if dest_dim == "end":
+			import end_generator
+			if not getattr(end_generator.end_generator, "dragon_defeated", False):
+				if getattr(self, "ender_dragon", None) is None or getattr(self.ender_dragon, "is_dead", False):
+					import ender_dragon
+					self.ender_dragon = ender_dragon.EnderDragonEntity((0.0, 75.0, 0.0))
+					if hasattr(self, "saved_dragon_health") and self.saved_dragon_health > 0:
+						self.ender_dragon.health = self.saved_dragon_health
+				if getattr(self, "ender_dragon_renderer", None) is None:
+					import ender_dragon
+					self.ender_dragon_renderer = ender_dragon.EnderDragonRenderer(self.texture_manager)
+				dest_world.ender_dragon = self.ender_dragon
+			else:
+				self.ender_dragon = None
+
+			import end_crystal, end_generator
+			self.end_crystal_manager = end_crystal.EndCrystalManager(dest_world)
+			self.end_crystal_manager.initialize_crystals_for_pillars(end_generator.get_pillar_definitions())
+			dest_world.end_crystal_manager = self.end_crystal_manager
+
+			import dragon_fireball
+			self.dragon_fireball_manager = dragon_fireball.DragonFireballManager(dest_world)
+			dest_world.dragon_fireball_manager = self.dragon_fireball_manager
+		else:
+			self.end_crystal_manager = None
+			self.dragon_fireball_manager = None
+
+		if getattr(self, "end_portal_renderer", None) is None:
+			import end_portal_shader
+			self.end_portal_renderer = end_portal_shader.EndPortalRenderer(dest_world)
+		else:
+			self.end_portal_renderer.world = dest_world
+
+		self.update_sky_color()
+		return dest_world
+
 	def trigger_dimension_transition(self):
 		if getattr(self, "dimension_transitioning", False):
 			return
@@ -448,46 +649,7 @@ class Window(pyglet.window.Window):
 		curr_dim = getattr(self, "dimension", "overworld")
 		dest_dim = "nether" if curr_dim == "overworld" else "overworld"
 
-		# Save current dimension dirty chunks
-		if hasattr(self, "world") and hasattr(self.world, "save_all_chunks"):
-			try:
-				self.world.save_all_chunks()
-			except Exception:
-				pass
-
-		# 2. Get or initialize destination world
-		if dest_dim == "nether":
-			if getattr(self, "nether_world", None) is None:
-				self.nether_world = world.World(
-					seed=self.world.seed,
-					save_folder=self.world.save_folder,
-					render_distance=self.global_render_distance,
-					dimension="nether"
-				)
-				self.nether_world.texture_manager = self.world.texture_manager
-				self.nether_world.block_types = self.world.block_types
-				self.nether_world.item_drop_manager = item_drop.ItemDropManager(self.nether_world)
-				self.nether_world.mob_manager = mob_manager.MobManager(self.nether_world)
-				self.nether_world.arrow_manager = arrow.ArrowManager(self.nether_world)
-				self.nether_world.tnt_manager = tnt_manager.TNTManager(self.nether_world)
-			dest_world = self.nether_world
-		else:
-			if getattr(self, "overworld", None) is None:
-				self.overworld = world.World(
-					seed=self.world.seed,
-					save_folder=self.world.save_folder,
-					render_distance=self.global_render_distance,
-					dimension="overworld"
-				)
-				self.overworld.texture_manager = self.world.texture_manager
-				self.overworld.block_types = self.world.block_types
-				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
-				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
-				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
-				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
-			dest_world = self.overworld
-
-		# 3. Calculate 1:8 converted target coordinates
+		# 2. Calculate 1:8 converted target coordinates
 		px, py, pz = self.camera.position
 		if dest_dim == "nether":
 			target_x = px / 8.0
@@ -496,7 +658,13 @@ class Window(pyglet.window.Window):
 			target_x = px * 8.0
 			target_z = pz * 8.0
 
-		# 4. Search existing portal or generate new destination portal
+		# 3. Save & unload current dimension
+		self._save_current_dimension_and_unload()
+
+		# 4. Load destination dimension
+		dest_world = self._load_and_setup_dimension(dest_dim)
+
+		# 5. Search existing portal or generate new destination portal
 		import portal_manager
 		portal = portal_manager.portal_manager.find_closest_portal(dest_world, (target_x, target_z), max_dist=128)
 		if portal is None:
@@ -504,7 +672,7 @@ class Window(pyglet.window.Window):
 
 		spawn_x, spawn_y, spawn_z = portal.get_teleport_center()
 
-		# 5. Pre-generate and mesh spawn chunks around destination
+		# 6. Pre-generate and mesh spawn chunks around destination
 		spawn_cx = int(math.floor(spawn_x / 16.0))
 		spawn_cz = int(math.floor(spawn_z / 16.0))
 		for dx in range(-1, 2):
@@ -513,29 +681,6 @@ class Window(pyglet.window.Window):
 				if cpos not in dest_world.chunks:
 					dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
 				dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
-
-		# 6. Switch active world and entity managers
-		if not hasattr(dest_world, "item_drop_manager") or dest_world.item_drop_manager is None:
-			dest_world.item_drop_manager = item_drop.ItemDropManager(dest_world)
-		if not hasattr(dest_world, "mob_manager") or dest_world.mob_manager is None:
-			dest_world.mob_manager = mob_manager.MobManager(dest_world)
-		if not hasattr(dest_world, "arrow_manager") or dest_world.arrow_manager is None:
-			dest_world.arrow_manager = arrow.ArrowManager(dest_world)
-		if not hasattr(dest_world, "tnt_manager") or dest_world.tnt_manager is None:
-			dest_world.tnt_manager = tnt_manager.TNTManager(dest_world)
-
-		self.dimension = dest_dim
-		self.world = dest_world
-		self.item_drop_manager = dest_world.item_drop_manager
-		self.mob_manager = dest_world.mob_manager
-		self.arrow_manager = dest_world.arrow_manager
-		self.tnt_manager = dest_world.tnt_manager
-		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
-			self.ender_pearl_manager.world = dest_world
-			dest_world.ender_pearl_manager = self.ender_pearl_manager
-		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
-			self.exp_bottle_manager.world = dest_world
-			dest_world.exp_bottle_manager = self.exp_bottle_manager
 
 		# 7. Position player inside portal opening with 4.0s cooldown
 		self.camera.position = [spawn_x, spawn_y + self.camera.eye_offset, spawn_z]
@@ -564,53 +709,13 @@ class Window(pyglet.window.Window):
 			return
 		self.dimension_transitioning = True
 
-		# Save current dimension dirty chunks
-		if hasattr(self, "world") and hasattr(self.world, "save_all_chunks"):
-			try:
-				self.world.save_all_chunks()
-			except Exception:
-				pass
+		# 1. Save & unload current dimension
+		self._save_current_dimension_and_unload()
+
+		# 2. Load destination dimension
+		dest_world = self._load_and_setup_dimension(to_dimension)
 
 		if to_dimension == "end":
-			if getattr(self, "end_world", None) is None:
-				self.end_world = world.World(
-					seed=self.world_seed,
-					save_folder=self.world.save_folder,
-					render_distance=self.global_render_distance,
-					dimension="end"
-				)
-				self.end_world.texture_manager = self.world.texture_manager
-				self.end_world.block_types = self.world.block_types
-				self.end_world.item_drop_manager = item_drop.ItemDropManager(self.end_world)
-				self.end_world.mob_manager = mob_manager.MobManager(self.end_world)
-				self.end_world.arrow_manager = arrow.ArrowManager(self.end_world)
-				self.end_world.tnt_manager = tnt_manager.TNTManager(self.end_world)
-
-			dest_world = self.end_world
-
-			# Initialize Ender Dragon and End Crystals if not present
-			if getattr(self, "ender_dragon", None) is None:
-				import ender_dragon
-				self.ender_dragon = ender_dragon.EnderDragonEntity((0.0, 75.0, 0.0))
-				self.ender_dragon_renderer = ender_dragon.EnderDragonRenderer(self.world.texture_manager)
-				dest_world.ender_dragon = self.ender_dragon
-
-			if getattr(self, "end_crystal_manager", None) is None:
-				import end_crystal
-				import end_generator
-				self.end_crystal_manager = end_crystal.EndCrystalManager(dest_world)
-				self.end_crystal_manager.initialize_crystals_for_pillars(end_generator.get_pillar_definitions())
-				dest_world.end_crystal_manager = self.end_crystal_manager
-
-			if getattr(self, "dragon_fireball_manager", None) is None:
-				import dragon_fireball
-				self.dragon_fireball_manager = dragon_fireball.DragonFireballManager(dest_world)
-				dest_world.dragon_fireball_manager = self.dragon_fireball_manager
-
-			if getattr(self, "end_portal_renderer", None) is None:
-				import end_portal_shader
-				self.end_portal_renderer = end_portal_shader.EndPortalRenderer(dest_world)
-
 			# Pre-generate chunks around Obsidian Spawn Platform (X=100, Z=0)
 			spawn_cx = 6
 			spawn_cz = 0
@@ -624,26 +729,8 @@ class Window(pyglet.window.Window):
 			import end_generator
 			plat_y = end_generator.get_spawn_platform_y(self.world_seed)
 			spawn_pos = [100.5, plat_y + 1.0 + self.camera.eye_offset, 0.5]
-
 		else:
 			# Returning to Overworld Spawn from End
-			if getattr(self, "overworld", None) is None:
-				self.overworld = world.World(
-					seed=self.world_seed,
-					save_folder=self.world.save_folder,
-					render_distance=self.global_render_distance,
-					dimension="overworld"
-				)
-				self.overworld.texture_manager = self.world.texture_manager
-				self.overworld.block_types = self.world.block_types
-				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
-				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
-				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
-				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
-
-			dest_world = self.overworld
-
-			# Pre-generate chunks around (0, 0)
 			for dx in range(-2, 3):
 				for dz in range(-2, 3):
 					cpos = (dx, 0, dz)
@@ -660,20 +747,6 @@ class Window(pyglet.window.Window):
 
 			spawn_pos = [0.5, spawn_y + self.camera.eye_offset, 0.5]
 
-		self.dimension = to_dimension
-		self.world = dest_world
-		self.item_drop_manager = dest_world.item_drop_manager
-		self.mob_manager = dest_world.mob_manager
-		self.arrow_manager = dest_world.arrow_manager
-		self.tnt_manager = dest_world.tnt_manager
-		if hasattr(self, "ender_pearl_manager") and self.ender_pearl_manager:
-			self.ender_pearl_manager.world = dest_world
-			dest_world.ender_pearl_manager = self.ender_pearl_manager
-		if hasattr(self, "exp_bottle_manager") and self.exp_bottle_manager:
-			self.exp_bottle_manager.world = dest_world
-			dest_world.exp_bottle_manager = self.exp_bottle_manager
-		self.update_sky_color()
-
 		self.camera.position = spawn_pos
 		self.camera.velocity_y = 0.0
 		self.camera.fall_start_y = None
@@ -686,38 +759,21 @@ class Window(pyglet.window.Window):
 		"""Handles player respawn on death, ensuring Nether/End deaths return to Overworld (0, 0)."""
 		# If currently in the Nether or End, switch active dimension back to Overworld
 		if getattr(self, "dimension", "overworld") in ("nether", "end"):
-			if getattr(self, "overworld", None) is None:
-				self.overworld = world.World(
-					seed=self.world_seed,
-					save_folder=self.world.save_folder,
-					render_distance=self.global_render_distance,
-					dimension="overworld"
-				)
-				self.overworld.texture_manager = self.world.texture_manager
-				self.overworld.block_types = self.world.block_types
-				self.overworld.item_drop_manager = item_drop.ItemDropManager(self.overworld)
-				self.overworld.mob_manager = mob_manager.MobManager(self.overworld)
-				self.overworld.arrow_manager = arrow.ArrowManager(self.overworld)
-				self.overworld.tnt_manager = tnt_manager.TNTManager(self.overworld)
-
-			self.dimension = "overworld"
-			self.world = self.overworld
-			self.item_drop_manager = self.overworld.item_drop_manager
-			self.mob_manager = self.overworld.mob_manager
-			self.arrow_manager = self.overworld.arrow_manager
-			self.tnt_manager = self.overworld.tnt_manager
-			self.update_sky_color()
+			self._save_current_dimension_and_unload()
+			dest_world = self._load_and_setup_dimension("overworld")
+		else:
+			dest_world = self.world
 
 		# Ensure Overworld spawn chunks around (0, 0) are loaded and meshed
 		for dx in range(-1, 2):
 			for dz in range(-1, 2):
 				cpos = (dx, 0, dz)
-				if cpos not in self.world.chunks:
-					self.world.chunks[cpos] = self.world.generate_chunk(cpos[0], cpos[2])
-				self.world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+				if cpos not in dest_world.chunks:
+					dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
+				dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
 
 		# Reset camera state and position at Overworld (0, 0)
-		self.camera.respawn(self.world)
+		self.camera.respawn(dest_world)
 
 	def update_sky_color(self):
 		if getattr(self, "dimension", "overworld") == "nether":
@@ -818,6 +874,7 @@ class Window(pyglet.window.Window):
 
 		# Clamp delta_time so player movement and physics remain smooth even during background tasks
 		delta_time = min(delta_time, 1.0 / 30.0)
+		self.total_game_time += delta_time
 
 		# Update active world mechanics (liquids, furnaces)
 		self.world.update(delta_time)
@@ -1249,6 +1306,50 @@ class Window(pyglet.window.Window):
 		self.shader.use()
 		self.camera.update_matrices(self.perspective, self.world)
 
+		# Dynamic Minecraft Day/Night lighting factor, sun direction, and min ambient floor
+		current_dim = getattr(self, "dimension", "overworld")
+		sun_angle = (self.time_of_day - 0.5) * 2.0 * math.pi
+		sun_y = math.cos(sun_angle)
+		sun_x = -math.sin(sun_angle)  # Aligned with celestial sun billboard
+		sun_len = math.sqrt(sun_x * sun_x + sun_y * sun_y + 0.15 * 0.15)
+		s_dir_norm = (sun_x / sun_len, sun_y / sun_len, 0.15 / sun_len)
+
+		if current_dim in ("nether", "end"):
+			sky_factor = 0.0
+			min_light = 0.25 if current_dim == "nether" else 0.28
+			dim_id = 1 if current_dim == "nether" else 2
+		else:
+			# Overworld: Level 15 in day, Level 6 at night smoothly interpolated
+			sky_factor = 0.40 + 0.60 * max(0.0, min(1.0, (sun_y + 0.2) / 1.2))
+			min_light = 0.20
+			dim_id = 0
+
+		if hasattr(self, "sky_light_factor_loc") and self.sky_light_factor_loc is not None:
+			gl.glUniform1f(self.sky_light_factor_loc, sky_factor)
+		if hasattr(self, "min_light_level_loc") and self.min_light_level_loc is not None:
+			gl.glUniform1f(self.min_light_level_loc, min_light)
+		if hasattr(self, "lighting_mode_loc") and self.lighting_mode_loc is not None:
+			gl.glUniform1i(self.lighting_mode_loc, 1 if getattr(self, "lighting_mode", "BLOCK") == "RAYTRACED" else 0)
+		if hasattr(self, "sun_direction_loc") and self.sun_direction_loc is not None:
+			gl.glUniform3f(self.sun_direction_loc, s_dir_norm[0], s_dir_norm[1], s_dir_norm[2])
+		if hasattr(self, "camera_pos_loc") and self.camera_pos_loc is not None:
+			gl.glUniform3f(self.camera_pos_loc, self.camera.position[0], self.camera.position[1], self.camera.position[2])
+		if hasattr(self, "game_time_loc") and self.game_time_loc is not None:
+			gl.glUniform1f(self.game_time_loc, getattr(self, "total_game_time", 0.0))
+		if hasattr(self, "dimension_id_loc") and self.dimension_id_loc is not None:
+			gl.glUniform1i(self.dimension_id_loc, dim_id)
+
+		# Real-Time Directional Shadows (Trees, Mountains, Terrain, Buildings)
+		if hasattr(self, "world_shadow_map") and self.world_shadow_map is not None:
+			self.world_shadow_map.update_player_position(self.camera.position[0], self.camera.position[2], self.world)
+			self.world_shadow_map.bind(gl.GL_TEXTURE1)
+			if hasattr(self, "shadow_heightmap_loc") and self.shadow_heightmap_loc is not None:
+				gl.glUniform1i(self.shadow_heightmap_loc, 1)
+			if hasattr(self, "shadow_origin_loc") and self.shadow_origin_loc is not None:
+				gl.glUniform3f(self.shadow_origin_loc, self.world_shadow_map.min_world_x, 0.0, self.world_shadow_map.min_world_z)
+			if hasattr(self, "shadow_world_size_loc") and self.shadow_world_size_loc is not None:
+				gl.glUniform1f(self.shadow_world_size_loc, entity_shadows.SHADOW_MAP_WORLD_SIZE)
+
 		gl.glActiveTexture(gl.GL_TEXTURE0)
 		gl.glBindTexture(gl.GL_TEXTURE_2D_ARRAY, self.world.texture_manager.texture_array)
 		gl.glUniform1i(self.shader_sampler_location, 0)
@@ -1262,8 +1363,8 @@ class Window(pyglet.window.Window):
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
 		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
 
-		# Render 3D Passive & Hostile Mobs in overworld
-		self.mob_manager.draw(self.camera)
+		# Render 3D Passive & Hostile Mobs in overworld (lit accurately according to ambient & block light)
+		self.mob_manager.draw(self.camera, self.world, sky_factor, min_light)
 
 		# Render 3D Primed TNT Entities
 		if hasattr(self, "tnt_manager"):
@@ -1304,21 +1405,20 @@ class Window(pyglet.window.Window):
 
 		# Render 3D End Portal Infinite Void Planes
 		if hasattr(self, "end_portal_renderer") and self.end_portal_renderer:
-			portal_blocks = []
-			for chk in self.world.chunks.values():
-				cx, _, cz = chk.chunk_position
-				if 183 in chk.blocks:
-					for lx in range(16):
-						for ly in range(256):
-							for lz in range(16):
-								if chk.blocks[lx * 4096 + ly * 16 + lz] == 183:
-									portal_blocks.append((cx * 16 + lx, ly, cz * 16 + lz))
-			if portal_blocks:
-				self.end_portal_renderer.draw(self.camera, portal_blocks)
+			if getattr(self.world, "end_portal_blocks", None):
+				self.end_portal_renderer.draw(self.camera, self.world.end_portal_blocks)
 
 		# If 3rd Person View (Back or Front), render Steve 3D Player Model!
 		if self.perspective != 0:
 			self.player_model.render_third_person(self.camera, self.perspective, self.world)
+
+		# Render Directional Entity Shadows for Mobs & Player
+		if hasattr(self, "entity_shadows") and self.entity_shadows:
+			p_pos = self.camera.position
+			m_list = self.mob_manager.mobs if hasattr(self, "mob_manager") and self.mob_manager else []
+			self.entity_shadows.draw(
+				self.camera, self.world, m_list, p_pos, s_dir_norm, getattr(self, "lighting_mode", "BLOCK")
+			)
 
 		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
 		self.shader.use()
@@ -1414,7 +1514,7 @@ class Window(pyglet.window.Window):
 				0.0, 1.0, layer
 			])
 
-			shading_data.extend([shading_val, shading_val, shading_val, shading_val])
+			shading_data.extend([15.0, 0.0, shading_val, 15.0, 0.0, shading_val, 15.0, 0.0, shading_val, 15.0, 0.0, shading_val])
 
 			idx_data.extend([
 				v_idx, v_idx + 1, v_idx + 2,
@@ -1473,7 +1573,7 @@ class Window(pyglet.window.Window):
 		shading_bytes[:] = shading_data
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.celestial_vbo_shading)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(shading_bytes), shading_bytes, gl.GL_STREAM_DRAW)
-		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 		gl.glEnableVertexAttribArray(2)
 
 		idx_bytes = (gl.GLuint * len(idx_data))()
@@ -1501,18 +1601,20 @@ class Window(pyglet.window.Window):
 			wx, wy, wz = int(round(x)), int(round(y)), int(round(z))
 			cx, cz = math.floor(x / 16.0), math.floor(z / 16.0)
 
-			# Cache debug noise calls once per block position update
-			if not hasattr(self, '_last_debug_pos') or self._last_debug_pos != (wx, wz):
+			# Cache debug noise and light calls once per block position update
+			if not hasattr(self, '_last_debug_pos') or self._last_debug_pos != (wx, wy, wz):
 				import biome as biome_module
-				self._last_debug_pos = (wx, wz)
+				self._last_debug_pos = (wx, wy, wz)
 				self._cached_temp = biome_module.get_temperature(wx, wz, self.world.seed)
 				self._cached_moist = biome_module.get_moisture(wx, wz, self.world.seed)
 				b_id = biome_module.get_biome_at(wx, wz, self.world.seed)
 				self._cached_biome_name = biome_module.BIOME_NAMES.get(b_id, "Plains")
+				self._cached_light = self.world.get_light_at((wx, wy, wz))
 
 			temp_val = getattr(self, '_cached_temp', 0.5)
 			moist_val = getattr(self, '_cached_moist', 0.5)
 			biome_str = getattr(self, '_cached_biome_name', 'Plains')
+			eff_l, sky_l, blk_l = getattr(self, '_cached_light', (15, 15, 0))
 
 			fps = self.fps
 
@@ -1524,6 +1626,7 @@ class Window(pyglet.window.Window):
 				f"XYZ: {x:.3f} / {y:.3f} / {z:.3f}",
 				f"Block: {wx} {wy} {wz}",
 				f"Chunk: {cx} {cz} (loaded: {len(self.world.chunks)})",
+				f"Light: {eff_l} ({sky_l} sky, {blk_l} block)",
 				"",
 				f"Climate & Biome Variables:",
 				f" - Biome:          {biome_str}",
@@ -1568,7 +1671,7 @@ class Window(pyglet.window.Window):
 			self.gui.draw_pause_menu()
 		elif self.game_state == "SETTINGS":
 			rd = getattr(self.world, "render_distance", self.global_render_distance) if hasattr(self, "world") else self.global_render_distance
-			self.gui.draw_settings_menu(rd)
+			self.gui.draw_settings_menu(rd, getattr(self, "lighting_mode", "BLOCK"))
 
 		gl.glDepthMask(gl.GL_TRUE)
 
@@ -1778,8 +1881,8 @@ class Window(pyglet.window.Window):
 
 		if self.game_state == "SETTINGS":
 			ctrl_w = 320
-			ctrl_h = 44
-			ctrl_y = cy + 20
+			ctrl_h = 42
+			ctrl_y = cy + 45
 			minus_w = 40
 			plus_w = 40
 
@@ -1797,10 +1900,16 @@ class Window(pyglet.window.Window):
 					self.world.set_render_distance(self.global_render_distance)
 				return
 
+			# Lighting Mode Toggle Button
+			light_y = cy - 15
+			if (cx - ctrl_w // 2 <= x <= cx + ctrl_w // 2) and (light_y - ctrl_h // 2 <= y <= light_y + ctrl_h // 2):
+				self.lighting_mode = "RAYTRACED" if getattr(self, "lighting_mode", "BLOCK") == "BLOCK" else "BLOCK"
+				return
+
 			# Done Button
 			done_w = 180
 			done_h = 38
-			done_y = cy - 60
+			done_y = cy - 80
 			if (cx - done_w // 2 <= x <= cx + done_w // 2) and (done_y - done_h // 2 <= y <= done_y + done_h // 2):
 				self.game_state = self.prev_state if hasattr(self, "prev_state") else "MENU"
 				if self.game_state == "PLAYING":

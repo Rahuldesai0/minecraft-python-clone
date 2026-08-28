@@ -118,7 +118,7 @@ class TNTManager:
 				for idx in (0, 1, 2, 0, 2, 3):
 					pos_data.extend(v_quad[idx])
 					tex_data.extend(uvs[idx])
-					shd_data.append(face_shd * shading_base)
+					shd_data.extend([15.0, 0.0, face_shd * shading_base])
 
 		if not pos_data:
 			return
@@ -146,7 +146,7 @@ class TNTManager:
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shd)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(shd_c_arr), shd_c_arr, gl.GL_STREAM_DRAW)
 		gl.glEnableVertexAttribArray(2)
-		gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+		gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 
 		gl.glDrawArrays(gl.GL_TRIANGLES, 0, num_vertices)
 		gl.glBindVertexArray(0)

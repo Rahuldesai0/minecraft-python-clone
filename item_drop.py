@@ -441,7 +441,7 @@ class ItemDropManager:
 					for idx in (0, 1, 2, 0, 2, 3):
 						pos_data.extend(v_corners[idx])
 						tex_data.extend(t_corners[idx])
-						shd_data.append(1.0)
+						shd_data.extend([15.0, 0.0, 1.0])
 
 			elif b_type is not None:
 				# 3D Block Item Drop
@@ -470,7 +470,7 @@ class ItemDropManager:
 						for idx in (0, 1, 2, 0, 2, 3):
 							pos_data.extend(v_corners[idx])
 							tex_data.extend(t_corners[idx])
-							shd_data.append(s_val)
+							shd_data.extend([15.0, 0.0, s_val])
 				else:
 					# 3D Mini Cube for Standard Block Items
 					for face_i, f_idx in enumerate(face_map):
@@ -493,7 +493,7 @@ class ItemDropManager:
 						for idx in (0, 1, 2, 0, 2, 3):
 							pos_data.extend(v_corners[idx])
 							tex_data.extend(t_corners[idx])
-							shd_data.append(s_corners[idx])
+							shd_data.extend([15.0, 0.0, s_corners[idx]])
 
 		if pos_data:
 			shader.use()
@@ -535,7 +535,7 @@ class ItemDropManager:
 			c_shd = (gl.GLfloat * len(shd_data))(*shd_data)
 			gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo_shd)
 			gl.glBufferData(gl.GL_ARRAY_BUFFER, ctypes.sizeof(c_shd), c_shd, gl.GL_STREAM_DRAW)
-			gl.glVertexAttribPointer(2, 1, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
 			gl.glEnableVertexAttribArray(2)
 
 			# Disable culling so spinning items & double-sided 2D cards render cleanly
