@@ -4,23 +4,26 @@ import ctypes
 import os
 import pyglet
 import pyglet.gl as gl
+import matrix
 
 # =============================================================================
-# CLASSIC 3D BLOCKY CLOUD SHADERS (BLOCK LIGHTING MODE)
+# CLASSIC 3D BLOCKY CLOUD SHADERS (4X RENDER DISTANCE)
 # =============================================================================
 BLOCKY_CLOUD_VERT_SRC = """#version 330
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec4 a_Color;
 
 uniform mat4 u_MVPMatrix;
+uniform vec3 u_SubCellDrift;
 
 out vec4 v_Color;
 out vec3 v_WorldPos;
 
 void main(void) {
     v_Color = a_Color;
-    v_WorldPos = a_Position;
-    gl_Position = u_MVPMatrix * vec4(a_Position, 1.0);
+    vec3 world_pos = a_Position + u_SubCellDrift;
+    v_WorldPos = world_pos;
+    gl_Position = u_MVPMatrix * vec4(world_pos, 1.0);
 }
 """
 
@@ -35,8 +38,8 @@ out vec4 fragColor;
 
 void main(void) {
     float dist = length(v_WorldPos.xz - u_CameraPos.xz);
-    // Smooth horizon fade near the edge of cloud render distance
-    float alpha_fade = 1.0 - smoothstep(u_RenderDist * 0.75, u_RenderDist, dist);
+    // Smooth horizon fade near the edge of 4x cloud render distance (950m to 1152m)
+    float alpha_fade = 1.0 - smoothstep(u_RenderDist * 0.82, u_RenderDist, dist);
     vec4 col = v_Color;
     col.a *= alpha_fade;
     if (col.a < 0.01) {
@@ -90,20 +93,21 @@ def link_program(vert_src, frag_src):
 class CloudManager:
     """
     Overworld Classic 3D Blocky Cloud System (Block Lighting Mode):
+    - 4X Render Distance: Spans 1152m radius in every direction (2304m sky view).
     - Separate, distinct small fluffy cloud islands separated by clear open sky.
     - Cloud Level: Y = 128.0 (accessible by flying or building up).
     - 100% Complete, solid 3D faces on all sides with perfect outward winding normals.
-    - Horizontal wind drift: Moves continuously along +X across the sky.
+    - Continuous horizontal wind drift along +X at 2.4 m/s.
     """
     def __init__(self):
         self.cloud_y = 128.0
         self.cloud_thickness = 4.0
         self.cell_size = 12.0 # 12 meters per blocky cloud voxel
-        self.grid_radius = 24 # 24 cells radius (approx 288m view distance)
+        self.grid_radius = 96 # 96 cells radius = 1152m in each direction (4x distant render reach)
         self.wind_speed = 2.4 # meters per second horizontal drift
 
-        # 64x64 periodic map with discrete small cloud islands separated by clear sky
-        self.map_size = 64
+        # 256x256 periodic map with discrete small cloud islands separated by clear sky
+        self.map_size = 256
         self.cloud_map = self._generate_separate_small_clouds(self.map_size)
 
         # GL state
@@ -115,12 +119,17 @@ class CloudManager:
         self.blocky_ibo = None
         self.blocky_index_count = 0
 
+        # Caching state
+        self.cached_cx = None
+        self.cached_cz = None
+        self.cached_mesh_wind_x = None
+        self.cached_tod_bucket = None
+
     def _generate_separate_small_clouds(self, size):
         """Generates distinct, separate small fluffy cloud islands separated by open sky."""
         grid = [[False for _ in range(size)] for _ in range(size)]
         rng = random.Random(1234)
 
-        # Space out cloud spawn seeds with large clear gaps
         step = 9
         for sy in range(0, size, step):
             for sx in range(0, size, step):
@@ -151,6 +160,7 @@ class CloudManager:
         try:
             self.blocky_prog = link_program(BLOCKY_CLOUD_VERT_SRC, BLOCKY_CLOUD_FRAG_SRC)
             self.u_blocky_mvp = gl.glGetUniformLocation(self.blocky_prog, b"u_MVPMatrix")
+            self.u_blocky_drift = gl.glGetUniformLocation(self.blocky_prog, b"u_SubCellDrift")
             self.u_blocky_campos = gl.glGetUniformLocation(self.blocky_prog, b"u_CameraPos")
             self.u_blocky_renddist = gl.glGetUniformLocation(self.blocky_prog, b"u_RenderDist")
 
@@ -167,8 +177,8 @@ class CloudManager:
         except Exception as e:
             print(f"[CloudManager Init Error]: {e}")
 
-    def _build_blocky_mesh(self, cam_x, cam_z, total_time, time_of_day):
-        """Constructs 100% complete 3D voxel cuboids with perfect outward CCW winding normals."""
+    def _build_blocky_mesh(self, center_cell_x, center_cell_z, mesh_wind_x, time_of_day):
+        """Constructs 4X distant 3D voxel cuboids centered around camera."""
         positions = []
         colors = []
         indices = []
@@ -200,39 +210,38 @@ class CloudManager:
         c_bottom = (base_tint[0] * bottom_mult, base_tint[1] * bottom_mult, base_tint[2] * bottom_mult, 0.85)
         c_side = (base_tint[0] * side_mult, base_tint[1] * side_mult, base_tint[2] * side_mult, 0.85)
 
-        # Wind drift offset along +X
-        wind_x = total_time * self.wind_speed
-
-        center_cell_x = int(math.floor((cam_x - wind_x) / self.cell_size))
-        center_cell_z = int(math.floor(cam_z / self.cell_size))
-
         rad = self.grid_radius
         y_bot = self.cloud_y
         y_top = self.cloud_y + self.cloud_thickness
         cell_w = self.cell_size
+        map_size = self.map_size
+        cloud_map = self.cloud_map
 
         v_count = 0
 
         for dz in range(-rad, rad + 1):
             cz = center_cell_z + dz
-            mz = cz % self.map_size
+            mz = cz % map_size
+            row = cloud_map[mz]
+            row_north = cloud_map[(mz - 1) % map_size]
+            row_south = cloud_map[(mz + 1) % map_size]
 
             for dx in range(-rad, rad + 1):
                 cx = center_cell_x + dx
-                mx = cx % self.map_size
+                mx = cx % map_size
 
-                if not self.cloud_map[mz][mx]:
+                if not row[mx]:
                     continue
 
-                x0 = cx * cell_w + wind_x
+                x0 = cx * cell_w + mesh_wind_x
                 x1 = x0 + cell_w
                 z0 = cz * cell_w
                 z1 = z0 + cell_w
 
-                has_north = self.cloud_map[(mz - 1) % self.map_size][mx]
-                has_south = self.cloud_map[(mz + 1) % self.map_size][mx]
-                has_west  = self.cloud_map[mz][(mx - 1) % self.map_size]
-                has_east  = self.cloud_map[mz][(mx + 1) % self.map_size]
+                has_north = row_north[mx]
+                has_south = row_south[mx]
+                has_west  = row[(mx - 1) % map_size]
+                has_east  = row[(mx + 1) % map_size]
 
                 # 1. TOP FACE (+Y) - CCW outward normal: (0, +1, 0)
                 positions.extend([
@@ -328,7 +337,7 @@ class CloudManager:
 
     def draw(self, camera, lighting_mode="BLOCK", time_of_day=0.25, total_time=0.0):
         """
-        Renders Overworld 3D Blocky Clouds at Y=128 in Block Lighting Mode.
+        Renders Overworld 3D Blocky Clouds with 4X Distant Render Distance (1152m radius).
         In Shaders / Ray Traced Mode, realistic clouds are integrated directly into the sky dome.
         """
         is_shader_mode = (lighting_mode in (1, "RAYTRACED", "SHADER"))
@@ -343,11 +352,46 @@ class CloudManager:
         cam_x, cam_y, cam_z = camera.position
 
         try:
-            mvp_matrix = camera.mv_matrix * camera.p_matrix
+            # Custom cloud perspective matrix with far=2500.0 to render full 4x distant cloud reach (1152m)
+            cloud_p_matrix = matrix.Matrix()
+            cloud_p_matrix.load_identity()
+            fov = getattr(camera, 'fov', 70)
+            c_width = getattr(camera, 'width', 1280)
+            c_height = getattr(camera, 'height', 720)
+            aspect = float(c_width) / max(1, c_height)
+            cloud_p_matrix.perspective(fov, aspect, 0.1, 2500.0)
+
+            mvp_matrix = camera.mv_matrix * cloud_p_matrix
             flat_mvp = sum(mvp_matrix.data, [])
             mvp_data = (gl.GLfloat * 16)(*flat_mvp)
         except Exception as e:
             return
+
+        # Continuous horizontal wind drift
+        wind_x = total_time * self.wind_speed
+
+        center_cell_x = int(math.floor((cam_x - wind_x) / self.cell_size))
+        center_cell_z = int(math.floor(cam_z / self.cell_size))
+        tod_bucket = int(time_of_day * 120)
+
+        # Rebuild mesh when center cell shifts or lighting changes
+        needs_rebuild = (
+            self.cached_cx is None or
+            center_cell_x != self.cached_cx or
+            center_cell_z != self.cached_cz or
+            tod_bucket != self.cached_tod_bucket or
+            self.blocky_index_count == 0
+        )
+
+        if needs_rebuild:
+            self._build_blocky_mesh(center_cell_x, center_cell_z, wind_x, time_of_day)
+            self.cached_cx = center_cell_x
+            self.cached_cz = center_cell_z
+            self.cached_mesh_wind_x = wind_x
+            self.cached_tod_bucket = tod_bucket
+
+        # Sub-cell drift provides continuous per-frame motion between cell grid updates
+        sub_cell_drift = wind_x - (self.cached_mesh_wind_x if self.cached_mesh_wind_x is not None else wind_x)
 
         gl.glEnable(gl.GL_BLEND)
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
@@ -355,16 +399,14 @@ class CloudManager:
         gl.glDepthFunc(gl.GL_LEQUAL)
         gl.glDepthMask(gl.GL_FALSE)
 
-        # Backface culling ensures clean, seamless cloud surfaces with ZERO interior partition lines
+        # Backface culling ensures clean, seamless surfaces with ZERO interior lines
         gl.glEnable(gl.GL_CULL_FACE)
         gl.glCullFace(gl.GL_BACK)
-
-        # Build dynamic separate small blocky clouds with complete outward faces
-        self._build_blocky_mesh(cam_x, cam_z, total_time, time_of_day)
 
         if getattr(self, "blocky_index_count", 0) > 0:
             gl.glUseProgram(self.blocky_prog)
             gl.glUniformMatrix4fv(self.u_blocky_mvp, 1, gl.GL_FALSE, mvp_data)
+            gl.glUniform3f(self.u_blocky_drift, sub_cell_drift, 0.0, 0.0)
             gl.glUniform3f(self.u_blocky_campos, cam_x, cam_y, cam_z)
             gl.glUniform1f(self.u_blocky_renddist, float(self.grid_radius * self.cell_size))
 
