@@ -557,7 +557,10 @@ class Camera:
 			self.position[1] += (self.eye_offset - old_eye)
 		self.flying = flying
 		base_speed = 4.3  # Minecraft walking speed (~4.3 m/s)
-		if self.sneaking:
+		if flying:
+			fly_multiplier = 2.2 if sprinting else 1.0
+			speed = base_speed * 2.0 * fly_multiplier
+		elif self.sneaking:
 			speed = 1.3  # Sneak walking speed (~1.3 m/s)
 		else:
 			sprint_multiplier = 1.3 if sprinting else 1.0
@@ -589,14 +592,21 @@ class Camera:
 		movement_vector = [0.0, 0.0, 0.0]
 
 		if flying:
-			# Flying Mode: move up with Space, down with Shift
+			# Flying Mode: move up with Space, down with Shift (LCTRL is for sprinting faster!)
 			up_down = 0.0
-			if keys_down.get(pyglet.window.key.SPACE, False):
-				up_down += 10.0
-			if keys_down.get(pyglet.window.key.LSHIFT, False):
-				up_down -= 10.0
+			is_space = False
+			if keys_down:
+				is_space = bool(keys_down.get(pyglet.window.key.SPACE, False) or keys_down.get(32, False))
+			if self.input[1] > 0 or is_space:
+				up_down += 10.0 * (1.8 if sprinting else 1.0)
+			is_shift = False
+			if keys_down:
+				is_shift = bool(keys_down.get(pyglet.window.key.LSHIFT, False) or keys_down.get(pyglet.window.key.RSHIFT, False))
+			if self.input[1] < 0 or is_shift:
+				up_down -= 10.0 * (1.8 if sprinting else 1.0)
 			movement_vector[1] = up_down * delta_time
 			self.velocity_y = 0.0
+			self.on_ground = False
 		elif in_liquid:
 			# Liquid Mode: swim up with Space. Near surface gives strong water jump impulse (v_y = 7.8 m/s) onto shore!
 			bx = int(round(self.position[0]))
@@ -668,33 +678,36 @@ class Camera:
 		# Y-axis incremental collision resolution
 		dy = movement_vector[1]
 		if dy != 0:
-			step_size = 0.4
-			remaining = dy
-			sign = 1 if dy > 0 else -1
-			while abs(remaining) > 0.001:
-				step = sign * min(step_size, abs(remaining))
-				test_y = self.position[1] + step
-				if self.check_collision(world, [self.position[0], test_y, self.position[2]]):
-					self.position[1] = test_y
-					remaining -= step
-				else:
-					# Hit a ceiling or floor
-					if dy < 0:
-						if getattr(self, "fall_distance", 0.0) > 0.65 and world:
-							foot_pos = (math.floor(self.position[0]), math.floor(self.position[1] - 0.1), math.floor(self.position[2]))
-							if world.get_block_number(foot_pos) == 80:
-								world.set_block(foot_pos, 4)  # Trample Farmland to Dirt
-								crop_pos = (foot_pos[0], foot_pos[1] + 1, foot_pos[2])
-								crop_b = world.get_block_number(crop_pos)
-								if crop_b in (81, 204, 205, 206, 207):
-									world.set_block(crop_pos, 0)
-									if hasattr(world, "item_drop_manager") and world.item_drop_manager:
-										drop_id = 155 if crop_b == 81 else (195 if crop_b == 204 else (196 if crop_b == 205 else (199 if crop_b == 206 else 200)))
-										world.item_drop_manager.spawn_drop(drop_id, 1, [crop_pos[0] + 0.5, crop_pos[1] + 0.2, crop_pos[2] + 0.5])
-						self.velocity_y = 0.0
-						self.on_ground = True
-					elif dy > 0:
-						self.velocity_y = 0.0
+			if flying:
+				self.position[1] += dy
+			else:
+				step_size = 0.4
+				remaining = dy
+				sign = 1 if dy > 0 else -1
+				while abs(remaining) > 0.001:
+					step = sign * min(step_size, abs(remaining))
+					test_y = self.position[1] + step
+					if self.check_collision(world, [self.position[0], test_y, self.position[2]]):
+						self.position[1] = test_y
+						remaining -= step
+					else:
+						# Hit a ceiling or floor
+						if dy < 0:
+							if getattr(self, "fall_distance", 0.0) > 0.65 and world:
+								foot_pos = (math.floor(self.position[0]), math.floor(self.position[1] - 0.1), math.floor(self.position[2]))
+								if world.get_block_number(foot_pos) == 80:
+									world.set_block(foot_pos, 4)  # Trample Farmland to Dirt
+									crop_pos = (foot_pos[0], foot_pos[1] + 1, foot_pos[2])
+									crop_b = world.get_block_number(crop_pos)
+									if crop_b in (81, 204, 205, 206, 207):
+										world.set_block(crop_pos, 0)
+										if hasattr(world, "item_drop_manager") and world.item_drop_manager:
+											drop_id = 155 if crop_b == 81 else (195 if crop_b == 204 else (196 if crop_b == 205 else (199 if crop_b == 206 else 200)))
+											world.item_drop_manager.spawn_drop(drop_id, 1, [crop_pos[0] + 0.5, crop_pos[1] + 0.2, crop_pos[2] + 0.5])
+							self.velocity_y = 0.0
+							self.on_ground = True
+						elif dy > 0:
+							self.velocity_y = 0.0
 					break
 
 		# Z-axis collision

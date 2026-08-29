@@ -82,6 +82,10 @@ class Window(pyglet.window.Window):
 		self.shadow_heightmap_loc = self.shader.find_uniform(b"shadow_heightmap")
 		self.shadow_origin_loc = self.shader.find_uniform(b"shadow_origin")
 		self.shadow_world_size_loc = self.shader.find_uniform(b"shadow_world_size")
+		self.scene_texture_loc = self.shader.find_uniform(b"scene_texture")
+		self.window_size_loc = self.shader.find_uniform(b"window_size")
+		self.scene_texture = None
+		self.scene_tex_size = (0, 0)
 		self.lighting_mode = "BLOCK"
 		self.total_game_time = 0.0
 		self.shader.use()
@@ -1166,16 +1170,23 @@ class Window(pyglet.window.Window):
 		if not self.flying and self.camera.hunger <= 6:
 			self.sprinting = False
 
-		# Continuously sync horizontal movement vector from physical key states
+		# Continuously sync horizontal and vertical movement vector from physical key states
 		dx = 0
+		dy = 0
 		dz = 0
 		if self.keys_down.get(pyglet.window.key.D, False): dx += 2
 		if self.keys_down.get(pyglet.window.key.A, False): dx -= 2
 		if self.keys_down.get(pyglet.window.key.W, False): dz += 2
 		if self.keys_down.get(pyglet.window.key.S, False): dz -= 2
+		if self.keys_down.get(pyglet.window.key.SPACE, False) or self.keys_down.get(32, False): dy += 1
+		if self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False): dy -= 1
+
+		# Sprinting active while holding LCTRL or RCTRL
+		if self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False):
+			self.sprinting = True
 
 		if self.mouse_captured:
-			self.camera.input = [dx, 0, dz]
+			self.camera.input = [dx, dy, dz]
 			if self.sprinting and (dx != 0 or dz != 0) and not self.flying:
 				self.camera.add_exhaustion(0.1 * delta_time)
 		else:
@@ -1275,7 +1286,32 @@ class Window(pyglet.window.Window):
 		self.time_of_day %= 1.0  # Keep time_of_day in the range [0.0, 1.0]
 
         # Update the sky color
-		self.update_sky_color()
+	def get_scene_texture(self, width, height):
+		if self.scene_texture is None or self.scene_tex_size != (width, height):
+			if self.scene_texture is not None:
+				gl.glDeleteTextures(1, ctypes.byref(self.scene_texture))
+			self.scene_texture = gl.GLuint()
+			gl.glGenTextures(1, ctypes.byref(self.scene_texture))
+			gl.glBindTexture(gl.GL_TEXTURE_2D, self.scene_texture)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+			gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+			gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, width, height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, None)
+			self.scene_tex_size = (width, height)
+		return self.scene_texture
+
+	def capture_scene_opaque(self):
+		w, h = max(1, self.width), max(1, self.height)
+		tex = self.get_scene_texture(w, h)
+		gl.glActiveTexture(gl.GL_TEXTURE2)
+		gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+		gl.glCopyTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h)
+		if hasattr(self, "scene_texture_loc") and self.scene_texture_loc is not None:
+			gl.glUniform1i(self.scene_texture_loc, 2)
+		if hasattr(self, "window_size_loc") and self.window_size_loc is not None:
+			gl.glUniform2f(self.window_size_loc, float(w), float(h))
+		gl.glActiveTexture(gl.GL_TEXTURE0)
 	
 	def on_draw(self):
 		if self.game_state == "MENU":
@@ -1315,7 +1351,7 @@ class Window(pyglet.window.Window):
 		s_dir_norm = (sun_x / sun_len, sun_y / sun_len, 0.15 / sun_len)
 
 		if current_dim in ("nether", "end"):
-			sky_factor = 0.0
+			sky_factor = 1.0
 			min_light = 0.25 if current_dim == "nether" else 0.28
 			dim_id = 1 if current_dim == "nether" else 2
 		else:
@@ -1323,6 +1359,8 @@ class Window(pyglet.window.Window):
 			sky_factor = 0.40 + 0.60 * max(0.0, min(1.0, (sun_y + 0.2) / 1.2))
 			min_light = 0.20
 			dim_id = 0
+
+		self.current_sky_factor = sky_factor
 
 		if hasattr(self, "sky_light_factor_loc") and self.sky_light_factor_loc is not None:
 			gl.glUniform1f(self.sky_light_factor_loc, sky_factor)
@@ -1361,7 +1399,7 @@ class Window(pyglet.window.Window):
 		self.clear()
 
 		# Draw 3D World Terrain first so terrain is 100% visible and populates depth buffer
-		self.world.draw(self.camera.position, player_rotation=self.camera.rotation)
+		self.world.draw(self.camera.position, player_rotation=self.camera.rotation, capture_opaque_cb=self.capture_scene_opaque)
 
 		# Render 3D Passive & Hostile Mobs in overworld (lit accurately according to ambient & block light)
 		self.mob_manager.draw(self.camera, self.world, sky_factor, min_light)
@@ -1614,7 +1652,10 @@ class Window(pyglet.window.Window):
 			temp_val = getattr(self, '_cached_temp', 0.5)
 			moist_val = getattr(self, '_cached_moist', 0.5)
 			biome_str = getattr(self, '_cached_biome_name', 'Plains')
-			eff_l, sky_l, blk_l = getattr(self, '_cached_light', (15, 15, 0))
+			raw_eff, raw_sky, blk_l = getattr(self, '_cached_light', (15, 15, 0))
+			curr_sky_factor = getattr(self, 'current_sky_factor', 1.0)
+			sky_l = int(round(raw_sky * curr_sky_factor))
+			eff_l = max(sky_l, blk_l)
 
 			fps = self.fps
 

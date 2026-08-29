@@ -13,6 +13,7 @@ import pyglet.gl as gl
 
 import chunk
 import block_type
+import block_state
 import texture_manager
 
 # Import custom block models
@@ -650,7 +651,7 @@ def build_end_chunk_blocks_process(x, z, save_dir, seed=0):
 	return flat_bytes.tobytes()
 
 
-def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None, burning_blocks=None):
+def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north_blocks, south_blocks, east_blocks, west_blocks, block_types_info, water_levels=None, lava_levels=None, center_states=None, burning_blocks=None, dimension="overworld"):
 	"""Standalone worker function for ProcessPoolExecutor.
 	Meshes a single 16x16x16 vertical section of a chunk with 100% process pool isolation (zero GIL contention)."""
 	def unpack_chunk_blocks(raw_data):
@@ -851,10 +852,21 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		return 64
 
 	# Only compute sky light if this section is within reach of the surface / open sky
-	can_sky_reach = (max_y + 14 >= min_surface_h)
+	is_nether_or_end = (dimension in ("nether", "end"))
+	can_sky_reach = is_nether_or_end or (max_y + 14 >= min_surface_h)
 	has_any_sky = False
 
-	if can_sky_reach:
+	if is_nether_or_end:
+		has_any_sky = True
+		for x in range(16):
+			base_xz = x * 4096
+			for z in range(16):
+				col_xz = base_xz + z
+				for y in range(min_y, max_y):
+					idx = col_xz + y * 16
+					if transparent_lookup[center_blocks[idx]]:
+						sky_light[idx] = 7
+	elif can_sky_reach:
 		has_any_sky = True
 		for x in range(16):
 			base_xz = x * 4096
@@ -1000,18 +1012,21 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							block_queue.append((nx, ny, nz, nlvl))
 
 	def sample_voxel_light(sx, sy, sz):
-		if sy >= 256: return 15, 0
+		if sy >= 256: return (7 if is_nether_or_end else 15), 0
 		if sy < 0: return 0, 0
 		if 0 <= sx < 16 and 0 <= sz < 16:
 			s_idx = sx * 4096 + sy * 16 + sz
 			return sky_light[s_idx], block_light[s_idx]
 		
 		# Neighbor chunk border lookup
-		nb_h = get_height_at(sx, sz)
-		if sy > nb_h:
-			nb_sky = 15
+		if is_nether_or_end:
+			nb_sky = 7
 		else:
-			nb_sky = max(0, 15 - (nb_h - sy))
+			nb_h = get_height_at(sx, sz)
+			if sy > nb_h:
+				nb_sky = 15
+			else:
+				nb_sky = max(0, 15 - (nb_h - sy))
 		nb_blk = 0
 
 		nb_blocks = None
@@ -1340,6 +1355,10 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					for face_idx, (dx, dy, dz) in enumerate(neighbor_offsets):
 						nx, ny, nz = local_x + dx, local_y + dy, local_z + dz
 						neighbor_num = get_nb(nx, ny, nz)
+
+						if neighbor_num == b_num and (is_translucent or b_info.get('transparent', False)):
+							# Cull internal shared faces between adjacent identical translucent/transparent cube blocks (like glass next to glass, ice next to ice)
+							continue
 
 						if neighbor_num == 0:
 							if is_dir:
@@ -1783,8 +1802,8 @@ class World:
 		self._last_player_chunk = None
 		self._load_queue = []
 
-		# Multithreaded Executor (3 Workers) balanced to eliminate GIL contention with main Pyglet render loop
-		self.process_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ChunkWorker")
+		# Multithreaded Executor (2 Workers) balanced to eliminate GIL contention with main Pyglet render loop
+		self.process_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ChunkWorker")
 		self.chunk_generation_futures = {}
 		self.section_mesh_futures = {}
 
@@ -1835,7 +1854,7 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="diamond_ore", block_face_textures={"all": "diamond_ore"}, break_time=2.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_water", block_face_textures={"all": "water"}, model=models.liquid, transparent=True, break_time=float('inf'), requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="under_lava", block_face_textures={"all": "lava"}, model=models.liquid, transparent=True, break_time=float('inf'), requires_tool=False))
-		self.block_types.append(block_type.Block_type(self.texture_manager, name="glass", block_face_textures={"all": "glass"}, transparent=True, break_time=0.3, requires_tool=False))
+		self.block_types.append(block_type.Block_type(self.texture_manager, name="glass", block_face_textures={"all": "glass"}, model=models.glass, transparent=True, break_time=0.3, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="bricks", block_face_textures={"all": "bricks"}, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="bookshelf", block_face_textures={"top": "planks", "bottom": "planks", "sides": "bookshelf"}, break_time=0.9, requires_tool=False))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="obsidian", block_face_textures={"all": "obsidian"}, break_time=5.0, requires_tool=True))
@@ -2690,7 +2709,7 @@ class World:
 					'name': b.name,
 					'is_cube': b.is_cube,
 					'transparent': b.transparent or getattr(b.model, "transparent", False) or (not b.is_cube),
-					'translucent': b.translucent or b.name in ('water', 'under_water'),
+					'translucent': b.translucent or b.name in ('water', 'under_water', 'glass', 'glass_pane'),
 					'vertex_positions': b.vertex_positions,
 					'tex_coords': b.tex_coords,
 					'shading_values': b.shading_values,
@@ -2814,9 +2833,8 @@ class World:
 
 			uploaded_bytes += max(1024, sec_bytes)
 
-		# 3. Submit pending section meshing tasks (max 2 active workers to prevent GIL contention)
-		if len(self.section_mesh_futures) < 2 and self.section_mesh_queue:
-			slots_free = 2 - len(self.section_mesh_futures)
+		# 3. Submit pending section meshing tasks (max 1 active worker to ensure 0% GIL contention with Pyglet render loop)
+		if len(self.section_mesh_futures) < 1 and self.section_mesh_queue:
 			pending_list = list(self.section_mesh_queue)
 			if len(pending_list) > 1:
 				def mesh_priority(item):
@@ -2831,7 +2849,7 @@ class World:
 
 			info = self.get_block_types_info()
 
-			for item in pending_list[:slots_free]:
+			for item in pending_list[:1]:
 				if item in self.section_mesh_queue:
 					self.section_mesh_queue.remove(item)
 				cx, cz, sy = item
@@ -2849,8 +2867,8 @@ class World:
 				s_bytes = self.chunks[(cx, 0, cz + 1)].blocks if (cx, 0, cz + 1) in self.chunks else None
 				n_bytes = self.chunks[(cx, 0, cz - 1)].blocks if (cx, 0, cz - 1) in self.chunks else None
 
-				w_lvls = {pos: lvl for pos, lvl in self.water_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.water_levels else None
-				l_lvls = {pos: lvl for pos, lvl in self.liquid_levels.items() if abs(pos[0] - (cx * 16 + 8)) <= 24 and abs(pos[2] - (cz * 16 + 8)) <= 24} if self.liquid_levels else None
+				w_lvls = {pos: lvl for pos, lvl in self.water_levels.items() if (pos[0] // 16 == cx and pos[2] // 16 == cz)} if self.water_levels else None
+				l_lvls = {pos: lvl for pos, lvl in self.liquid_levels.items() if (pos[0] // 16 == cx and pos[2] // 16 == cz)} if self.liquid_levels else None
 				b_blocks = {
 					(int(pos[0] % 16), int(pos[1]), int(pos[2] % 16)): list(data['faces'])
 					for pos, data in self.burning_blocks.items()
@@ -2859,7 +2877,7 @@ class World:
 
 				self.section_mesh_futures[(cx, cz, sy)] = self.process_executor.submit(
 					build_section_mesh_process,
-					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls, c_states, b_blocks
+					cx, cz, sy, c_bytes, n_bytes, s_bytes, e_bytes, w_bytes, info, w_lvls, l_lvls, c_states, b_blocks, self.dimension
 				)
 
 	def get_chunk_position(self, position):
@@ -3627,7 +3645,7 @@ class World:
 		chk.set_block_number(lx, ly, lz, number)
 		self.dirty_chunks.add(c_pos)
 		if hasattr(self, 'shadow_map') and self.shadow_map:
-			self.shadow_map.update_chunk_blocks(c_pos[0], c_pos[2], chk.blocks)
+			self.shadow_map.update_chunk_blocks(c_pos[0], c_pos[2], chk)
 
 		if old_num in (24, 88, 89) or number == 0:
 			try:
@@ -3689,7 +3707,7 @@ class World:
 
 		# 1. Sky Light calculation
 		if self.dimension in ("nether", "end"):
-			sky_val = 0
+			sky_val = 7
 		else:
 			transparent_ids = {0, 9, 10, 11, 12, 13, 15, 19, 20, 31, 33, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 78, 79, 81, 88, 89, 91, 92, 93, 94, 99, 156, 178, 179, 180, 181, 182, 183, 187, 204, 205, 206, 207, 210, 213, 220, 221, 222, 224, 225, 226, 227, 228, 229, 230, 231, 232, 234, 235, 236, 237, 238, 239, 240, 241, 242, 244, 245, 246, 247, 248, 249, 250, 251, 252, 254, 255, 256, 257, 258, 259, 260, 261, 262, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 279, 280, 283, 284, 285}
 			
@@ -3825,7 +3843,7 @@ class World:
 					pass
 			self.chunks[chunk_position] = chk
 			if hasattr(self, 'shadow_map') and self.shadow_map:
-				self.shadow_map.update_chunk_blocks(chunk_position[0], chunk_position[2], chk.blocks)
+				self.shadow_map.update_chunk_blocks(chunk_position[0], chunk_position[2], chk)
 
 			if 183 in chk.blocks:
 				cx, _, cz = chunk_position
@@ -3857,6 +3875,7 @@ class World:
 				if n_pos in self.chunks:
 					n_chk = self.chunks[n_pos]
 					if n_chk.had_missing_neighbors:
+						n_chk.had_missing_neighbors = False
 						self.queue_chunk_sections_for_meshing(nx, nz)
 			return  # 1 chunk per frame max to guarantee O(1) main-thread execution time
 
@@ -3926,7 +3945,7 @@ class World:
 			self.chunks[chunk_position].delete()  # Recycles VAO/VBO handles to free_chunk_pool
 			del self.chunks[chunk_position]
 
-	def draw(self, player_position=None, player_rotation=None):
+	def draw(self, player_position=None, player_rotation=None, capture_opaque_cb=None):
 		if not self.chunks:
 			return
 
@@ -3939,9 +3958,8 @@ class World:
 
 			visible_chunks = []
 			for current_chunk in self.chunks.values():
-				cx, _, cz = current_chunk.chunk_position
-				dx = (cx * 16 + 8) - cam_x
-				dz = (cz * 16 + 8) - cam_z
+				dx = current_chunk.center_x - cam_x
+				dz = current_chunk.center_z - cam_z
 				dist_sq = dx * dx + dz * dz
 
 				if dist_sq > 256:
@@ -3955,6 +3973,12 @@ class World:
 		gl.glDepthMask(gl.GL_TRUE)
 		for current_chunk in visible_chunks:
 			bound_vao = current_chunk.draw_opaque(bound_vao)
+
+		if capture_opaque_cb is not None:
+			try:
+				capture_opaque_cb()
+			except Exception:
+				pass
 
 		gl.glEnable(gl.GL_BLEND)
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)

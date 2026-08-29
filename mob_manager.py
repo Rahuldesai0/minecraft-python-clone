@@ -328,6 +328,14 @@ class MobManager:
 					passive_count += 1
 				break
 
+	def is_valid_overworld_hostile_light(self, position, time_of_day=0.5):
+		"""Returns True if the effective light level at position is 7 or lower (Standard Minecraft Hostile Spawn Rule)."""
+		eff_l, sky_l, blk_l = self.world.get_light_at(position)
+		sun_y = math.cos((time_of_day - 0.5) * 2.0 * math.pi)
+		sky_factor = 0.40 + 0.60 * max(0.0, min(1.0, (sun_y + 0.2) / 1.2))
+		cur_light = max(int(round(sky_l * sky_factor)), blk_l)
+		return cur_light <= 7
+
 	def try_hostile_spawning(self, player_pos, time_of_day=0.5, flying=False):
 		"""Spawns hostile mobs in Survival mode during night on surface, underground caves, or Nether Fortresses."""
 		if flying or not player_pos:
@@ -366,57 +374,64 @@ class MobManager:
 						r_pick = random.random()
 						if r_pick < 0.70 and blaze_count < self.max_blaze_mobs:
 							pack = random.randint(2, 3)
-							for _ in range(pack):
-								if len(self.mobs) >= self.max_nether_mobs:
-									break
-								self.spawn_mob("blaze", (sx + random.uniform(-1.0, 1.0), spawn_y + random.uniform(0.2, 1.2), sz + random.uniform(-1.0, 1.0)))
-								nether_hostiles += 1
-								blaze_count += 1
-						elif r_pick < 0.85:
+						# Fortress: Wither Skeletons (35%), Skeletons (25%), Blazes (20%), Zombified Piglins (20%)
+						roll = random.random()
+						if roll < 0.35:
+							self.spawn_mob("wither_skeleton", (sx, spawn_y, sz))
+						elif roll < 0.60:
 							self.spawn_mob("skeleton", (sx, spawn_y, sz))
-							nether_hostiles += 1
+						elif roll < 0.80:
+							self.spawn_mob("blaze", (sx + random.uniform(-1.0, 1.0), spawn_y + random.uniform(0.2, 1.2), sz + random.uniform(-1.0, 1.0)))
 						else:
-							self.spawn_mob("enderman", (sx, spawn_y, sz))
-							nether_hostiles += 1
-						break
+							self.spawn_mob("zombie_pigman", (sx, spawn_y, sz))
+					else:
+						# General Nether Wilderness: Zombified Piglins (70%), Ghasts (15%), Magma Cubes (15%)
+						roll = random.random()
+						if roll < 0.70:
+							self.spawn_mob("zombie_pigman", (sx, spawn_y, sz))
+						elif roll < 0.85:
+							self.spawn_mob("ghast", (sx, spawn_y + 4.0, sz))
+						else:
+							self.spawn_mob("magma_cube", (sx, spawn_y, sz))
 			return
 
 		if getattr(self.world, "dimension", "overworld") == "end":
 			# End Hostile Spawning: ONLY Endermen spawn in the End! (No zombies, skeletons, spiders, creepers)
-			enderman_count = sum(1 for m in self.mobs if m.mob_type == "enderman")
-			if enderman_count >= 20 or len(self.mobs) >= 25:
+			end_count = len(self.mobs)
+			if end_count >= self.max_end_mobs:
 				return
-
-			for _ in range(10):
-				if enderman_count >= 20:
+			px, py, pz = player_pos
+			for _ in range(8):
+				if len(self.mobs) >= self.max_end_mobs:
 					break
 				angle = random.uniform(0, math.tau)
-				dist = random.uniform(16.0, 50.0)
+				dist = random.uniform(14.0, 48.0)
 				sx = int(round(px + math.cos(angle) * dist))
 				sz = int(round(pz + math.sin(angle) * dist))
 
 				spawn_y = None
-				for y in range(80, 40, -1):
+				for y in range(110, 15, -1):
 					b_id = self.world.get_block_number((sx, y, sz))
-					if b_id == 188:  # End Stone
-						if (self.world.get_block_number((sx, y + 1, sz)) == 0 and
-						    self.world.get_block_number((sx, y + 2, sz)) == 0 and
-						    self.world.get_block_number((sx, y + 3, sz)) == 0):
+					if b_id in (87, 36, 12, 1) or (b_id != 0 and b_id not in (15, 20, 78, 183) and b_id not in block_state.PASSABLE_BLOCKS):
+						# 3 air/passable blocks above for Enderman (tall 2.9 blocks hitbox)
+						if (self.world.get_block_number((sx, y + 1, sz)) in block_state.PASSABLE_BLOCKS and
+							self.world.get_block_number((sx, y + 2, sz)) in block_state.PASSABLE_BLOCKS and
+							self.world.get_block_number((sx, y + 3, sz)) in block_state.PASSABLE_BLOCKS):
 							spawn_y = y + 1
 							break
 
 				if spawn_y is not None:
 					pack = random.randint(1, 3)
 					for _ in range(pack):
-						if enderman_count >= 20:
+						if len(self.mobs) >= self.max_end_mobs:
 							break
 						off_x = sx + random.uniform(-1.5, 1.5)
 						off_z = sz + random.uniform(-1.5, 1.5)
 						self.spawn_mob("enderman", (off_x, spawn_y, off_z))
-						enderman_count += 1
-					break
 			return
 
+		# Overworld Hostile Mob Spawning
+		px, py, pz = player_pos
 		tod = time_of_day % 1.0
 		is_night = (tod <= 0.25 or tod >= 0.73)
 
@@ -427,7 +442,7 @@ class MobManager:
 		if total_hostiles >= self.max_hostile_mobs:
 			return
 
-		# 1. Nighttime Surface Spawning (Generous pack spawning across open terrain)
+		# 1. Nighttime Surface Spawning (Only on blocks with light level <= 7)
 		if is_night and surface_hostiles < self.max_surface_hostiles:
 			needed = min(self.max_surface_hostiles - surface_hostiles, self.max_hostile_mobs - total_hostiles)
 			attempts = min(12, needed * 2)
@@ -440,17 +455,19 @@ class MobManager:
 				sx = int(round(px + math.cos(angle) * dist))
 				sz = int(round(pz + math.sin(angle) * dist))
 
-				# Scan down from world top to find top solid surface block
 				spawn_y = None
 				for y in range(130, 48, -1):
 					b_id = self.world.get_block_number((sx, y, sz))
 					if b_id != 0 and b_id not in (13, 14, 18, 224, 234, 244, 254, 264) and b_id not in block_state.PASSABLE_BLOCKS:
-						# 3 passable blocks above for Enderman / 2 for others
 						if self.world.get_block_number((sx, y + 1, sz)) in block_state.PASSABLE_BLOCKS and self.world.get_block_number((sx, y + 2, sz)) in block_state.PASSABLE_BLOCKS:
 							spawn_y = y + 1
 							break
 
 				if spawn_y is not None:
+					# Overworld hostile mob rule: block light level must be 7 or lower!
+					if not self.is_valid_overworld_hostile_light((sx, spawn_y, sz), time_of_day=time_of_day):
+						continue
+
 					mob_type = self.get_balanced_hostile_type()
 					pack = 1 if mob_type == "enderman" else random.randint(1, 3)
 					for _ in range(pack):
@@ -458,11 +475,14 @@ class MobManager:
 							break
 						off_x = sx + random.uniform(-1.0, 1.0)
 						off_z = sz + random.uniform(-1.0, 1.0)
+						# Verify spawn offset light level
+						if not self.is_valid_overworld_hostile_light((off_x, spawn_y, off_z), time_of_day=time_of_day):
+							continue
 						self.spawn_mob(mob_type, (off_x, spawn_y, off_z))
 						surface_hostiles += 1
 						total_hostiles += 1
 
-		# 2. Underground / Cave Spawning (Allowed anytime in covered caverns)
+		# 2. Underground / Cave Spawning (Only in dark caves with light level <= 7)
 		if cave_hostiles < self.max_cave_hostiles and total_hostiles < self.max_hostile_mobs:
 			for _ in range(6):
 				if cave_hostiles >= self.max_cave_hostiles or total_hostiles >= self.max_hostile_mobs:
@@ -490,8 +510,11 @@ class MobManager:
 								break
 
 				if spawn_y is not None:
+					# Overworld hostile mob rule: block light level must be 7 or lower!
+					if not self.is_valid_overworld_hostile_light((sx, spawn_y, sz), time_of_day=time_of_day):
+						continue
+
 					mob_type = self.get_balanced_hostile_type()
-					pack = 1 if mob_type == "enderman" else 1
 					self.spawn_mob(mob_type, (sx, spawn_y, sz))
 					cave_hostiles += 1
 

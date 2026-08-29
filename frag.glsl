@@ -4,6 +4,8 @@ out vec4 fragment_colour;
 
 uniform sampler2DArray texture_array_sampler;
 uniform sampler2D shadow_heightmap;
+uniform sampler2D scene_texture;
+uniform vec2 window_size;
 uniform vec3 shadow_origin;
 uniform float shadow_world_size;
 
@@ -23,8 +25,10 @@ in vec3 interpolated_light_and_shading;
 
 void main(void) {
 	vec4 texture_colour = texture(texture_array_sampler, interpolated_tex_coords);
+	int tex_id = int(floor(interpolated_tex_coords.z + 0.5));
 
-	if (texture_colour.a == 0.0) { // discard if texel's alpha component is 0 (texel is transparent)
+	// Discard alpha == 0 pixels EXCEPT for glass (so clear glass body can refract & reflect)
+	if (texture_colour.a == 0.0 && tex_id != 21) {
 		discard;
 	}
 
@@ -63,6 +67,7 @@ void main(void) {
 		float min_effective = mix(m_light, 0.35, s_factor);
 		float brightness = mix(min_effective, 1.0, smooth_ratio);
 		float final_mult = max(min_effective * 0.70, brightness * face_shd_val);
+		
 		fragment_colour = vec4(texture_colour.rgb * final_mult, texture_colour.a);
 		return;
 	}
@@ -81,11 +86,15 @@ void main(void) {
 	}
 
 	// 2. Identify Surface Material Properties
-	bool is_water = (interpolated_tex_coords.z >= 8.5 && interpolated_tex_coords.z <= 9.5) ||
-	                (interpolated_tex_coords.z >= 18.5 && interpolated_tex_coords.z <= 19.5) ||
-	                (texture_colour.a < 0.95);
-	bool is_ice = (interpolated_tex_coords.z >= 93.5 && interpolated_tex_coords.z <= 95.5);
-	bool is_reflective = (is_water || is_ice);
+	bool is_water = (tex_id == 9);
+	bool is_ice = (tex_id == 37 || tex_id == 141);
+	bool is_gold = (tex_id == 33);
+	bool is_iron_block = (tex_id == 34);
+	bool is_diamond_block = (tex_id == 35);
+	bool is_glass = (tex_id == 21);
+	bool is_metallic = (is_gold || is_iron_block || is_diamond_block);
+	bool is_reflective = (is_water || is_ice || is_metallic || is_glass);
+	bool is_defect = (is_glass && texture_colour.r > 0.92 && texture_colour.g > 0.92 && texture_colour.b > 0.92 && texture_colour.a > 0.5);
 
 	// 3. Normal Perturbation for Dynamic Water Waves
 	vec3 N = geo_normal;
@@ -177,32 +186,112 @@ void main(void) {
 	vec3 total_illumination = (direct_sun + ambient_light + torch_light) * ao;
 
 	// Base shaded diffuse color
-	vec3 shaded_color = texture_colour.rgb * total_illumination;
+	vec3 base_tint = is_glass ? vec3(0.92, 0.97, 1.05) : vec3(1.0);
+	vec3 shaded_color = texture_colour.rgb * base_tint * total_illumination;
 
-	// 6. Highly Reflective Water & Ice with Mirror Sky & Specular Sun Glints
+	// Physical Clear Glass Body on transparent pixels (Snell's Law Refraction + Dispersion)
+	if (is_glass && !is_defect) {
+		vec3 T_refr = refract(-V, N, 1.0 / 1.52);
+		if (length(T_refr) < 0.001) T_refr = reflect(-V, N);
+		vec2 screen_uv = (window_size.x > 1.0) ? (gl_FragCoord.xy / window_size) : vec2(0.5);
+		vec2 refr_offset = T_refr.xy * 0.038;
+		vec3 refracted_bg;
+		if (window_size.x > 1.0) {
+			refracted_bg.r = texture(scene_texture, clamp(screen_uv + refr_offset * 1.025, 0.001, 0.999)).r;
+			refracted_bg.g = texture(scene_texture, clamp(screen_uv + refr_offset * 1.000, 0.001, 0.999)).g;
+			refracted_bg.b = texture(scene_texture, clamp(screen_uv + refr_offset * 0.975, 0.001, 0.999)).b;
+		} else {
+			refracted_bg = vec3(0.90, 0.95, 1.02) * total_illumination;
+		}
+		shaded_color = refracted_bg * vec3(0.94, 0.98, 1.04);
+		if (texture_colour.a > 0.5) {
+			shaded_color = mix(shaded_color, texture_colour.rgb * 1.15 * total_illumination, 0.45);
+		}
+	}
+
+	// Micro-Defect Glass Internal & Forward Light Scattering with Crystal Sparkle
+	if (is_defect) {
+		// Forward Mie scattering with chromatic dispersion when looking towards the sun through glass
+		float forward_alignment = max(0.0, dot(-V, L)); // 1.0 when looking straight at the sun through the glass
+		vec3 chromatic_fwd = vec3(
+			pow(forward_alignment, 3.2) * 4.5 + pow(forward_alignment, 14.0) * 10.0,
+			pow(forward_alignment, 3.8) * 4.0 + pow(forward_alignment, 16.0) * 8.0,
+			pow(forward_alignment, 4.4) * 5.0 + pow(forward_alignment, 18.0) * 12.0
+		);
+		vec3 sun_forward_glow = direct_sun_color * chromatic_fwd * max(0.40, sky_exposure) * (day_factor * 2.2 + 0.6);
+
+		// Dynamic micro-facet sparkle & shimmer as camera moves
+		vec3 spk_coord = local_position * 48.0 + V * 8.0;
+		float spk_rnd = sin(dot(floor(spk_coord), vec3(127.1, 311.7, 74.7))) * 43758.5453;
+		float spk_hit = pow(fract(spk_rnd), 14.0) * 7.0;
+		vec3 spk_rgb = vec3(0.95 + 0.35 * sin(spk_rnd * 6.28), 0.95 + 0.35 * sin(spk_rnd * 6.28 + 2.09), 0.95 + 0.35 * sin(spk_rnd * 6.28 + 4.18));
+		vec3 glitter = spk_rgb * spk_hit * (ambient_light * 1.8 + direct_sun_color * 2.2 * s_factor);
+
+		// Omnidirectional diffuse and back-scatter
+		vec3 omni_scatter = (ambient_light * 2.2 + torch_light * 2.5 + direct_sun_color * (max(0.0, abs(dot(N, L))) * 1.5 + 0.50)) * vec3(1.12, 1.16, 1.24);
+		
+		// Brilliant glowing frosted flecks with crystal glitter
+		vec3 defect_glow = (sun_forward_glow + omni_scatter + glitter) * ao;
+		shaded_color = defect_glow;
+	}
+
+	// 6. Highly Reflective Water, Ice, Glass & Metallic Blocks
 	if (is_reflective) {
 		vec3 R = reflect(-V, N);
 
-		// Blinn-Phong Sun Glint Specular Beam across water
+		// Blinn-Phong Sun Glint Specular Beam (Double-surface specular for dielectric glass)
 		vec3 H = normalize(L + V);
 		float NdotH = max(0.0, dot(N, H));
-		float spec_power = is_water ? 96.0 : 40.0;
+		
+		float spec_power = is_water ? 96.0 : (is_glass ? 96.0 : (is_metallic ? 64.0 : 48.0));
 		float spec_intensity = pow(NdotH, spec_power);
-		vec3 specular_glint = direct_sun_color * spec_intensity * sun_shadow * (day_factor * 2.5 + 0.9);
+		
+		if (is_glass) {
+			// Clear glass double-sided celestial sun reflection
+			vec3 R_back = reflect(-V, -N);
+			float refl_sun = max(max(0.0, dot(R, L)), max(0.0, dot(R_back, L)));
+			float glass_spec = pow(refl_sun, 96.0) * 1.6;
+			spec_intensity = max(spec_intensity, glass_spec);
+		}
+		
+		vec3 spec_tint = vec3(1.0);
+		if (is_gold) {
+			spec_tint = vec3(1.10, 0.88, 0.42);
+		} else if (is_diamond_block) {
+			spec_tint = vec3(0.65, 0.95, 1.15);
+		} else if (is_iron_block) {
+			spec_tint = vec3(1.05, 1.05, 1.10);
+		} else if (is_glass) {
+			spec_tint = vec3(1.08, 1.12, 1.20);
+		}
+		
+		float effective_shadow = is_glass ? max(0.40, sky_exposure) : sun_shadow;
+		vec3 specular_glint = direct_sun_color * spec_tint * spec_intensity * effective_shadow * (day_factor * 2.2 + 0.6);
 
-		// Strong Fresnel Reflection (Schlick approximation)
-		float F0 = is_water ? 0.28 : 0.15;
+		// Fresnel & Total Internal Reflection (Schlick approximation)
+		float F0 = is_water ? 0.28 : (is_glass ? 0.04 : (is_metallic ? 0.40 : 0.20));
 		float cos_theta = max(0.0, dot(N, V));
-		float fresnel = F0 + (1.0 - F0) * pow(1.0 - cos_theta, 2.0);
+		float fresnel = F0 + (is_glass ? 0.45 : (1.0 - F0)) * pow(1.0 - cos_theta, is_glass ? 3.0 : 2.0);
 
 		// Sky & Horizon Reflection Color along ray R
 		float r_sky_height = clamp(R.y, 0.0, 1.0);
 		vec3 day_reflected_sky = mix(vec3(0.78, 0.88, 1.00), vec3(0.35, 0.62, 1.00), r_sky_height);
 		vec3 night_reflected_sky = mix(vec3(0.12, 0.16, 0.28), vec3(0.04, 0.06, 0.16), r_sky_height);
 		vec3 reflected_sky = mix(night_reflected_sky, day_reflected_sky, day_factor);
+		
+		if (is_gold) {
+			reflected_sky *= vec3(1.10, 0.88, 0.42);
+		} else if (is_diamond_block) {
+			reflected_sky = mix(reflected_sky, vec3(0.55, 0.92, 1.0), 0.35);
+		} else if (is_glass) {
+			reflected_sky *= vec3(0.92, 0.97, 1.05);
+		}
 
-		// Blend reflection prominently onto surface
-		shaded_color = mix(shaded_color, reflected_sky, fresnel * 0.90) + specular_glint;
+		// Blend reflection onto surface (mild light TIR for glass, not metallic)
+		if (!is_defect) {
+			float blend_weight = is_metallic ? 0.45 : (is_glass ? 0.45 : 0.90);
+			shaded_color = mix(shaded_color, reflected_sky, fresnel * blend_weight) + specular_glint;
+		}
 	}
 
 	// 7. Distance Atmospheric Scattering / Horizon Mist
@@ -220,5 +309,16 @@ void main(void) {
 	vec3 tonemapped = shaded_color / (shaded_color + vec3(0.85)) * 1.18;
 	vec3 final_color = mix(tonemapped, fog_color, fog_factor);
 
-	fragment_colour = vec4(final_color, texture_colour.a);
+	float out_alpha = texture_colour.a;
+	if (is_glass) {
+		if (is_defect) {
+			// Defect flecks with crisp shine
+			out_alpha = 0.90;
+		} else {
+			// Clear glass body fully transmits refracted background + surface reflection
+			out_alpha = 1.0;
+		}
+	}
+
+	fragment_colour = vec4(final_color, out_alpha);
 }

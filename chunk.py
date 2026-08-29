@@ -29,10 +29,12 @@ class ChunkSection:
 			self.delete()
 			return
 
+		needs_attrib_setup = False
 		if self.vao is None:
 			if hasattr(self.world, 'free_chunk_pool') and self.world.free_chunk_pool:
 				self.vao, self.vertex_position_vbo, self.tex_coord_vbo, self.shading_values_vbo, self.ibo = self.world.free_chunk_pool.pop()
 			else:
+				needs_attrib_setup = True
 				self.vao = gl.GLuint(0)
 				gl.glGenVertexArrays(1, self.vao)
 				gl.glBindVertexArray(self.vao)
@@ -51,22 +53,25 @@ class ChunkSection:
 		# Upload Position VBO
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_position_vbo)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, len(pos_bytes), (gl.GLchar * len(pos_bytes)).from_buffer_copy(pos_bytes), gl.GL_STATIC_DRAW)
-		gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-		gl.glEnableVertexAttribArray(0)
+		if needs_attrib_setup:
+			gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(0)
 
 		# Upload TexCoord VBO
 		tex_bytes = op_tex + tr_tex
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.tex_coord_vbo)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, len(tex_bytes), (gl.GLchar * len(tex_bytes)).from_buffer_copy(tex_bytes), gl.GL_STATIC_DRAW)
-		gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-		gl.glEnableVertexAttribArray(1)
+		if needs_attrib_setup:
+			gl.glVertexAttribPointer(1, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(1)
 
 		# Upload Shading VBO (3 floats per vertex: sky_light, block_light, face_shading)
 		shd_bytes = op_shd + tr_shd
 		gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.shading_values_vbo)
 		gl.glBufferData(gl.GL_ARRAY_BUFFER, len(shd_bytes), (gl.GLchar * len(shd_bytes)).from_buffer_copy(shd_bytes), gl.GL_STATIC_DRAW)
-		gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
-		gl.glEnableVertexAttribArray(2)
+		if needs_attrib_setup:
+			gl.glVertexAttribPointer(2, 3, gl.GL_FLOAT, gl.GL_FALSE, 0, 0)
+			gl.glEnableVertexAttribArray(2)
 
 		# Upload Index Buffer (IBO)
 		idx_bytes = op_idx + tr_idx
@@ -126,6 +131,8 @@ class Chunk:
 			self.chunk_position[2] * CHUNK_LENGTH)
 
 		self.sections = {}
+		self.center_x = self.chunk_position[0] * CHUNK_WIDTH + 8
+		self.center_z = self.chunk_position[2] * CHUNK_LENGTH + 8
 		self.block_states = dict(block_states) if block_states else {}
 		self.active_opaque_sections = []
 		self.active_translucent_sections = []
@@ -197,6 +204,35 @@ class Chunk:
 				self.blocks = array.array('H', [0] * target_size)
 		else:
 			self.blocks = array.array('H', [0] * target_size)
+		self.column_heights = None
+		self.compute_column_heights()
+
+	def compute_column_heights(self):
+		heights = bytearray(256)
+		blocks = self.blocks
+		max_y = 64
+		for sy in range(15, 3, -1):
+			s_start = sy * 16
+			has_b = False
+			for x in range(16):
+				start_idx = x * 4096 + s_start * 16
+				if any(blocks[start_idx : start_idx + 256]):
+					has_b = True
+					break
+			if has_b:
+				max_y = min(255, (sy + 1) * 16)
+				break
+
+		for lx in range(16):
+			base_col = lx * 4096
+			for lz in range(16):
+				col_start = base_col + lz
+				for y in range(max_y, -1, -1):
+					b = blocks[col_start + y * 16]
+					if b != 0 and b != 9 and b != 19:
+						heights[lz * 16 + lx] = y
+						break
+		self.column_heights = heights
 
 	def get_block_number(self, x, y, z):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
@@ -212,6 +248,20 @@ class Chunk:
 				self.blocks[idx] = val
 			if val == 0 and (x, y, z) in self.block_states:
 				del self.block_states[(x, y, z)]
+			if self.column_heights is not None:
+				col_idx = z * 16 + x
+				if val != 0 and val != 9 and val != 19:
+					if y > self.column_heights[col_idx]:
+						self.column_heights[col_idx] = y
+				elif y == self.column_heights[col_idx]:
+					base_col = x * 4096 + z
+					new_h = 0
+					for check_y in range(y - 1, -1, -1):
+						b = self.blocks[base_col + check_y * 16]
+						if b != 0 and b != 9 and b != 19:
+							new_h = check_y
+							break
+					self.column_heights[col_idx] = new_h
 
 	def get_block_state(self, x, y, z):
 		if 0 <= x < 16 and 0 <= y < 256 and 0 <= z < 16:
