@@ -162,23 +162,25 @@ class EntityShadowRenderer:
 			center_y = ground_y
 			center_z = ez + off_z
 
-			# Center vertex (solid dark)
-			center_idx = v_count
-			pos_data.extend([center_x, center_y, center_z])
-			col_data.extend([0.0, 0.0, 0.0, base_alpha])
-			v_count += 1
+			hw = radius * 0.90
+			hl = radius * 0.90
 
-			# Outer perimeter vertices (transparent)
-			for i in range(NUM_SEGS):
-				ang = i * (math.tau / NUM_SEGS)
-				px = center_x + math.cos(ang) * radius
-				pz = center_z + math.sin(ang) * radius
-				pos_data.extend([px, center_y, pz])
-				col_data.extend([0.0, 0.0, 0.0, 0.0])
+			p0 = (center_x - hw, center_y, center_z - hl)
+			p1 = (center_x + hw, center_y, center_z - hl)
+			p2 = (center_x + hw, center_y, center_z + hl)
+			p3 = (center_x - hw, center_y, center_z + hl)
 
-				next_i = (i + 1) % NUM_SEGS
-				idx_data.extend([center_idx, center_idx + 1 + i, center_idx + 1 + next_i])
-				v_count += 1
+			sq_alpha = base_alpha * 0.70
+
+			for px, py, pz in (p0, p1, p2, p3):
+				pos_data.extend([px, py, pz])
+				col_data.extend([0.0, 0.0, 0.0, sq_alpha])
+
+			idx_data.extend([
+				v_count, v_count + 1, v_count + 2,
+				v_count, v_count + 2, v_count + 3
+			])
+			v_count += 4
 
 		if not pos_data:
 			return
@@ -243,8 +245,8 @@ class WorldDirectionalShadowMap:
 		gl.glGenTextures(1, tex)
 		self.tex_id = tex.value
 		gl.glBindTexture(gl.GL_TEXTURE_2D, self.tex_id)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
 		gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
 		c_buf = (gl.GLubyte * len(self.grid)).from_buffer(self.grid)

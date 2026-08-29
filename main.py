@@ -381,21 +381,22 @@ class Window(pyglet.window.Window):
 		player_cx = math.floor(self.camera.position[0] / chunk.CHUNK_WIDTH)
 		player_cz = math.floor(self.camera.position[2] / chunk.CHUNK_LENGTH)
 
-		# Debug: print top 3 closest villages to spawn in terminal
-		try:
-			import village
-			closest = village.find_closest_villages_to_spawn(self.world.seed, count=3, max_region_radius=8)
-			print(f"\n=======================================================")
-			print(f" [VILLAGE LOCATOR] Seed: {self.world.seed}")
-			print(f" Top 3 Closest Villages to Spawn (0, 0):")
-			if closest:
-				for idx, v in enumerate(closest, 1):
-					print(f"   {idx}. Village Center: X={v['x']}, Y={v['y']}, Z={v['z']} | Distance: {v['distance']:.1f} blocks | Buildings: {v['buildings']}")
-			else:
-				print("   No villages found within immediate search radius.")
-			print(f"=======================================================\n")
-		except Exception as e:
-			print(f"[Village Debug Error]: {e}")
+		# Debug: print top 3 closest villages to spawn in terminal (fresh overworld generation only)
+		if getattr(self, 'dimension', 'overworld') == 'overworld' and not getattr(self, 'is_saved_load', False):
+			try:
+				import village
+				closest = village.find_closest_villages_to_spawn(self.world.seed, count=3, max_region_radius=4)
+				print(f"\n=======================================================")
+				print(f" [VILLAGE LOCATOR] Seed: {self.world.seed}")
+				print(f" Top 3 Closest Villages to Spawn (0, 0):")
+				if closest:
+					for idx, v in enumerate(closest, 1):
+						print(f"   {idx}. Village Center: X={v['x']}, Y={v['y']}, Z={v['z']} | Distance: {v['distance']:.1f} blocks | Buildings: {v['buildings']}")
+				else:
+					print("   No villages found within immediate search radius.")
+				print(f"=======================================================\n")
+			except Exception as e:
+				print(f"[Village Debug Error]: {e}")
 
 		self.spawn_chunk_queue = []
 		for cx in range(player_cx - spawn_r, player_cx + spawn_r + 1):
@@ -836,7 +837,7 @@ class Window(pyglet.window.Window):
 
 	def update(self, delta_time):
 		if self.is_loading_world:
-			batch_size = 5
+			batch_size = 12
 			for _ in range(batch_size):
 				if self.spawn_chunk_queue:
 					cx, cz = self.spawn_chunk_queue.pop(0)
@@ -1485,7 +1486,28 @@ class Window(pyglet.window.Window):
 		gl.glFlush()
 
 	def draw_celestial_bodies(self):
-		if getattr(self, "dimension", "overworld") in ("nether", "end"):
+		if getattr(self, "dimension", "overworld") == "end":
+			if getattr(self, "lighting_mode", "BLOCK") == "RAYTRACED":
+				try:
+					import space_sky
+					space_sky.space_sky_renderer.render(self.camera, total_time=getattr(self, "total_game_time", 0.0))
+				except Exception as e:
+					pass
+			return
+
+		if getattr(self, "dimension", "overworld") == "nether":
+			return
+
+		if getattr(self, "dimension", "overworld") == "overworld" and getattr(self, "lighting_mode", "BLOCK") == "RAYTRACED":
+			try:
+				import overworld_sky
+				overworld_sky.overworld_sky_renderer.render(
+					self.camera,
+					time_of_day=getattr(self, "time_of_day", 0.25),
+					total_time=getattr(self, "total_game_time", 0.0)
+				)
+			except Exception as e:
+				pass
 			return
 
 		if not hasattr(self, "celestial_vao") or self.celestial_vao is None:
@@ -1560,8 +1582,8 @@ class Window(pyglet.window.Window):
 			])
 			v_idx += 4
 
-		build_celestial_quad(sun_dx, sun_dy, sun_dz, sun_layer, size=45.0)
-		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=40.0)
+		build_celestial_quad(sun_dx, sun_dy, sun_dz, sun_layer, size=65.0)
+		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=55.0)
 
 		# Stars are ONLY drawn during Night (tod < 0.20 or tod >= 0.80)
 		# They are completely undrawn (0 geometry) during daytime and sunrise!
@@ -1570,15 +1592,13 @@ class Window(pyglet.window.Window):
 				import random
 				rng = random.Random(12345)
 				self.star_base_dirs = []
-				for _ in range(250):
+				for _ in range(500):
 					u = rng.uniform(-1.0, 1.0)
 					phi = rng.uniform(0.0, math.tau)
 					r_xy = math.sqrt(max(0.0, 1.0 - u * u))
 					bx = r_xy * math.cos(phi)
 					by = u
 					bz = r_xy * math.sin(phi)
-					if by < 0.05:
-						by = abs(by) + 0.1
 					self.star_base_dirs.append((bx, by, bz))
 
 			cos_t = math.cos(theta)
@@ -1588,8 +1608,8 @@ class Window(pyglet.window.Window):
 				rx_dir = bx * cos_t - by * sin_t
 				ry_dir = bx * sin_t + by * cos_t
 				rz_dir = bz
-				if ry_dir > 0.05:
-					build_celestial_quad(rx_dir, ry_dir, rz_dir, sun_layer, size=1.8, shading_val=1.0)
+				if ry_dir > 0.04:
+					build_celestial_quad(rx_dir, ry_dir, rz_dir, sun_layer, size=2.2, shading_val=1.0)
 
 		gl.glBindVertexArray(self.celestial_vao)
 

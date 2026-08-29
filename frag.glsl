@@ -123,22 +123,24 @@ void main(void) {
 	float sky_exposure = clamp(sky_light_val / 15.0, 0.0, 1.0);
 
 	// =========================================================================
-	// REAL-TIME DIRECTIONAL SHADOW RAYMARCHING (Trees, Mountains, Cliffs, Buildings)
+	// REAL-TIME DIRECTIONAL SHADOW RAYMARCHING (Trees, Mountains, Cliffs, Buildings, Cactus)
 	// =========================================================================
 	float sun_shadow = 0.0;
 	if (NdotL > 0.001 && sun_height > -0.05) {
 		float occlusion = 0.0;
-		// March along ray L towards the sun
-		// 24 high-resolution adaptive steps spanning 0.8m to 125m
-		for (int i = 1; i <= 24; i++) {
+		// March along ray L towards the sun with fine sub-voxel stepping
+		// 32 high-precision steps: fine 0.35m steps up to 8m, then expanding steps up to 100m
+		for (int i = 1; i <= 32; i++) {
 			float fi = float(i);
-			float t = fi * 0.75 + (fi * fi) * 0.18;
+			float t = (fi <= 16.0) ? (fi * 0.35) : (5.6 + (fi - 16.0) * 1.2 + pow(fi - 16.0, 2.0) * 0.22);
 			vec3 ray_pos = local_position + L * t;
 
-			vec2 uv = (ray_pos.xz - shadow_origin.xz) / shadow_world_size;
+			// Sample discrete block voxel column in the shadow heightfield
+			vec2 block_xz = floor(ray_pos.xz) + vec2(0.5);
+			vec2 uv = (block_xz - shadow_origin.xz) / shadow_world_size;
 			if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
 				float occ_h = texture(shadow_heightmap, uv).r * 255.0;
-				if (ray_pos.y < occ_h - 0.20) {
+				if (ray_pos.y < occ_h - 0.15) {
 					occlusion = 1.0;
 					break;
 				}
@@ -164,11 +166,18 @@ void main(void) {
 	vec3 direct_day_sky = mix(midday_sky, sunset_sky, horizon_factor);
 	vec3 ambient_sky_color = mix(night_sky, direct_day_sky, day_factor);
 
+	float ambient_floor = mix(0.18, 0.38, day_factor);
+
+	if (dimension_id == 2) { // The End (Illuminated by ethereal deep-space cosmos and celestial planet)
+		ambient_sky_color = vec3(0.68, 0.54, 0.90) * 1.35;
+		ambient_floor = 0.62;
+		direct_sun_color = vec3(0.85, 0.72, 1.10) * 1.15;
+	}
+
 	// Direct Sunlight: strictly directional (N.L * shadow)
 	vec3 direct_sun = direct_sun_color * (NdotL * sun_shadow * s_factor);
 
 	// Indirect Ambient Skylight: guaranteed ambient floor so side faces in shade remain clearly visible
-	float ambient_floor = mix(0.18, 0.38, day_factor);
 	vec3 ambient_light = ambient_sky_color * max(sky_exposure * s_factor, ambient_floor);
 
 	// 5. Point Light Emission (Torches, Glowstone, Lava, Fire)
@@ -302,7 +311,9 @@ void main(void) {
 	if (dimension_id == 1) { // Nether
 		fog_color = vec3(0.28, 0.06, 0.06);
 	} else if (dimension_id == 2) { // End
-		fog_color = vec3(0.09, 0.03, 0.14);
+		fog_color = vec3(0.045, 0.015, 0.075);
+		fog_density = 0.0018;
+		fog_factor = clamp(1.0 - exp(-dist_to_cam * fog_density), 0.0, 0.70);
 	}
 
 	// ACES Tone Mapping for vibrant shader contrast

@@ -427,6 +427,14 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	except Exception as e:
 		pass
 
+	# Save to disk
+	try:
+		raw_out = flat_bytes.tobytes() if hasattr(flat_bytes, 'tobytes') else bytes(flat_bytes)
+		with gzip.open(save_path, 'wb', compresslevel=1) as f:
+			f.write(raw_out)
+	except Exception:
+		pass
+
 	if hasattr(flat_bytes, 'tobytes'):
 		return flat_bytes.tobytes()
 	return bytes(flat_bytes)
@@ -747,7 +755,8 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 
 	emitters_lookup = bytearray(512)
 	emitters_lookup[79] = 14   # Torch
-	emitters_lookup[87] = 15   # Glowstone
+	emitters_lookup[86] = 15   # Glowstone
+	emitters_lookup[87] = 15   # Nether Quartz Ore
 	emitters_lookup[15] = 15   # Lava source
 	emitters_lookup[20] = 15   # Flowing lava
 	emitters_lookup[78] = 15   # Fire
@@ -1016,6 +1025,8 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		if sy < 0: return 0, 0
 		if 0 <= sx < 16 and 0 <= sz < 16:
 			s_idx = sx * 4096 + sy * 16 + sz
+			if is_nether_or_end:
+				return 7, block_light[s_idx]
 			return sky_light[s_idx], block_light[s_idx]
 		
 		# Neighbor chunk border lookup
@@ -1055,19 +1066,19 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 	# Corner neighbor offsets for the 4 quad vertices of each face:
 	# face 0 (+X), 1 (-X), 2 (+Y), 3 (-Y), 4 (+Z), 5 (-Z)
 	face_corner_offsets = [
-		# Face 0 (+X, Right)
+		# Face 0 (+X, East)
 		[
 			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
-			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
-			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
 			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
 		],
-		# Face 1 (-X, Left)
+		# Face 1 (-X, West)
 		[
 			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
-			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
-			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
 			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
 		],
 		# Face 2 (+Y, Top)
 		[
@@ -1078,10 +1089,10 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		],
 		# Face 3 (-Y, Bottom)
 		[
-			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
-			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
 			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],
 			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],
+			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
+			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
 		],
 		# Face 4 (+Z, Front)
 		[
@@ -1114,10 +1125,13 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 		nx, ny, nz = lx + dx, ly + dy, lz + dz
 		base_sky, base_blk = sample_voxel_light(nx, ny, nz)
 
-		if not has_any_emitters and base_sky == 15.0:
-			if face_idx == 2 or (0 <= nx < 16 and 0 <= nz < 16 and ny > heightmap[nx * 16 + nz]):
+		if not has_any_emitters:
+			if base_sky == 15.0 and (face_idx == 2 or (0 <= nx < 16 and 0 <= nz < 16 and ny > heightmap[nx * 16 + nz])):
 				# Fast path for open daylight: all corners are 15.0
 				return [15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd, 15.0, 0.0, dir_shd]
+			elif is_nether_or_end:
+				# Fast path for Nether / End: uniform ambient light level 7
+				return [7.0, 0.0, dir_shd, 7.0, 0.0, dir_shd, 7.0, 0.0, dir_shd, 7.0, 0.0, dir_shd]
 
 		corners = face_corner_offsets[face_idx]
 		out = []
@@ -3752,7 +3766,7 @@ class World:
 
 		# 2. Block Light calculation
 		block_val = 0
-		LIGHT_EMITTERS = {79: 14, 94: 14, 87: 15, 15: 15, 20: 15, 78: 15, 88: 11, 89: 11, 183: 15, 182: 7}
+		LIGHT_EMITTERS = {79: 14, 94: 14, 86: 15, 87: 15, 15: 15, 20: 15, 78: 15, 88: 11, 89: 11, 183: 15, 182: 7}
 		for dx in range(-14, 15):
 			for dz in range(-14, 15):
 				m_dist_xz = abs(dx) + abs(dz)
