@@ -169,6 +169,9 @@ class MobManager:
 									break
 								off_x = sx + random.uniform(-1.5, 1.5)
 								off_z = sz + random.uniform(-1.5, 1.5)
+								self.spawn_mob("zombie_pigman", (off_x, sy, off_z))
+			return
+
 		if getattr(self.world, "dimension", "overworld") == "end":
 			# End Dimension Initial Spawning: Only Endermen spawn in the End! (Atmospheric balanced density)
 			enderman_count = sum(1 for m in self.mobs if m.mob_type == "enderman")

@@ -1474,6 +1474,20 @@ class Window(pyglet.window.Window):
 		gl.glEnable(gl.GL_DEPTH_TEST)
 		gl.glDepthMask(gl.GL_FALSE)
 		self.draw_celestial_bodies()
+
+		# Render 3D Clouds in Overworld (Y=128.0 - blocky in classic mode, photorealistic in shaders mode)
+		if getattr(self, "dimension", "overworld") == "overworld":
+			try:
+				import clouds
+				clouds.cloud_manager.draw(
+					self.camera,
+					lighting_mode=getattr(self, "lighting_mode", "BLOCK"),
+					time_of_day=getattr(self, "time_of_day", 0.25),
+					total_time=getattr(self, "total_game_time", 0.0)
+				)
+			except Exception as e:
+				pass
+
 		gl.glDepthMask(gl.GL_TRUE)
 
 		# If 1st Person View, render Steve's 1st Person 3D Arm using dedicated pipeline!

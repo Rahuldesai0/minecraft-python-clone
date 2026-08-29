@@ -1068,45 +1068,45 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 	face_corner_offsets = [
 		# Face 0 (+X, East)
 		[
-			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
-			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
-			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
-			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
+			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],    # v0: (+Y, +Z)
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],  # v1: (-Y, +Z)
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],# v2: (-Y, -Z)
+			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],  # v3: (+Y, -Z)
 		],
 		# Face 1 (-X, West)
 		[
-			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],
-			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],
-			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],
-			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],
+			[(0, 0, -1), (0, 1, 0), (0, 1, -1)],  # v0: (+Y, -Z)
+			[(0, 0, -1), (0, -1, 0), (0, -1, -1)],# v1: (-Y, -Z)
+			[(0, 0, 1), (0, -1, 0), (0, -1, 1)],  # v2: (-Y, +Z)
+			[(0, 0, 1), (0, 1, 0), (0, 1, 1)],    # v3: (+Y, +Z)
 		],
 		# Face 2 (+Y, Top)
 		[
-			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],
-			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],
-			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
-			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
+			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],    # v0: (+X, +Z)
+			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],  # v1: (+X, -Z)
+			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],# v2: (-X, -Z)
+			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],  # v3: (-X, +Z)
 		],
 		# Face 3 (-Y, Bottom)
 		[
-			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],
-			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],
-			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],
-			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],
+			[(-1, 0, 0), (0, 0, 1), (-1, 0, 1)],  # v0: (-X, +Z)
+			[(-1, 0, 0), (0, 0, -1), (-1, 0, -1)],# v1: (-X, -Z)
+			[(1, 0, 0), (0, 0, -1), (1, 0, -1)],  # v2: (+X, -Z)
+			[(1, 0, 0), (0, 0, 1), (1, 0, 1)],    # v3: (+X, +Z)
 		],
 		# Face 4 (+Z, Front)
 		[
-			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],
-			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],
-			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],
-			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],
+			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],  # v0: (-X, +Y)
+			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],# v1: (-X, -Y)
+			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],  # v2: (+X, -Y)
+			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],    # v3: (+X, +Y)
 		],
 		# Face 5 (-Z, Back)
 		[
-			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],
-			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],
-			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],
-			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],
+			[(1, 0, 0), (0, 1, 0), (1, 1, 0)],    # v0: (+X, +Y)
+			[(1, 0, 0), (0, -1, 0), (1, -1, 0)],  # v1: (+X, -Y)
+			[(-1, 0, 0), (0, -1, 0), (-1, -1, 0)],# v2: (-X, -Y)
+			[(-1, 0, 0), (0, 1, 0), (-1, 1, 0)],  # v3: (-X, +Y)
 		],
 	]
 
@@ -1273,13 +1273,21 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					for quad_idx, (quad_verts, tex_idx, shading, (qdx, qdy, qdz)) in enumerate(quads):
 						t_raw = b_info['tex_coords'][tex_idx] if tex_idx < len(b_info['tex_coords']) else b_info['tex_coords'][0]
 						c = trans_vert_count if is_translucent else opaque_vert_count
-						idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
 
 						for vx, vy, vz in quad_verts:
 							rx, ry, rz = rotate_pt(vx, vy, vz, rot_facing)
 							pos_arr.extend((rx + x, ry + y, rz + z))
 
 						box_shd_vals = get_corner_shd(local_x, local_y, local_z, quad_idx, shading, emit_val > 0, emit_val)
+
+						l0 = box_shd_vals[0] + box_shd_vals[1]
+						l1 = box_shd_vals[3] + box_shd_vals[4]
+						l2 = box_shd_vals[6] + box_shd_vals[7]
+						l3 = box_shd_vals[9] + box_shd_vals[10]
+						if (l0 + l2) >= (l1 + l3):
+							idx_arr.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+						else:
+							idx_arr.extend((c + 1, c + 2, c + 3, c + 1, c + 3, c))
 
 						if is_translucent:
 							trans_vert_count += 4
@@ -1301,6 +1309,11 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 					emit_val = emitters_lookup[b_num]
 					face_shd_vals = get_corner_shd(local_x, local_y, local_z, face, dir_shd, emit_val > 0, emit_val)
 
+					l0 = face_shd_vals[0] + face_shd_vals[1]
+					l1 = face_shd_vals[3] + face_shd_vals[4]
+					l2 = face_shd_vals[6] + face_shd_vals[7]
+					l3 = face_shd_vals[9] + face_shd_vals[10]
+
 					if is_trans:
 						if is_liquid:
 							for i in range(4):
@@ -1317,7 +1330,10 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							))
 
 						c = trans_vert_count
-						trans_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+						if (l0 + l2) >= (l1 + l3):
+							trans_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+						else:
+							trans_idx.extend((c + 1, c + 2, c + 3, c + 1, c + 3, c))
 						trans_vert_count += 4
 
 						trans_tex.extend(tc)
@@ -1338,7 +1354,10 @@ def build_section_mesh_process(chunk_x, chunk_z, section_y, center_blocks, north
 							))
 
 						c = opaque_vert_count
-						opaque_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+						if (l0 + l2) >= (l1 + l3):
+							opaque_idx.extend((c, c + 1, c + 2, c, c + 2, c + 3))
+						else:
+							opaque_idx.extend((c + 1, c + 2, c + 3, c + 1, c + 3, c))
 						opaque_vert_count += 4
 
 						opaque_tex.extend(tc)
