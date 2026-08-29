@@ -31,21 +31,26 @@ def is_walkable_ground(block_id):
 	return block_id != 0 and block_id not in block_state.PASSABLE_BLOCKS and block_id not in (11, 13, 14, 18, 224, 234, 244, 254, 264)
 
 
+def is_passable_headroom(block_id):
+	"""Returns True if the block is passable headroom (air, foliage, flowers, snow, torches, etc.)."""
+	return block_id == 0 or block_id in block_state.PASSABLE_BLOCKS or block_id in (11, 15, 20, 36, 78, 79, 81)
+
+
 class RandomStrollGoal:
 	"""AI Goal: Pick occasional safe destinations and wander without walking into hazards, trees, or cliffs."""
 	def __init__(self, mob):
 		self.mob = mob
-		self.cooldown = random.uniform(2.0, 5.0)
+		self.cooldown = random.uniform(1.0, 3.5)
 
 	def update(self, dt, world):
 		self.cooldown -= dt
 		if self.cooldown <= 0:
-			self.cooldown = random.uniform(4.0, 9.0)
+			self.cooldown = random.uniform(3.0, 7.0)
 
 			# Try picking a safe destination avoiding water, lava, leaves, and cliffs
-			for _ in range(8):
+			for _ in range(12):
 				angle = random.uniform(0, math.tau)
-				dist = random.uniform(4.0, 8.0)
+				dist = random.uniform(3.5, 7.5)
 				tx = self.mob.position[0] + math.cos(angle) * dist
 				tz = self.mob.position[2] + math.sin(angle) * dist
 
@@ -59,24 +64,24 @@ class RandomStrollGoal:
 		bz = int(math.floor(tz))
 		curr_y = int(math.floor(self.mob.position[1]))
 
-		# Search around current Y level (within +1 to -3 blocks) for ground surface
+		# Search around current Y level (within +2 to -4 blocks) for ground surface
 		ground_y = None
-		for dy in range(1, -4, -1):
+		for dy in range(2, -5, -1):
 			check_y = curr_y + dy
 			b_curr = world.get_block_number((bx, check_y, bz))
 			b_above1 = world.get_block_number((bx, check_y + 1, bz))
 			b_above2 = world.get_block_number((bx, check_y + 2, bz))
 
-			if is_walkable_ground(b_curr) and b_above1 == 0 and b_above2 == 0:
+			if is_walkable_ground(b_curr) and is_passable_headroom(b_above1) and is_passable_headroom(b_above2):
 				ground_y = check_y
 				break
 
 		if ground_y is None:
 			return False
 
-		# Must not be a steep jump up (> 1.2 blocks) or steep drop (> 2.5 blocks)
+		# Must not be a steep jump up (> 1.25 blocks) or steep drop (> 3.5 blocks)
 		y_diff = (ground_y + 1.0) - self.mob.position[1]
-		if y_diff > 1.2 or y_diff < -2.5:
+		if y_diff > 1.25 or y_diff < -3.5:
 			return False
 
 		return True
@@ -154,14 +159,14 @@ class PanicGoal:
 		bz = int(math.floor(tz))
 		curr_y = int(math.floor(self.mob.position[1]))
 
-		for dy in range(1, -4, -1):
+		for dy in range(2, -5, -1):
 			check_y = curr_y + dy
 			b_curr = world.get_block_number((bx, check_y, bz))
 			b_above1 = world.get_block_number((bx, check_y + 1, bz))
 			b_above2 = world.get_block_number((bx, check_y + 2, bz))
-			if is_walkable_ground(b_curr) and b_above1 == 0 and b_above2 == 0:
+			if is_walkable_ground(b_curr) and is_passable_headroom(b_above1) and is_passable_headroom(b_above2):
 				y_diff = (check_y + 1.0) - self.mob.position[1]
-				if -2.5 <= y_diff <= 1.2:
+				if -3.5 <= y_diff <= 1.25:
 					return True
 		return False
 
@@ -459,24 +464,28 @@ class MobEntity:
 				self.target_yaw = math.atan2(dx, dz)
 				move_speed = self.speed * 4.3 * self.speed_mult
 
-				# Check ahead for water, lava, fire, or cliff hazards
+				# Check ahead for water, lava, fire, or steep cliff hazards
 				ahead_dist = 0.8
 				ahead_x = self.position[0] + (dx / dist) * ahead_dist
 				ahead_z = self.position[2] + (dz / dist) * ahead_dist
 				abx, abz = int(math.floor(ahead_x)), int(math.floor(ahead_z))
 				curr_by = int(math.floor(self.position[1]))
 
-				ahead_block = world.get_block_number((abx, curr_by, abz))
-				ahead_below = world.get_block_number((abx, curr_by - 1, abz))
-				ahead_deep  = world.get_block_number((abx, curr_by - 2, abz))
+				# Scan for solid walkable ground ahead within safe step range (+1 to -3 blocks)
+				found_safe_step = False
+				is_hazard = False
+				for y_off in (1, 0, -1, -2, -3):
+					b_step = world.get_block_number((abx, curr_by + y_off, abz))
+					if is_water_block(b_step) or is_lava_block(b_step) or (b_step == 78):
+						is_hazard = True
+						break
+					if is_walkable_ground(b_step):
+						found_safe_step = True
+						break
 
-				is_hazard = is_liquid_or_fire_block(ahead_block) or is_liquid_or_fire_block(ahead_below) or is_liquid_or_fire_block(ahead_deep)
-				is_cliff = (ahead_block == 0 and ahead_below == 0 and ahead_deep == 0)
-
-				# Avoid walking into water/lava unless extinguishing fire in water
-				is_seeking_water = (self.fire_timer > 0.0 and (is_water_block(ahead_block) or is_water_block(ahead_below) or is_water_block(ahead_deep)))
-				if not is_seeking_water and (is_hazard or is_cliff):
-					# Hazard directly ahead! Stop and clear destination
+				is_seeking_water = (self.fire_timer > 0.0 and is_hazard)
+				if not is_seeking_water and (is_hazard or not found_safe_step):
+					# Dangerous hazard or sheer cliff drop! Stop and clear destination
 					self.target_dest = None
 					self.is_moving = False
 					self.velocity[0] = 0.0
@@ -561,10 +570,19 @@ class MobEntity:
 					self.fall_start_y = None
 
 				# Auto-jump over 1-block obstacles while moving on ground
-				if self.is_moving and self.velocity[1] <= 0.0:
-					yaw = self.yaw
-					ahead_x = self.position[0] + math.sin(yaw) * 0.45
-					ahead_z = self.position[2] + math.cos(yaw) * 0.45
+				if self.is_moving and self.on_ground:
+					h_speed = math.sqrt(self.velocity[0] ** 2 + self.velocity[2] ** 2)
+					if h_speed > 0.001:
+						dir_x = self.velocity[0] / h_speed
+						dir_z = self.velocity[2] / h_speed
+					else:
+						yaw = self.target_yaw if getattr(self, 'target_yaw', None) is not None else self.yaw
+						dir_x = math.sin(yaw)
+						dir_z = math.cos(yaw)
+
+					ahead_dist = 0.55
+					ahead_x = self.position[0] + dir_x * ahead_dist
+					ahead_z = self.position[2] + dir_z * ahead_dist
 					curr_by = int(math.floor(self.position[1]))
 					abx, abz = int(math.floor(ahead_x)), int(math.floor(ahead_z))
 
@@ -573,26 +591,26 @@ class MobEntity:
 					b_above2 = world.get_block_number((abx, curr_by + 2, abz))
 
 					curr_bx, curr_bz = int(math.floor(self.position[0])), int(math.floor(self.position[2]))
-					headroom_curr = (world.get_block_number((curr_bx, curr_by + 1, curr_bz)) == 0 and
-					                 world.get_block_number((curr_bx, curr_by + 2, curr_bz)) == 0)
-					headroom_ahead = (b_above1 == 0 and b_above2 == 0)
+					headroom_curr = (is_passable_headroom(world.get_block_number((curr_bx, curr_by + 1, curr_bz))) and
+					                 is_passable_headroom(world.get_block_number((curr_bx, curr_by + 2, curr_bz))))
+					headroom_ahead = (is_passable_headroom(b_above1) and is_passable_headroom(b_above2))
 
 					# Only jump if obstacle is valid walkable ground and headroom is clear
 					if is_walkable_ground(b_obs) and headroom_ahead and headroom_curr:
-						self.velocity[1] = 4.6  # Authentic Minecraft 1.2-block step jump
+						self.velocity[1] = 7.0  # Authentic Minecraft 1.25-block step jump
 						self.on_ground = False
 
 			# Horizontal movement & solid wall collision check
 			hw = (self.width / 2.0) * 0.7
-			curr_y = int(math.floor(self.position[1]))
-			mob_h_ceil = int(math.ceil(self.height))
+			check_min_y = int(math.floor(self.position[1] + 0.55))
+			check_max_y = int(math.floor(self.position[1] + self.height))
 
 			# X-axis step
 			nx = self.position[0] + self.velocity[0] * dt
 			check_x = int(math.floor(nx + (hw if self.velocity[0] > 0 else -hw)))
 			blocked_x = False
 			if self.velocity[0] != 0:
-				for y_chk in range(curr_y, curr_y + mob_h_ceil):
+				for y_chk in range(check_min_y, check_max_y + 1):
 					for z_chk in (int(math.floor(self.position[2] - hw)), int(math.floor(self.position[2] + hw))):
 						b = world.get_block_number((check_x, y_chk, z_chk))
 						if b != 0 and not is_liquid_or_fire_block(b):
@@ -611,7 +629,7 @@ class MobEntity:
 			check_z = int(math.floor(nz + (hw if self.velocity[2] > 0 else -hw)))
 			blocked_z = False
 			if self.velocity[2] != 0:
-				for y_chk in range(curr_y, curr_y + mob_h_ceil):
+				for y_chk in range(check_min_y, check_max_y + 1):
 					for x_chk in (int(math.floor(self.position[0] - hw)), int(math.floor(self.position[0] + hw))):
 						b = world.get_block_number((x_chk, y_chk, check_z))
 						if b != 0 and not is_liquid_or_fire_block(b):
@@ -657,7 +675,7 @@ class MobEntity:
 				bz_min = int(math.floor(self.position[2] - hw + 0.02))
 				bz_max = int(math.floor(self.position[2] + hw - 0.02))
 
-				check_top_y = int(math.floor(self.position[1] + 0.1))
+				check_top_y = int(math.floor(self.position[1] + 0.6))
 				check_bot_y = int(math.floor(ny - 0.2))
 				hit_floor = None
 
@@ -671,7 +689,7 @@ class MobEntity:
 								break
 						if is_solid:
 							break
-					if is_solid and (fy + 1.0) <= (self.position[1] + 0.5):
+					if is_solid and (fy + 1.0) <= (self.position[1] + 0.6):
 						hit_floor = fy
 						break
 
@@ -805,9 +823,23 @@ def check_line_of_sight(world, sx, sy, sz, tx, ty, tz):
 		by = int(math.floor(sy + dy * frac))
 		bz = int(math.floor(sz + dz * frac))
 		b_num = world.get_block_number((bx, by, bz))
-		if b_num != 0 and b_num not in (9, 19, 15, 20, 78, 79, 81):
+		if b_num != 0 and not is_passable_headroom(b_num) and b_num not in (9, 19):
 			return False
 	return True
+
+
+def is_player_in_creative(flying=False, camera=None):
+	"""Returns True if the player is in Creative or Spectator mode."""
+	if flying:
+		return True
+	if camera:
+		if getattr(camera, 'flying', False):
+			return True
+		if getattr(camera, 'gamemode', 'survival') in ('creative', 'spectator'):
+			return True
+		if getattr(getattr(camera, 'window', None), 'flying', False):
+			return True
+	return False
 
 
 class FindTargetGoal:
@@ -823,8 +855,7 @@ class FindTargetGoal:
 			return
 		self.scan_timer = 0.2  # Check target every 0.2s
 
-		# Only target valid Survival-mode living players
-		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_creative = is_player_in_creative(flying, camera)
 		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
 		if is_creative or is_dead or not player_pos:
 			self.mob.target = None
@@ -860,7 +891,7 @@ class MeleeAttackGoal:
 		if self.cooldown_timer > 0:
 			self.cooldown_timer = max(0.0, self.cooldown_timer - dt)
 
-		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_creative = is_player_in_creative(flying, camera)
 		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
 		if is_creative or is_dead or not player_pos:
 			self.mob.target = None
@@ -925,7 +956,7 @@ class RangedBowAttackGoal:
 		if self.attack_cooldown > 0:
 			self.attack_cooldown = max(0.0, self.attack_cooldown - dt)
 
-		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_creative = is_player_in_creative(flying, camera)
 		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
 		if is_creative or is_dead or not player_pos:
 			self.mob.target = None
@@ -985,12 +1016,16 @@ class RangedBowAttackGoal:
 				self.attack_cooldown = self.attack_cooldown_max
 
 				if arrow_manager and hasattr(arrow_manager, "spawn_arrow"):
-					launch_x, launch_y, launch_z = mx, my + 1.4, mz
 					target_y = py - 0.4  # Target player chest level (camera is at eye level)
-					adx = px - launch_x
-					ady = target_y - launch_y
-					adz = pz - launch_z
+					adx = px - mx
+					ady = target_y - (my + 1.4)
+					adz = pz - mz
 					adist = max(0.1, math.sqrt(adx * adx + adz * adz))
+
+					# Launch from outside the skeleton's hitbox in front of its hands
+					launch_x = mx + (adx / adist) * 0.45
+					launch_y = my + 1.4
+					launch_z = mz + (adz / adist) * 0.45
 
 					# Parabolic arc solving for 0.05 gravity and 0.99 drag
 					speed = 1.6  # blocks / tick
@@ -1006,7 +1041,7 @@ class RangedBowAttackGoal:
 					vy += random.gauss(0, 1) * inaccuracy
 					vz += random.gauss(0, 1) * inaccuracy
 
-					arrow_manager.spawn_arrow((launch_x, launch_y, launch_z), (vx, vy, vz), is_critical=False, shooter="skeleton")
+					arrow_manager.spawn_arrow((launch_x, launch_y, launch_z), (vx, vy, vz), is_critical=False, shooter=self.mob)
 
 class BlazeAttackGoal:
 	"""AI Goal: 3D flying target acquisition (up to 48 blocks), attack flare preparation (1.0s),
@@ -1045,7 +1080,7 @@ class BlazeAttackGoal:
 		if self.cooldown_timer > 0:
 			self.cooldown_timer = max(0.0, self.cooldown_timer - dt)
 
-		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_creative = is_player_in_creative(flying, camera)
 		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
 		if is_creative or is_dead or not player_pos:
 			self.mob.target = None
@@ -1509,12 +1544,13 @@ class CreeperAttackGoal:
 		self.repath_timer = 0.0
 
 	def update(self, dt, world, player_pos, camera=None, gui=None, tnt_manager=None, mob_manager=None, item_drop_manager=None, flying=False):
-		is_creative = flying or (camera and getattr(camera, 'flying', False))
+		is_creative = is_player_in_creative(flying, camera)
 		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
 		if is_creative or is_dead or not player_pos:
 			self.fuse_time = max(0.0, self.fuse_time - dt * 20.0)
 			self.mob.fuse_progress = self.fuse_time / self.fuse_max
 			self.mob.is_hissing = False
+			self.mob.target = None
 			return
 
 		px, py, pz = player_pos
@@ -1648,7 +1684,7 @@ class EndermanEntity(HostileEntity):
 		if attacker_pos:
 			self.target = tuple(attacker_pos)
 
-	def check_player_stare(self, world, player_pos, camera):
+	def check_player_stare(self, world, player_pos, camera, flying=False):
 		"""
 		Authentic Minecraft eye-contact detection:
 		Checks if the player's camera look ray directly hits the Enderman's eye/head.
@@ -1658,8 +1694,9 @@ class EndermanEntity(HostileEntity):
 		if not player_pos or not camera or self.is_angry:
 			return False
 
-		# Creative / spectator mode ignores gaze
-		if getattr(camera, 'flying', False) or getattr(camera, 'health', 1) <= 0:
+		is_creative = is_player_in_creative(flying, camera)
+		is_dead = (camera and getattr(camera, 'health', 1) <= 0)
+		if is_creative or is_dead:
 			return False
 
 		px, py, pz = player_pos
@@ -1678,8 +1715,8 @@ class EndermanEntity(HostileEntity):
 		dz = end_eye_z - cam_z
 		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-		# Minecraft eye-stare detection range: up to 32 blocks
-		if dist > 32.0 or dist < 0.5:
+		# Eye-stare detection range: up to 48 blocks
+		if dist > 48.0 or dist < 0.5:
 			return False
 
 		# Camera look direction unit vector matching hit.py and engine coordinate raycasts
@@ -1693,10 +1730,8 @@ class EndermanEntity(HostileEntity):
 		if dot <= 0.0:
 			return False
 
-		# Cosine of angle between look ray and direction to Enderman
 		cos_theta = dot / dist
-		# Must be aimed directly at head (< 5 degrees and perpendicular distance <= 0.35m)
-		if cos_theta < 0.996:
+		if cos_theta < 0.985:
 			return False
 
 		proj_x = cam_x + look_x * dot
@@ -1704,20 +1739,19 @@ class EndermanEntity(HostileEntity):
 		proj_z = cam_z + look_z * dot
 		perp_dist = math.sqrt((end_eye_x - proj_x) ** 2 + (end_eye_y - proj_y) ** 2 + (end_eye_z - proj_z) ** 2)
 
-		if perp_dist > 0.35:
+		if perp_dist > 0.65:
 			return False
 
 		# Check line-of-sight: raycast between camera and Enderman eye through world
 		steps = max(2, int(dist * 2.0))
 		for i in range(1, steps):
 			frac = i / float(steps)
-			bx = int(round(cam_x + dx * frac))
-			by = int(round(cam_y + dy * frac))
-			bz = int(round(cam_z + dz * frac))
+			bx = int(math.floor(cam_x + dx * frac))
+			by = int(math.floor(cam_y + dy * frac))
+			bz = int(math.floor(cam_z + dz * frac))
 
 			b_num = world.get_block_number((bx, by, bz))
-			if b_num != 0 and not is_liquid_or_fire_block(b_num):
-				# Line of sight blocked by opaque wall/terrain
+			if b_num != 0 and not is_passable_headroom(b_num) and b_num not in (9, 19):
 				return False
 
 		return True
@@ -1819,10 +1853,14 @@ class EndermanEntity(HostileEntity):
 			self.take_damage(1, world=world)
 			self.teleport_randomly(world, max_h=32, max_v=16)
 
-		# 2. EYE CONTACT AGGRO DETECTION
+		# 2. EYE CONTACT AGGRO DETECTION (Provoked when looked in the eyes for > 0.5 seconds in Survival mode)
 		if not self.is_angry and player_pos and camera:
-			if self.check_player_stare(world, player_pos, camera):
-				self.become_angry(player_pos)
+			if self.check_player_stare(world, player_pos, camera, flying=flying):
+				self.stare_contact_time = getattr(self, "stare_contact_time", 0.0) + dt
+				if self.stare_contact_time >= 0.5:
+					self.become_angry(player_pos)
+			else:
+				self.stare_contact_time = max(0.0, getattr(self, "stare_contact_time", 0.0) - dt * 1.5)
 
 		# 3. ANGER & COMBAT / PURSUIT
 		if self.is_angry:
@@ -1836,10 +1874,10 @@ class EndermanEntity(HostileEntity):
 				pdz = player_pos[2] - self.position[2]
 				dist_to_player = math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz)
 
-			is_creative = getattr(camera, 'flying', False) or (camera and getattr(camera, 'health', 1) <= 0)
+			is_creative = is_player_in_creative(flying, camera) or (camera and getattr(camera, 'health', 1) <= 0)
 
-			# Calm down if anger timer expired, player died/in creative, or player moved far away (>36 blocks)
-			if self.anger_timer <= 0.0 or is_creative or dist_to_player > 36.0:
+			# Calm down if anger timer expired, player entered creative mode/died, or moved far away
+			if self.anger_timer <= 0.0 or is_creative or dist_to_player > 48.0:
 				self.is_angry = False
 				self.is_screaming = False
 				self.speed = 0.30

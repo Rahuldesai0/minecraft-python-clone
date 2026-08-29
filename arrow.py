@@ -119,7 +119,12 @@ class ArrowEntity:
 
 		if mob_manager and hasattr(mob_manager, "mobs"):
 			for mob in mob_manager.mobs:
-				if mob.is_dead or mob is self.shooter:
+				if mob.is_dead:
+					continue
+				# Ignore the mob entity that fired this arrow
+				if mob is self.shooter or getattr(mob, 'entity_id', -1) == getattr(self.shooter, 'entity_id', -2):
+					continue
+				if (self.shooter == "skeleton" or getattr(self.shooter, 'mob_type', '') == 'skeleton') and mob.mob_type == "skeleton" and getattr(self, "life_ticks", 0) < 10:
 					continue
 				mx, my, mz = mob.position
 				half_w = (mob.width / 2.0) + 0.3
@@ -135,7 +140,7 @@ class ArrowEntity:
 		# Check Player Collision along segment if arrow was fired by a hostile mob
 		hit_player = False
 		min_player_dist = float('inf')
-		if self.shooter != "player" and camera and not getattr(camera, 'flying', False):
+		if self.shooter != "player" and camera and not getattr(camera, 'flying', False) and getattr(camera, 'gamemode', 'survival') != 'creative':
 			px, py, pz = camera.position
 			half_w = 0.4
 			player_box = (px - half_w, px + half_w, py - 1.65, py + 0.2, pz - half_w, pz + half_w)
