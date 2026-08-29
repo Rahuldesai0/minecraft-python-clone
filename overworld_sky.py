@@ -108,7 +108,7 @@ float worley2d(vec2 p) {
 }
 
 // Multi-octave Worley + Perlin Cumulus Cloud Structure
-float cumulus_density(vec2 uv) {
+float cumulus_density(vec2 uv, float day_factor) {
     // Large cumulus base billows (Worley cellular)
     float w1 = worley2d(uv * 1.5);
     float w2 = worley2d(uv * 3.0) * 0.5;
@@ -124,27 +124,14 @@ float cumulus_density(vec2 uv) {
     // Combine Worley billows with Perlin detail
     float shape = mix(worley_cumulus, perlin_fbm, 0.35);
 
-    // Island threshold for distinct puffy cumulus clouds with clear sky
-    float coverage = 0.44;
-    return smoothstep(coverage, coverage + 0.30, shape);
+    // Dynamic coverage threshold: Daytime (0.44 = full fluffy cumulus) vs Nighttime (0.64 = scarce, rare isolated wisps)
+    float coverage = mix(0.64, 0.44, day_factor);
+    return smoothstep(coverage, coverage + 0.28, shape);
 }
 
 void main(void) {
     vec3 sky_dir = normalize(v_SkyPos - u_CameraPos);
     if (sky_dir.y < 0.015) {
-        discard;
-    }
-
-    // Atmospheric planar perspective projection
-    vec2 proj_coord = sky_dir.xz / (sky_dir.y + 0.20);
-    
-    // Wind drift across the sky
-    vec2 wind = vec2(u_GameTime * 0.008, u_GameTime * 0.002);
-    vec2 uv = proj_coord * 0.42 + wind;
-
-    // Sample cumulus density
-    float density = cumulus_density(uv);
-    if (density <= 0.005) {
         discard;
     }
 
@@ -154,6 +141,19 @@ void main(void) {
     float day_factor = smoothstep(-0.15, 0.15, sun_h);
     float horizon_factor = 1.0 - clamp(abs(sun_h) / 0.30, 0.0, 1.0);
     horizon_factor = horizon_factor * horizon_factor;
+
+    // Atmospheric planar perspective projection
+    vec2 proj_coord = sky_dir.xz / (sky_dir.y + 0.20);
+    
+    // Wind drift across the sky
+    vec2 wind = vec2(u_GameTime * 0.008, u_GameTime * 0.002);
+    vec2 uv = proj_coord * 0.42 + wind;
+
+    // Sample cumulus density (scarce at night to reveal starry sky & northern lights)
+    float density = cumulus_density(uv, day_factor);
+    if (density <= 0.005) {
+        discard;
+    }
 
     // Forward Mie scattering (Silver Lining / Solar Rim Glow)
     float cos_theta = max(0.0, dot(sky_dir, L));
@@ -179,9 +179,10 @@ void main(void) {
     // Soft volumetric internal scattering gradient
     vec3 cumulus_color = mix(cloud_shadow, cloud_sunlit, pow(density, 0.65));
 
-    // Horizon fade
+    // Horizon fade & nighttime soft translucency
     float horizon_fade = smoothstep(0.015, 0.18, sky_dir.y);
-    float alpha = density * 0.92 * horizon_fade;
+    float max_alpha = mix(0.65, 0.92, day_factor);
+    float alpha = density * max_alpha * horizon_fade;
 
     fragColor = vec4(cumulus_color, alpha);
 }
