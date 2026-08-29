@@ -708,6 +708,8 @@ class Window(pyglet.window.Window):
 				pass
 
 		self.dimension_transitioning = False
+		if hasattr(self, "mob_manager") and self.mob_manager:
+			self.mob_manager.populate_initial_mobs(self.camera.position)
 
 	def trigger_end_dimension_transition(self, to_dimension="end"):
 		if getattr(self, "dimension_transitioning", False):
@@ -759,6 +761,8 @@ class Window(pyglet.window.Window):
 		self.camera.portal_timer = 0.0
 		self.camera.portal_cooldown = 4.0
 		self.dimension_transitioning = False
+		if hasattr(self, "mob_manager") and self.mob_manager:
+			self.mob_manager.populate_initial_mobs(self.camera.position)
 
 	def respawn_player(self):
 		"""Handles player respawn on death, ensuring Nether/End deaths return to Overworld (0, 0)."""

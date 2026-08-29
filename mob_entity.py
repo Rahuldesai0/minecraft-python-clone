@@ -1700,13 +1700,12 @@ class EndermanEntity(HostileEntity):
 			return False
 
 		px, py, pz = player_pos
-		eye_offset = getattr(camera, 'eye_offset', 1.62)
-		cam_x, cam_y, cam_z = px, py + eye_offset, pz
+		cam_x, cam_y, cam_z = tuple(camera.position) if (camera and hasattr(camera, 'position')) else (px, py + 1.62, pz)
 
-		# Enderman eye / head center
+		# Enderman eye / head center (head is at my + 2.4 to my + 3.0)
 		mx, my, mz = self.position
 		end_eye_x = mx
-		end_eye_y = my + self.eye_height
+		end_eye_y = my + getattr(self, 'eye_height', 2.65)
 		end_eye_z = mz
 
 		# Vector from camera to Enderman eye
@@ -1715,8 +1714,8 @@ class EndermanEntity(HostileEntity):
 		dz = end_eye_z - cam_z
 		dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-		# Eye-stare detection range: up to 48 blocks
-		if dist > 48.0 or dist < 0.5:
+		# Eye-stare detection range: up to 64 blocks
+		if dist > 64.0 or dist < 0.5:
 			return False
 
 		# Camera look direction unit vector matching hit.py and engine coordinate raycasts
@@ -1730,16 +1729,16 @@ class EndermanEntity(HostileEntity):
 		if dot <= 0.0:
 			return False
 
-		cos_theta = dot / dist
-		if cos_theta < 0.985:
-			return False
-
 		proj_x = cam_x + look_x * dot
 		proj_y = cam_y + look_y * dot
 		proj_z = cam_z + look_z * dot
 		perp_dist = math.sqrt((end_eye_x - proj_x) ** 2 + (end_eye_y - proj_y) ** 2 + (end_eye_z - proj_z) ** 2)
 
-		if perp_dist > 0.65:
+		angle_deg = math.degrees(math.acos(max(-1.0, min(1.0, dot / dist))))
+
+		# Authentic Minecraft Java Edition stare check:
+		# Crosshair aligns with head (perp_dist <= 0.85m) or within 7-degree cone for distant sightlines
+		if perp_dist > 0.85 and not (dist > 6.0 and angle_deg <= 7.0):
 			return False
 
 		# Check line-of-sight: raycast between camera and Enderman eye through world

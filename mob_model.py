@@ -1319,6 +1319,8 @@ class EndermanModel(BaseMobModel):
 	"""
 	def __init__(self):
 		super().__init__("textures/entity/enderman/enderman.png")
+		self.eyes_texture_path = "textures/entity/enderman/enderman_eyes.png"
+		self.eyes_texture_id = None
 		# Cuboid UV Atlas mappings (64x32)
 		self.uv_head = build_cuboid_uv_atlas(0, 0, 8, 8, 8, tex_w=64, tex_h=32)
 		self.uv_jaw = build_cuboid_uv_atlas(0, 16, 8, 4, 8, tex_w=64, tex_h=32)
@@ -1326,8 +1328,28 @@ class EndermanModel(BaseMobModel):
 		self.uv_arm = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
 		self.uv_leg = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
 
+	def ensure_initialized(self):
+		super().ensure_initialized()
+		if self.eyes_texture_id is None and os.path.exists(self.eyes_texture_path):
+			try:
+				img = pyglet.image.load(self.eyes_texture_path)
+				raw_data = img.get_image_data().get_data("RGBA", img.width * 4)
+				c_data = (gl.GLubyte * len(raw_data)).from_buffer_copy(raw_data)
+				tex_id = gl.GLuint(0)
+				gl.glGenTextures(1, tex_id)
+				gl.glBindTexture(gl.GL_TEXTURE_2D, tex_id.value)
+				gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+				gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+				gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+				gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, img.width, img.height, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, c_data)
+				self.eyes_texture_id = tex_id.value
+			except Exception as e:
+				print(f"Error loading enderman eyes: {e}")
+
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, target_yaw=None, is_screaming=False, **kwargs):
+		self.ensure_initialized()
 		pos_data, tex_data, shd_data = [], [], []
+		head_pos_data, head_tex_data, head_shd_data = [], [], []
 		t_yaw = target_yaw if target_yaw is not None else yaw
 
 		# Leg animation
@@ -1409,6 +1431,12 @@ class EndermanModel(BaseMobModel):
 			local_rot=head_rot, local_pivot=(0.0, neck_pivot_y, 0.0),
 			body_pos=pos, body_yaw=yaw
 		)
+		self._add_cuboid(
+			head_pos_data, head_tex_data, head_shd_data,
+			(0.0, head_center_y, 0.0), head_size, self.uv_head,
+			local_rot=head_rot, local_pivot=(0.0, neck_pivot_y, 0.0),
+			body_pos=pos, body_yaw=yaw
+		)
 
 		# Openable Jaw (Lower Mouth) - drops down when screaming
 		if is_screaming:
@@ -1424,7 +1452,15 @@ class EndermanModel(BaseMobModel):
 		if not pos_data:
 			return
 
+		# 1. Base body render pass
 		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
+
+		# 2. Glowing purple eyes overlay pass (100% luminous in the dark)
+		if self.eyes_texture_id and head_pos_data:
+			saved_tex = self.texture_id
+			self.texture_id = self.eyes_texture_id
+			self._draw_mesh(camera, head_pos_data, head_tex_data, head_shd_data, 0.0, light_mult=1.0)
+			self.texture_id = saved_tex
 
 
 class SilverfishModel(BaseMobModel):

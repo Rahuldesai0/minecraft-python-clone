@@ -48,7 +48,7 @@ class MobManager:
 		self.max_cave_hostiles = 8
 		self.max_nether_mobs = 45
 		self.max_blaze_mobs = 20
-		self.max_end_mobs = 32
+		self.max_end_mobs = 14
 
 	def spawn_mob(self, mob_type, position):
 		eid = self.next_entity_id
@@ -170,13 +170,13 @@ class MobManager:
 								off_x = sx + random.uniform(-1.5, 1.5)
 								off_z = sz + random.uniform(-1.5, 1.5)
 		if getattr(self.world, "dimension", "overworld") == "end":
-			# End Dimension Initial Spawning: Only Endermen spawn in the End! (No zombies, skeletons, spiders, creepers)
+			# End Dimension Initial Spawning: Only Endermen spawn in the End! (Atmospheric balanced density)
 			enderman_count = sum(1 for m in self.mobs if m.mob_type == "enderman")
-			for _ in range(25):
-				if enderman_count >= 16 or len(self.mobs) >= 20:
+			for _ in range(16):
+				if enderman_count >= 8:
 					break
 				angle = random.uniform(0, math.tau)
-				dist = random.uniform(8.0, 55.0)
+				dist = random.uniform(20.0, 56.0)
 				sx = int(round(px + math.cos(angle) * dist))
 				sz = int(round(pz + math.sin(angle) * dist))
 
@@ -191,9 +191,9 @@ class MobManager:
 							sy = y + 1
 							break
 				if sy is not None:
-					pack = random.randint(1, 3)
+					pack = random.randint(1, 2)
 					for _ in range(pack):
-						if enderman_count >= 16:
+						if enderman_count >= 8:
 							break
 						off_x = sx + random.uniform(-1.5, 1.5)
 						off_z = sz + random.uniform(-1.5, 1.5)
@@ -403,16 +403,16 @@ class MobManager:
 			return
 
 		if getattr(self.world, "dimension", "overworld") == "end":
-			# End Hostile Spawning: ONLY Endermen spawn in the End! (No zombies, skeletons, spiders, creepers)
+			# End Hostile Spawning: ONLY Endermen spawn in the End! (Atmospheric balanced density)
 			end_count = len(self.mobs)
 			if end_count >= self.max_end_mobs:
 				return
 			px, py, pz = player_pos
-			for _ in range(8):
+			for _ in range(4):
 				if len(self.mobs) >= self.max_end_mobs:
 					break
 				angle = random.uniform(0, math.tau)
-				dist = random.uniform(14.0, 48.0)
+				dist = random.uniform(24.0, 52.0)
 				sx = int(round(px + math.cos(angle) * dist))
 				sz = int(round(pz + math.sin(angle) * dist))
 
@@ -428,13 +428,8 @@ class MobManager:
 							break
 
 				if spawn_y is not None:
-					pack = random.randint(1, 3)
-					for _ in range(pack):
-						if len(self.mobs) >= self.max_end_mobs:
-							break
-						off_x = sx + random.uniform(-1.5, 1.5)
-						off_z = sz + random.uniform(-1.5, 1.5)
-						self.spawn_mob("enderman", (off_x, spawn_y, off_z))
+					self.spawn_mob("enderman", (sx, spawn_y, sz))
+					break
 			return
 
 		# Overworld Hostile Mob Spawning

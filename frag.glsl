@@ -91,6 +91,9 @@ void main(void) {
 	bool is_gold = (tex_id == 33);
 	bool is_iron_block = (tex_id == 34);
 	bool is_diamond_block = (tex_id == 35);
+	bool is_iron_ore = (tex_id == 19);
+	bool is_diamond_ore = (tex_id == 20);
+	bool is_gold_ore = (tex_id == 40);
 	bool is_glass = (tex_id == 21);
 	bool is_metallic = (is_gold || is_iron_block || is_diamond_block);
 	bool is_reflective = (is_water || is_ice || is_metallic || is_glass);
@@ -242,6 +245,50 @@ void main(void) {
 		// Brilliant glowing frosted flecks with crystal glitter
 		vec3 defect_glow = (sun_forward_glow + omni_scatter + glitter) * ao;
 		shaded_color = defect_glow;
+	}
+
+	// Diamond, Gold & Iron Ore Subtle Luminescence & Mineral Sparkle
+	if (is_diamond_ore || is_gold_ore || is_iron_ore) {
+		float mineral_mask = 0.0;
+		vec3 mineral_glow_base = vec3(0.0);
+		vec3 mineral_glint_base = vec3(1.0);
+
+		if (is_diamond_ore) {
+			// Cyan / Aquamarine crystal flecks in stone
+			mineral_mask = smoothstep(0.08, 0.22, (texture_colour.b - texture_colour.r)) * 
+			               smoothstep(0.08, 0.22, (texture_colour.g - texture_colour.r)) * 
+			               smoothstep(0.40, 0.70, texture_colour.b);
+			mineral_glow_base = vec3(0.32, 0.88, 1.05) * 0.38;
+			mineral_glint_base = vec3(0.65, 0.92, 1.0);
+		} else if (is_gold_ore) {
+			// Radiant Golden Yellow / Amber mineral flecks in stone
+			mineral_mask = smoothstep(0.12, 0.25, (texture_colour.r - texture_colour.b)) * 
+			               smoothstep(0.08, 0.20, (texture_colour.g - texture_colour.b)) * 
+			               smoothstep(0.55, 0.75, texture_colour.r);
+			mineral_glow_base = vec3(1.15, 0.86, 0.30) * 0.38;
+			mineral_glint_base = vec3(1.10, 0.95, 0.50);
+		} else if (is_iron_ore) {
+			// Warm Peach / Rose-Bronze metallic flecks in stone
+			mineral_mask = smoothstep(0.08, 0.20, (texture_colour.r - texture_colour.b)) * 
+			               smoothstep(0.03, 0.12, (texture_colour.g - texture_colour.b)) * 
+			               smoothstep(0.50, 0.72, texture_colour.r);
+			mineral_glow_base = vec3(1.02, 0.74, 0.56) * 0.32;
+			mineral_glint_base = vec3(1.05, 0.88, 0.75);
+		}
+
+		if (mineral_mask > 0.0) {
+			// Subtle gentle pulsing mineral glow
+			float pulse = 0.88 + 0.12 * sin(game_time * 2.2 + local_position.x * 3.5 + local_position.z * 3.5);
+			vec3 mineral_glow = mineral_glow_base * pulse * mineral_mask;
+
+			// Delicate micro-glint sparkle as player moves past the ore
+			vec3 spk_coord = local_position * 32.0 + V * 6.0;
+			float spk_rnd = sin(dot(floor(spk_coord), vec3(113.5, 271.9, 154.3))) * 43758.5453;
+			float spk_hit = pow(fract(spk_rnd), 18.0) * 3.5;
+			vec3 spk_glint = mineral_glint_base * spk_hit * mineral_mask * 0.30;
+
+			shaded_color += (mineral_glow + spk_glint);
+		}
 	}
 
 	// 6. Highly Reflective Water, Ice, Glass & Metallic Blocks
