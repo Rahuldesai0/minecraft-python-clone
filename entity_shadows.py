@@ -224,6 +224,13 @@ class EntityShadowRenderer:
 SHADOW_MAP_TEX_SIZE = 512  # 512x512 texels = 512x512 blocks (32x32 chunks)
 SHADOW_MAP_WORLD_SIZE = 512.0
 
+# Non-shadow-casting blocks: Air, Liquids, Foliage (Flowers, Ferns, Crops, Saplings, Bushes, Vines, Sugar Cane), Torches, Portals
+NON_SHADOW_CASTING_BLOCKS = {
+	0, 9, 10, 12, 15, 19, 20, 33, 78, 79, 81, 88, 89, 94, 
+	156, 183, 204, 205, 206, 207, 210, 225, 235, 245, 255, 265, 
+	279, 280, 283, 284, 285
+}
+
 class WorldDirectionalShadowMap:
 	"""
 	Lightweight Real-Time World Heightfield Texture for Dynamic Directional Sun Shadows.
@@ -302,7 +309,7 @@ class WorldDirectionalShadowMap:
 					h_val = 0
 					for y in range(255, -1, -1):
 						b = blocks[col_start + y * 16]
-						if b != 0 and b != 9 and b != 19:
+						if b not in NON_SHADOW_CASTING_BLOCKS:
 							h_val = y
 							break
 					chunk_grid[lz * 16 + lx] = h_val

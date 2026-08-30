@@ -880,7 +880,7 @@ class Camera:
 		# Projection matrix (with dynamic FOV zoom when drawing bow)
 		fov = 90.0 * (1.0 - getattr(self, "fov_zoom", 0.0))
 		self.p_matrix.load_identity()
-		self.p_matrix.perspective(fov, float(self.width) / self.height, 0.1, 500)
+		self.p_matrix.perspective(fov, float(self.width) / max(1, self.height), 0.1, 500)
 
 		# Modelview matrix
 		self.mv_matrix.load_identity()

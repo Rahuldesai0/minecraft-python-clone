@@ -1287,10 +1287,11 @@ class Window(pyglet.window.Window):
 		self.world.process_load_queue(self.camera.position, player_rotation=self.camera.rotation)
 		self.invalid = True
 		
-		self.time_of_day += self.cycle_speed * delta_time
+		# Advance day/night cycle smoothly without jumping on window resizes
+		clamped_dt = min(delta_time, 0.05)
+		self.time_of_day += self.cycle_speed * clamped_dt
 		self.time_of_day %= 1.0  # Keep time_of_day in the range [0.0, 1.0]
 
-        # Update the sky color
 	def get_scene_texture(self, width, height):
 		if self.scene_texture is None or self.scene_tex_size != (width, height):
 			if self.scene_texture is not None:
@@ -1343,9 +1344,16 @@ class Window(pyglet.window.Window):
 			gl.glFlush()
 			return
 
+		# Dynamically sync clear color with exact continuous time of day
+		self.update_sky_color()
+
 		# Bind 3D world shader FIRST before matrix updates or 3D rendering
 		self.shader.use()
 		self.camera.update_matrices(self.perspective, self.world)
+
+		w, h = max(1, self.width), max(1, self.height)
+		if hasattr(self, "window_size_loc") and self.window_size_loc is not None:
+			gl.glUniform2f(self.window_size_loc, float(w), float(h))
 
 		# Dynamic Minecraft Day/Night lighting factor, sun direction, and min ambient floor
 		current_dim = getattr(self, "dimension", "overworld")
@@ -1360,8 +1368,10 @@ class Window(pyglet.window.Window):
 			min_light = 0.25 if current_dim == "nether" else 0.28
 			dim_id = 1 if current_dim == "nether" else 2
 		else:
-			# Overworld: Level 15 in day, Level 6 at night smoothly interpolated
-			sky_factor = 0.40 + 0.60 * max(0.0, min(1.0, (sun_y + 0.2) / 1.2))
+			# Fast sunrise/sunset light ramp: Level 6/7 night -> Level 15 day as sun clears the horizon
+			t_sun = max(0.0, min(1.0, (sun_y + 0.10) / 0.30))
+			smooth_t = t_sun * t_sun * (3.0 - 2.0 * t_sun)
+			sky_factor = 0.40 + 0.60 * smooth_t
 			min_light = 0.20
 			dim_id = 0
 
@@ -1455,13 +1465,14 @@ class Window(pyglet.window.Window):
 		if self.perspective != 0:
 			self.player_model.render_third_person(self.camera, self.perspective, self.world)
 
-		# Render Directional Entity Shadows for Mobs & Player
+		# Render Directional Entity Shadows for Mobs & Player (Overworld only)
 		if hasattr(self, "entity_shadows") and self.entity_shadows:
-			p_pos = self.camera.position
-			m_list = self.mob_manager.mobs if hasattr(self, "mob_manager") and self.mob_manager else []
-			self.entity_shadows.draw(
-				self.camera, self.world, m_list, p_pos, s_dir_norm, getattr(self, "lighting_mode", "BLOCK")
-			)
+			if getattr(self, "dimension", "overworld") == "overworld":
+				p_pos = self.camera.position
+				m_list = self.mob_manager.mobs if hasattr(self, "mob_manager") and self.mob_manager else []
+				self.entity_shadows.draw(
+					self.camera, self.world, m_list, p_pos, s_dir_norm, getattr(self, "lighting_mode", "BLOCK")
+				)
 
 		# 2. Render 3D overworld dropped items & 2D item sprites BEFORE 2D overlays
 		self.shader.use()
@@ -1792,11 +1803,13 @@ class Window(pyglet.window.Window):
 		super().on_close()
 
 	def on_resize(self, width, height):
+		super().on_resize(width, height)
 		gl.glViewport(0, 0, width, height)
 
 		self.camera.width = width
 		self.camera.height = height
 		self.create_crosshair()
+		self.update_sky_color()
 
 	def on_mouse_scroll(self, x, y, scroll_x, scroll_y):
 		self.gui.on_mouse_scroll(scroll_y)

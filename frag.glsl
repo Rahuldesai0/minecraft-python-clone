@@ -127,9 +127,10 @@ void main(void) {
 
 	// =========================================================================
 	// REAL-TIME DIRECTIONAL SHADOW RAYMARCHING (Trees, Mountains, Cliffs, Buildings, Cactus)
+	// STRICTLY OVERWORLD ONLY (dimension_id == 0)
 	// =========================================================================
 	float sun_shadow = 0.0;
-	if (NdotL > 0.001 && sun_height > -0.05) {
+	if (dimension_id == 0 && NdotL > 0.001 && sun_height > -0.05) {
 		float occlusion = 0.0;
 		// March along ray L towards the sun with fine sub-voxel stepping
 		// 32 high-precision steps: fine 0.35m steps up to 8m, then expanding steps up to 100m
@@ -171,14 +172,18 @@ void main(void) {
 
 	float ambient_floor = mix(0.18, 0.38, day_factor);
 
-	if (dimension_id == 2) { // The End (Illuminated by ethereal deep-space cosmos and celestial planet)
+	if (dimension_id == 2) { // The End (Illuminated by ethereal deep-space cosmos and celestial planet, no sun shadows)
 		ambient_sky_color = vec3(0.68, 0.54, 0.90) * 1.35;
 		ambient_floor = 0.62;
-		direct_sun_color = vec3(0.85, 0.72, 1.10) * 1.15;
+		direct_sun_color = vec3(0.0);
+	} else if (dimension_id == 1) { // The Nether (Ambient diffuse crimson glow, no sun shadows)
+		ambient_sky_color = vec3(0.75, 0.25, 0.15);
+		ambient_floor = 0.40;
+		direct_sun_color = vec3(0.0);
 	}
 
-	// Direct Sunlight: strictly directional (N.L * shadow)
-	vec3 direct_sun = direct_sun_color * (NdotL * sun_shadow * s_factor);
+	// Direct Sunlight: strictly directional in Overworld only
+	vec3 direct_sun = (dimension_id == 0) ? (direct_sun_color * (NdotL * sun_shadow * s_factor)) : vec3(0.0);
 
 	// Indirect Ambient Skylight: guaranteed ambient floor so side faces in shade remain clearly visible
 	vec3 ambient_light = ambient_sky_color * max(sky_exposure * s_factor, ambient_floor);

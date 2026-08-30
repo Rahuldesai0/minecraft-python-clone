@@ -8,6 +8,41 @@ CHUNK_LENGTH = 16
 SECTION_SIZE = 16
 NUM_SECTIONS = 16
 
+# Non-shadow-casting blocks: Air, Liquids, Foliage (Flowers, Ferns, Crops, Saplings, Bushes, Vines, Sugar Cane), Torches, Portals
+NON_SHADOW_CASTING_BLOCKS = {
+	0,   # Air
+	9,   # Water
+	10,  # Rose / Poppy / Flower
+	12,  # Dead Bush
+	15,  # Lava
+	19,  # Under Water
+	20,  # Under Lava
+	33,  # Yellow Flower
+	78,  # Fire
+	79,  # Torch
+	81,  # Crops / Wheat
+	88,  # Nether Portal X
+	89,  # Nether Portal Z
+	94,  # Nether Wart
+	156, # Oak Sapling
+	183, # End Portal
+	204, # Carrot Crops
+	205, # Potato Crops
+	206, # Pumpkin Stem
+	207, # Melon Stem
+	210, # Sugar Cane
+	225, # Birch Sapling
+	235, # Spruce Sapling
+	245, # Jungle Sapling
+	255, # Acacia Sapling
+	265, # Dark Oak Sapling
+	279, # Fern
+	280, # Vines
+	283, # Red Tulip
+	284, # Orange Tulip
+	285, # Oxeye Daisy
+}
+
 class ChunkSection:
 	def __init__(self, chunk, y_sec):
 		self.chunk = chunk
@@ -216,9 +251,11 @@ class Chunk:
 			has_b = False
 			for x in range(16):
 				start_idx = x * 4096 + s_start * 16
-				if any(blocks[start_idx : start_idx + 256]):
-					has_b = True
-					break
+				for z in range(16):
+					if blocks[start_idx + z] not in NON_SHADOW_CASTING_BLOCKS:
+						has_b = True
+						break
+				if has_b: break
 			if has_b:
 				max_y = min(255, (sy + 1) * 16)
 				break
@@ -229,7 +266,7 @@ class Chunk:
 				col_start = base_col + lz
 				for y in range(max_y, -1, -1):
 					b = blocks[col_start + y * 16]
-					if b != 0 and b != 9 and b != 19:
+					if b not in NON_SHADOW_CASTING_BLOCKS:
 						heights[lz * 16 + lx] = y
 						break
 		self.column_heights = heights
@@ -250,7 +287,7 @@ class Chunk:
 				del self.block_states[(x, y, z)]
 			if self.column_heights is not None:
 				col_idx = z * 16 + x
-				if val != 0 and val != 9 and val != 19:
+				if val not in NON_SHADOW_CASTING_BLOCKS:
 					if y > self.column_heights[col_idx]:
 						self.column_heights[col_idx] = y
 				elif y == self.column_heights[col_idx]:
@@ -258,7 +295,7 @@ class Chunk:
 					new_h = 0
 					for check_y in range(y - 1, -1, -1):
 						b = self.blocks[base_col + check_y * 16]
-						if b != 0 and b != 9 and b != 19:
+						if b not in NON_SHADOW_CASTING_BLOCKS:
 							new_h = check_y
 							break
 					self.column_heights[col_idx] = new_h
