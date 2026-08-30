@@ -179,6 +179,22 @@ class Camera:
 			if not window_ref and gui_ref and hasattr(gui_ref, 'window'):
 				window_ref = gui_ref.window
 
+			# Record last death location and dimension
+			curr_dim = getattr(window_ref, "dimension", getattr(world, "dimension", "overworld"))
+			self.last_death_pos = list(death_pos)
+			self.last_death_dimension = curr_dim
+			if window_ref:
+				window_ref.last_death_pos = list(death_pos)
+				window_ref.last_death_dimension = curr_dim
+
+			# Reset all mob aggression on player death
+			mob_mgr = getattr(world, 'item_drop_manager', None) # check mob manager
+			mob_mgr = getattr(world, 'mob_manager', None)
+			if not mob_mgr and window_ref:
+				mob_mgr = getattr(window_ref, 'mob_manager', None)
+			if mob_mgr and hasattr(mob_mgr, 'reset_all_aggro'):
+				mob_mgr.reset_all_aggro()
+
 			# 1. Drop all player items at death position in current dimension
 			if gui_ref and hasattr(gui_ref, 'drop_all_on_death'):
 				gui_ref.drop_all_on_death(death_pos, id_mgr)
@@ -195,6 +211,11 @@ class Camera:
 		self.saturation = 5.0
 		self.exhaustion = 0.0
 		self.absorption = 0.0
+		mob_mgr = getattr(world, 'mob_manager', None)
+		if not mob_mgr and getattr(self, 'window', None):
+			mob_mgr = getattr(self.window, 'mob_manager', None)
+		if mob_mgr and hasattr(mob_mgr, 'reset_all_aggro'):
+			mob_mgr.reset_all_aggro()
 
 		eye_h = getattr(self, 'eye_offset', 1.62)
 		spawn_pos = None

@@ -711,6 +711,10 @@ class MobEntity:
 					self.position[1] = ny
 					self.on_ground = False
 
+	def get_loot_drops(self, is_on_fire=False, looting_level=None, *args, **kwargs):
+		"""Default base loot drop method."""
+		return [], 1
+
 
 class PigEntity(MobEntity):
 	"""Minecraft Pig Entity: 10 HP (5 hearts), speed 0.25, drops 1-3 Porkchops."""
@@ -1330,6 +1334,13 @@ class ZombiePigmanEntity(HostileEntity):
 		self.anger_timer = 0.0
 		self.melee_goal = MeleeAttackGoal(self, attack_range=1.8, damage=5, cooldown=1.0)
 
+	def reset_aggro(self):
+		self.is_angry = False
+		self.anger_timer = 0.0
+		self.speed = 0.23
+		self.target = None
+		self.target_dest = None
+
 	def become_angry(self, target_pos, anger_duration=25.0):
 		"""Angers the pigman towards the player for anger_duration seconds."""
 		self.is_angry = True
@@ -1675,6 +1686,16 @@ class EndermanEntity(HostileEntity):
 		self.melee_goal = MeleeAttackGoal(self, attack_range=2.0, damage=7, cooldown=1.0)
 		self.stroll_goal = RandomStrollGoal(self)
 
+	def reset_aggro(self):
+		self.is_angry = False
+		self.is_screaming = False
+		self.stare_timer = 0.0
+		self.stare_contact_time = 0.0
+		self.anger_timer = 0.0
+		self.speed = 0.30
+		self.target = None
+		self.target_dest = None
+
 	def become_angry(self, attacker_pos=None):
 		self.is_angry = True
 		self.is_screaming = True
@@ -1877,10 +1898,7 @@ class EndermanEntity(HostileEntity):
 
 			# Calm down if anger timer expired, player entered creative mode/died, or moved far away
 			if self.anger_timer <= 0.0 or is_creative or dist_to_player > 48.0:
-				self.is_angry = False
-				self.is_screaming = False
-				self.speed = 0.30
-				self.target = None
+				self.reset_aggro()
 			else:
 				self.target = tuple(player_pos) if player_pos else None
 
@@ -1979,7 +1997,7 @@ class SilverfishEntity(HostileEntity):
 		if not self.is_dead:
 			self.melee_goal.update(dt, world, player_pos, camera=camera, gui=gui, flying=flying)
 
-	def get_loot_drops(self, is_on_fire=False):
+	def get_loot_drops(self, is_on_fire=False, looting_level=None, *args, **kwargs):
 		return [], 5
 
 

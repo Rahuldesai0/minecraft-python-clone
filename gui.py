@@ -2560,6 +2560,8 @@ class InventoryGUI:
 		if self.toast_timer > 0 and self.toast_message:
 			self._draw_message_popup()
 
+		self._draw_command_line()
+
 		if self.inventory_open:
 			hover_text = self._draw_inventory_overlay(hover_text)
 
@@ -2859,6 +2861,76 @@ class InventoryGUI:
 
 		draw_bordered_box(cx - bw // 2, cy - bh // 2, bw, bh, 2, (15, 15, 20, int(alpha * 0.85)), (255, 215, 0, alpha))
 		self.toast_label.draw()
+
+	def _draw_command_line(self):
+		import time
+		# 1. Command Feedback Message Display (stays active for 8 seconds after command execution)
+		feedback = getattr(self.window, "command_feedback", "")
+		feedback_time = getattr(self.window, "command_feedback_time", 0.0)
+		feedback_color = getattr(self.window, "command_feedback_color", (255, 255, 255, 255))
+		
+		cmd_open = getattr(self.window, "command_line_open", False)
+		
+		now = time.time()
+		time_since_feedback = now - feedback_time
+		if feedback and time_since_feedback < 8.0:
+			# Fade out in the last 1.5 seconds
+			if time_since_feedback > 6.5:
+				alpha = int(255 * (1.0 - (time_since_feedback - 6.5) / 1.5))
+			else:
+				alpha = 255
+			alpha = max(10, min(255, alpha))
+			
+			fy = 46 if cmd_open else 14
+			
+			if not hasattr(self, "command_feedback_label") or self.command_feedback_label is None:
+				self.command_feedback_label = pyglet.text.Label(
+					"", font_name="Arial", font_size=11,
+					x=16, y=fy, anchor_x="left", anchor_y="bottom",
+					color=(255, 255, 255, 255)
+				)
+			self.command_feedback_label.text = feedback
+			cr, cg, cb = feedback_color[:3]
+			self.command_feedback_label.color = (cr, cg, cb, alpha)
+			self.command_feedback_label.y = fy
+			
+			# Draw dark background plate for feedback
+			tw = self.command_feedback_label.content_width
+			th = self.command_feedback_label.content_height
+			draw_bordered_box(10, fy - 4, tw + 16, th + 8, 1, (10, 10, 15, int(alpha * 0.85)), (0, 0, 0, alpha))
+			self.command_feedback_label.draw()
+
+		# 2. Interactive Command Input Box (Active when command_line_open is True)
+		if not cmd_open:
+			return
+
+		box_x = 10
+		box_y = 10
+		box_w = self.window.width - 20
+		box_h = 28
+
+		# Draw dark semi-transparent console box with Minecraft border
+		draw_bordered_box(box_x, box_y, box_w, box_h, 1, (10, 10, 15, 220), (120, 120, 140, 255))
+
+		# Blinking cursor every 500ms
+		cursor_char = "|" if int(now * 2.0) % 2 == 0 else ""
+		cmd_text = getattr(self.window, "command_text", "/")
+		cursor_pos = getattr(self.window, "command_cursor", len(cmd_text))
+		cursor_pos = max(0, min(len(cmd_text), cursor_pos))
+
+		display_text = cmd_text[:cursor_pos] + cursor_char + cmd_text[cursor_pos:]
+
+		if not hasattr(self, "command_input_label") or self.command_input_label is None:
+			self.command_input_label = pyglet.text.Label(
+				"", font_name="Arial", font_size=11,
+				x=box_x + 8, y=box_y + 7, anchor_x="left", anchor_y="bottom",
+				color=(255, 255, 255, 255)
+			)
+
+		self.command_input_label.text = display_text
+		self.command_input_label.x = box_x + 8
+		self.command_input_label.y = box_y + 7
+		self.command_input_label.draw()
 
 	def _draw_tooltip(self, hover_text, mouse_x, mouse_y):
 		if not hover_text:

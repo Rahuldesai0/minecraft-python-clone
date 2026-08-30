@@ -84,6 +84,23 @@ class MobManager:
 		self.mobs.append(mob)
 		return mob
 
+	def reset_all_aggro(self):
+		"""Resets aggression and targeting across all active mobs on player death/respawn."""
+		for mob in self.mobs:
+			if hasattr(mob, "reset_aggro"):
+				mob.reset_aggro()
+			else:
+				if hasattr(mob, "is_angry"):
+					mob.is_angry = False
+				if hasattr(mob, "is_screaming"):
+					mob.is_screaming = False
+				if hasattr(mob, "target"):
+					mob.target = None
+				if hasattr(mob, "target_dest"):
+					mob.target_dest = None
+				if hasattr(mob, "fuse_timer"):
+					mob.fuse_timer = 0.0
+
 	def get_balanced_spawn_type(self):
 		"""Returns the passive mob type that is currently least populated."""
 		counts = {"cow": 0, "pig": 0, "sheep": 0, "chicken": 0}
@@ -777,10 +794,9 @@ class MobManager:
 					light_mult=mob_light
 				)
 			elif mob.mob_type == "silverfish":
-				self.silverfish_model.draw(
+				self.silverfish_model.render(
 					camera, mob.position, mob.yaw, mob.pitch,
-					walk_time=mob.walk_time, hurt_time=mob.hurt_time,
-					is_moving=mob.is_moving,
+					mob.walk_time, mob.is_moving, mob.hurt_time,
 					light_mult=mob_light
 				)
 			elif mob.mob_type == "skeleton":

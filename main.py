@@ -157,6 +157,18 @@ class Window(pyglet.window.Window):
 		self.player_model = player_model.StevePlayerModel()
 		self.perspective = 0  # 0: First Person, 1: Third Person Back, 2: Third Person Front
 
+		# Creative Mode Command Line System & Feedback
+		self.command_line_open = False
+		self.command_text = ""
+		self.command_cursor = 0
+		self.command_history = []
+		self.command_history_idx = -1
+		self.command_feedback = ""
+		self.command_feedback_time = 0.0
+		self.command_feedback_color = (255, 255, 255, 255)
+		self.last_death_pos = None
+		self.last_death_dimension = "overworld"
+
 		# Entity Directional Shadow Renderer (Player & Mobs) & World Shadow Map (Trees, Mountains)
 		self.entity_shadows = entity_shadows.EntityShadowRenderer()
 		self.world_shadow_map = entity_shadows.WorldDirectionalShadowMap()
@@ -783,6 +795,55 @@ class Window(pyglet.window.Window):
 
 		# Reset camera state and position at Overworld (0, 0)
 		self.camera.respawn(dest_world)
+		if hasattr(self, "mob_manager") and self.mob_manager:
+			self.mob_manager.reset_all_aggro()
+
+	def teleport_to(self, x, y, z, dimension=None):
+		"""Teleports player to coordinates (x, y, z), seamlessly switching dimensions if specified."""
+		current_dim = getattr(self, "dimension", "overworld")
+		target_dim = dimension.lower() if dimension else current_dim
+
+		if target_dim != current_dim:
+			if getattr(self, "dimension_transitioning", False):
+				return
+			self.dimension_transitioning = True
+			self._save_current_dimension_and_unload()
+			dest_world = self._load_and_setup_dimension(target_dim)
+			self.world = dest_world
+
+			# Pre-generate and mesh destination chunks
+			cx = int(math.floor(x / 16.0))
+			cz = int(math.floor(z / 16.0))
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					cpos = (cx + dx, 0, cz + dz)
+					if cpos not in dest_world.chunks:
+						dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
+					dest_world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+			self.camera.position = [float(x), float(y) + self.camera.eye_offset, float(z)]
+			self.camera.velocity_y = 0.0
+			self.camera.fall_start_y = None
+			self.camera.fire_damage_timer = 0.0
+			self.camera.portal_timer = 0.0
+			self.camera.portal_cooldown = 4.0
+			self.dimension_transitioning = False
+			if hasattr(self, "mob_manager") and self.mob_manager:
+				self.mob_manager.populate_initial_mobs(self.camera.position)
+		else:
+			# Local dimension teleport
+			cx = int(math.floor(x / 16.0))
+			cz = int(math.floor(z / 16.0))
+			for dx in range(-2, 3):
+				for dz in range(-2, 3):
+					cpos = (cx + dx, 0, cz + dz)
+					if cpos not in self.world.chunks:
+						self.world.chunks[cpos] = self.world.generate_chunk(cpos[0], cpos[2])
+					self.world.queue_chunk_sections_for_meshing(cpos[0], cpos[2])
+
+			self.camera.position = [float(x), float(y) + self.camera.eye_offset, float(z)]
+			self.camera.velocity_y = 0.0
+			self.camera.fall_start_y = None
 
 	def update_sky_color(self):
 		if getattr(self, "dimension", "overworld") == "nether":
@@ -1179,25 +1240,28 @@ class Window(pyglet.window.Window):
 		dx = 0
 		dy = 0
 		dz = 0
-		if self.keys_down.get(pyglet.window.key.D, False): dx += 2
-		if self.keys_down.get(pyglet.window.key.A, False): dx -= 2
-		if self.keys_down.get(pyglet.window.key.W, False): dz += 2
-		if self.keys_down.get(pyglet.window.key.S, False): dz -= 2
-		if self.keys_down.get(pyglet.window.key.SPACE, False) or self.keys_down.get(32, False): dy += 1
-		if self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False): dy -= 1
+		is_typing_or_menu = getattr(self, "command_line_open", False) or getattr(self.gui, "inventory_open", False)
+		if self.mouse_captured and not is_typing_or_menu:
+			if self.keys_down.get(pyglet.window.key.D, False): dx += 2
+			if self.keys_down.get(pyglet.window.key.A, False): dx -= 2
+			if self.keys_down.get(pyglet.window.key.W, False): dz += 2
+			if self.keys_down.get(pyglet.window.key.S, False): dz -= 2
+			if self.keys_down.get(pyglet.window.key.SPACE, False) or self.keys_down.get(32, False): dy += 1
+			if self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False): dy -= 1
 
 		# Sprinting active while holding LCTRL or RCTRL
-		if self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False):
+		if not is_typing_or_menu and (self.keys_down.get(pyglet.window.key.LCTRL, False) or self.keys_down.get(pyglet.window.key.RCTRL, False)):
 			self.sprinting = True
 
-		if self.mouse_captured:
+		if self.mouse_captured and not is_typing_or_menu:
 			self.camera.input = [dx, dy, dz]
 			if self.sprinting and (dx != 0 or dz != 0) and not self.flying:
 				self.camera.add_exhaustion(0.1 * delta_time)
 		else:
 			self.camera.input = [0, 0, 0]
 
-		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, self.keys_down)
+		effective_keys = {} if is_typing_or_menu else self.keys_down
+		self.camera.update_camera(delta_time, self.sprinting, self.world, self.flying, effective_keys)
 
 		# Check Nether Portal Dimension Transition
 		trigger_time = 0.0 if self.flying else 4.0
@@ -1815,6 +1879,13 @@ class Window(pyglet.window.Window):
 		self.gui.on_mouse_scroll(scroll_y)
 	
 	def on_text(self, text):
+		if getattr(self, "command_line_open", False):
+			if text and text not in ("\r", "\n"):
+				idx = self.command_cursor
+				self.command_text = self.command_text[:idx] + text + self.command_text[idx:]
+				self.command_cursor += len(text)
+			return
+
 		if self.flying and self.gui.inventory_open:
 			if len(self.gui.creative_search_text) < 20 and (text.isalnum() or text in " -_()"):
 				self.gui.creative_search_text += text
@@ -2931,6 +3002,75 @@ class Window(pyglet.window.Window):
 			return
 
 		if self.game_state == "LOADING":
+			return
+
+		# Handle open command line text navigation and submission
+		if getattr(self, "command_line_open", False):
+			if key == pyglet.window.key.ESCAPE:
+				self.command_line_open = False
+				self.mouse_captured = True
+				self.set_exclusive_mouse(True)
+				return
+			elif key in (pyglet.window.key.ENTER, pyglet.window.key.RETURN):
+				import time, command_system
+				cmd_to_run = self.command_text
+				self.command_line_open = False
+				self.mouse_captured = True
+				self.set_exclusive_mouse(True)
+				if cmd_to_run.strip():
+					if cmd_to_run not in self.command_history:
+						self.command_history.append(cmd_to_run)
+					self.command_history_idx = -1
+					succ, msg, col = command_system.execute_command(self, cmd_to_run)
+					if msg:
+						self.command_feedback = msg
+						self.command_feedback_time = time.time()
+						self.command_feedback_color = col
+				return
+			elif key == pyglet.window.key.BACKSPACE:
+				if self.command_cursor > 0:
+					idx = self.command_cursor
+					self.command_text = self.command_text[:idx - 1] + self.command_text[idx:]
+					self.command_cursor -= 1
+				return
+			elif key == pyglet.window.key.LEFT:
+				self.command_cursor = max(0, self.command_cursor - 1)
+				return
+			elif key == pyglet.window.key.RIGHT:
+				self.command_cursor = min(len(self.command_text), self.command_cursor + 1)
+				return
+			elif key == pyglet.window.key.UP:
+				if self.command_history:
+					if self.command_history_idx == -1:
+						self.command_history_idx = len(self.command_history) - 1
+					else:
+						self.command_history_idx = max(0, self.command_history_idx - 1)
+					self.command_text = self.command_history[self.command_history_idx]
+					self.command_cursor = len(self.command_text)
+				return
+			elif key == pyglet.window.key.DOWN:
+				if self.command_history and self.command_history_idx != -1:
+					self.command_history_idx += 1
+					if self.command_history_idx >= len(self.command_history):
+						self.command_history_idx = -1
+						self.command_text = "/"
+					else:
+						self.command_text = self.command_history[self.command_history_idx]
+					self.command_cursor = len(self.command_text)
+				return
+			return
+
+		# Open Command Line in Creative mode when pressing '/'
+		if key == pyglet.window.key.SLASH and getattr(self, "flying", False) and not self.gui.inventory_open:
+			self.command_line_open = True
+			self.command_text = "/"
+			self.command_cursor = 1
+			self.command_history_idx = -1
+			self.mouse_captured = False
+			self.set_exclusive_mouse(False)
+			self.left_mouse_down = False
+			self.breaking_block = None
+			self.break_progress = 0.0
 			return
 
 		if self.flying and self.gui.inventory_open:

@@ -268,6 +268,7 @@ class BaseMobModel:
 				shd_data.append(shading)
 
 	def _draw_mesh(self, camera, pos_data, tex_data, shd_data, hurt_time=0.0, light_mult=1.0):
+		self.ensure_initialized()
 		if not self.shader_program:
 			return
 
@@ -1492,7 +1493,8 @@ class SilverfishModel(BaseMobModel):
 			build_cuboid_uv_atlas(11, 4, 3, 1, 1, 64, 32),
 		]
 
-	def draw(self, camera, pos, yaw, pitch, target_yaw=None, walk_time=0.0, hurt_time=0.0, is_moving=False):
+	def render(self, camera, pos, yaw, pitch, walk_time=0.0, is_moving=False, hurt_time=0.0, target_yaw=None, light_mult=1.0, **kwargs):
+		self.ensure_initialized()
 		pos_data = []
 		tex_data = []
 		shd_data = []
@@ -1524,6 +1526,9 @@ class SilverfishModel(BaseMobModel):
 		if not pos_data:
 			return
 
-		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=kwargs.get('light_mult', 1.0))
+		self._draw_mesh(camera, pos_data, tex_data, shd_data, hurt_time, light_mult=light_mult)
+
+	def draw(self, camera, pos, yaw, pitch, target_yaw=None, walk_time=0.0, hurt_time=0.0, is_moving=False, light_mult=1.0, **kwargs):
+		self.render(camera, pos, yaw, pitch, walk_time=walk_time, is_moving=is_moving, hurt_time=hurt_time, target_yaw=target_yaw, light_mult=light_mult, **kwargs)
 
 
