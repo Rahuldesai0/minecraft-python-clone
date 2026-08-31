@@ -138,6 +138,11 @@ class Camera:
 		if is_creative or damage <= 0 or self.health <= 0:
 			return
 
+		# Player invulnerability frames (0.4s in Minecraft)
+		# Prevents taking instant stacked damage from swarms of mobs on the exact same frame
+		if self.hurt_time > 0.0 and damage < 9999:
+			return
+
 		gui_ref = gui or self.gui
 		if gui_ref and hasattr(gui_ref, "get_total_armor_protection"):
 			defense = gui_ref.get_total_armor_protection()
@@ -166,7 +171,7 @@ class Camera:
 
 		if damage > 0:
 			self.health = max(0, self.health - damage)
-		self.hurt_time = 0.4
+		self.hurt_time = 0.5
 		self.last_damage_time = time.time()
 
 		if self.health == 0:
@@ -188,7 +193,6 @@ class Camera:
 				window_ref.last_death_dimension = curr_dim
 
 			# Reset all mob aggression on player death
-			mob_mgr = getattr(world, 'item_drop_manager', None) # check mob manager
 			mob_mgr = getattr(world, 'mob_manager', None)
 			if not mob_mgr and window_ref:
 				mob_mgr = getattr(window_ref, 'mob_manager', None)
@@ -204,6 +208,42 @@ class Camera:
 				window_ref.respawn_player()
 			else:
 				self.respawn(world)
+
+	def kill_by_void(self, world=None):
+		"""Triggers instant void death at Y <= -60 in all dimensions regardless of health, armor, or flying mode."""
+		self.health = 0
+		death_pos = list(self.position)
+		gui_ref = getattr(self, 'gui', None)
+		window_ref = getattr(self, 'window', None)
+		id_mgr = getattr(world, 'item_drop_manager', None)
+		if not id_mgr and gui_ref and hasattr(gui_ref, 'window'):
+			id_mgr = getattr(gui_ref.window, 'item_drop_manager', None)
+		if not window_ref and gui_ref and hasattr(gui_ref, 'window'):
+			window_ref = gui_ref.window
+
+		curr_dim = getattr(window_ref, "dimension", getattr(world, "dimension", "overworld"))
+		self.last_death_pos = list(death_pos)
+		self.last_death_dimension = curr_dim
+		if window_ref:
+			window_ref.last_death_pos = list(death_pos)
+			window_ref.last_death_dimension = curr_dim
+
+		# Reset all mob aggression on player death
+		mob_mgr = getattr(world, 'mob_manager', None)
+		if not mob_mgr and window_ref:
+			mob_mgr = getattr(window_ref, 'mob_manager', None)
+		if mob_mgr and hasattr(mob_mgr, 'reset_all_aggro'):
+			mob_mgr.reset_all_aggro()
+
+		# Drop items at void death coordinates
+		if gui_ref and hasattr(gui_ref, 'drop_all_on_death'):
+			gui_ref.drop_all_on_death(death_pos, id_mgr)
+
+		# Respawn player at spawn
+		if window_ref and hasattr(window_ref, 'respawn_player'):
+			window_ref.respawn_player()
+		else:
+			self.respawn(world)
 
 	def respawn(self, world=None):
 		self.health = self.max_health
@@ -604,8 +644,10 @@ class Camera:
 		else:
 			self.portal_timer = 0.0
 
-		# Void Damage (Y < -10)
-		if self.position[1] < -10.0 and not flying:
+		# Void Instant Death (Y <= -60.0 in End, Nether, Overworld - all dimensions)
+		if self.position[1] <= -60.0:
+			self.kill_by_void(world)
+		elif self.position[1] < -10.0 and not flying:
 			if not hasattr(self, "_last_void_damage_time") or time.time() - self._last_void_damage_time >= 0.5:
 				self._last_void_damage_time = time.time()
 				self.take_damage(4, world=world)

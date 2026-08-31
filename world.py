@@ -427,6 +427,20 @@ def build_chunk_blocks_process(x, z, scale, octaves, persistence, lacunarity, ca
 	except Exception as e:
 		pass
 
+	# 11. Overworld Monster Dungeons Generation (7x7x7 Cubes with Spawner & Chests)
+	try:
+		import dungeon
+		d_blocks, d_air, _, _ = dungeon.get_dungeon_blocks_for_chunk(x, z, seed=seed)
+		if d_blocks or d_air:
+			for (lx, ly, lz) in d_air:
+				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
+					set_b(lx, ly, lz, 0)
+			for (lx, ly, lz), b_id in d_blocks.items():
+				if 0 <= lx < 16 and 0 <= ly < 256 and 0 <= lz < 16:
+					set_b(lx, ly, lz, b_id)
+	except Exception as e:
+		pass
+
 	# Save to disk
 	try:
 		raw_out = flat_bytes.tobytes() if hasattr(flat_bytes, 'tobytes') else bytes(flat_bytes)
@@ -1975,11 +1989,13 @@ class World:
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="cracked_stone_brick", block_face_textures={"all": "stonebrick_cracked"}, break_time=1.5, requires_tool=True))
 		self.block_types.append(block_type.Block_type(self.texture_manager, name="iron_bars", block_face_textures={"all": "iron_bars"}, model=models.iron_bars, transparent=True, break_time=5.0, requires_tool=True))
 
-		# Pad slots 100..177 with placeholder Block_types (and Oak Sapling at 156)
+		# Pad slots 100..177 with placeholder Block_types (and Oak Sapling at 156, Mob Spawner at 177)
 		while len(self.block_types) < 178:
 			curr_id = len(self.block_types)
 			if curr_id == 156:
 				self.block_types.append(block_type.Block_type(self.texture_manager, name="oak_sapling", block_face_textures={"all": "sapling"}, model=models.plant, transparent=True, break_time=0.0, requires_tool=False))
+			elif curr_id == 177:
+				self.block_types.append(block_type.Block_type(self.texture_manager, name="mob_spawner", block_face_textures={"all": "mob_spawner"}, model=models.leaves, transparent=True, break_time=5.0, requires_tool=True))
 			else:
 				self.block_types.append(block_type.Block_type(self.texture_manager, name=f"item_{curr_id}", block_face_textures={"all": "stonebrick"}, transparent=True, break_time=1.0, requires_tool=False))
 
@@ -2154,6 +2170,7 @@ class World:
 		import gui
 		for item_id, item_name, tex_name in gui.ALL_ITEMS:
 			self.texture_manager.add_texture(tex_name)
+		self.texture_manager.add_texture("mob_spawner")
 
 		# Wood Variant & Biome Textures
 		for wood in ("birch", "spruce", "jungle", "acacia", "big_oak"):
@@ -2775,6 +2792,19 @@ class World:
 				_, _, v_chests = village.get_village_blocks_for_chunk(x, z, self.seed)
 				if v_chests:
 					for pos_key, slots in v_chests.items():
+						if pos_key not in self.chests:
+							c_obj = ChestData()
+							c_obj.slots = [list(s) for s in slots]
+							self.chests[pos_key] = c_obj
+			except Exception:
+				pass
+
+			# Register any dungeon chests generated in this chunk
+			try:
+				import dungeon
+				_, _, d_chests, _ = dungeon.get_dungeon_blocks_for_chunk(x, z, self.seed)
+				if d_chests:
+					for pos_key, slots in d_chests.items():
 						if pos_key not in self.chests:
 							c_obj = ChestData()
 							c_obj.slots = [list(s) for s in slots]

@@ -23,6 +23,7 @@ BLOCK_NETHER_BRICK_FENCE = 91
 BLOCK_NETHER_BRICK_STAIRS = 92
 BLOCK_NETHER_WART = 94
 BLOCK_NETHER_BRICK_SLAB = 95
+BLOCK_MOB_SPAWNER = 177
 BLOCK_LAVA = 15
 BLOCK_FIRE = 78
 
@@ -239,7 +240,7 @@ class SpawnerPlatformPiece(FortressPiece):
 
 	def get_spawner_center(self):
 		ox, oy, oz = self.origin
-		rx, ry, rz = rotate_point(0, 3, 8, self.rot)
+		rx, ry, rz = rotate_point(0, 4, 8, self.rot)
 		return (ox + rx, oy + ry, oz + rz)
 
 	def get_blocks(self):
@@ -278,13 +279,15 @@ class SpawnerPlatformPiece(FortressPiece):
 						arx, ary, arz = rotate_point(x, y, z, self.rot)
 						blocks.append((ox + arx, oy + ary, oz + arz, BLOCK_AIR))
 
-		# 3. Center Spawner Pedestal (X=0, Z=8, Y=3) & Glowstone lights
+		# 3. Center Spawner Pedestal (X=0, Z=8, Y=3) & Mob Spawner (Y=4)
 		crx, cry, crz = rotate_point(0, 3, 8, self.rot)
 		blocks.append((ox + crx, oy + cry, oz + crz, BLOCK_NETHER_BRICK_FENCE))
+		srx, sry, srz = rotate_point(0, 4, 8, self.rot)
+		blocks.append((ox + srx, oy + sry, oz + srz, BLOCK_MOB_SPAWNER))
 
 		for gx, gz in ((-3, 5), (3, 5), (-3, 11), (3, 11)):
 			rx, ry, rz = rotate_point(gx, 3, gz, self.rot)
-			blocks.append((ox + rx, oy + ry, oz + rz, BLOCK_GLOWSTONE))
+			blocks.append((ox + rx, oy + ry, oz + rz, BLOCK_NETHER_BRICK_FENCE))
 
 		# 4. Support Pillars under the 4 corners of platform
 		for px, pz in ((-4, 4), (4, 4), (-4, 12), (4, 12)):
@@ -587,8 +590,8 @@ class NetherFortress:
 				candidates.append((BridgeCrossingPiece, 15))
 				candidates.append((BridgeStairsPiece, 10))
 				candidates.append((BridgeGatePiece, 15)) # transition to closed corridor
-				if spawner_count < 2 and len(self.pieces) > 8:
-					candidates.append((SpawnerPlatformPiece, 20))
+				if spawner_count < 2 and len(self.pieces) >= 6:
+					candidates.append((SpawnerPlatformPiece, 45))
 			else: # closed corridor
 				candidates.append((CorridorStraightPiece, 35))
 				candidates.append((CorridorCrossingPiece, 15))
@@ -652,6 +655,36 @@ class NetherFortress:
 			else:
 				cap = CorridorEndPiece((cx, cy, cz), cdir)
 			self.pieces.append(cap)
+
+		# Guarantee exactly 2 blaze spawner platforms per fortress
+		if len(self.spawner_pieces) < 2:
+			for p in list(self.pieces):
+				if len(self.spawner_pieces) >= 2:
+					break
+				if p.piece_type in ("bridge_crossing", "bridge_straight", "bridge_stairs", "bridge_end"):
+					# Attempt attaching spawner platform along each cardinal direction
+					for cdir in range(4):
+						ox, oy, oz = p.origin
+						candidate = SpawnerPlatformPiece((ox, oy, oz), cdir)
+						c_box = candidate.world_box
+						if 15 <= c_box[1] and c_box[4] <= 112:
+							# Check intersection with other pieces except the parent piece p
+							if not any(boxes_intersect(c_box, ex.world_box, margin=1) for ex in self.pieces if ex is not p):
+								self.pieces.append(candidate)
+								self.spawner_pieces.append(candidate)
+								break
+
+		# If still needed, place an elevated spawner platform offset safely
+		if len(self.spawner_pieces) < 2:
+			sox, soy, soz = self.origin
+			for offset in ((24, 0, 24), (-24, 0, 24), (24, 0, -24), (-24, 0, -24), (0, 0, 36), (0, 0, -36)):
+				if len(self.spawner_pieces) >= 2:
+					break
+				candidate = SpawnerPlatformPiece((sox + offset[0], soy + offset[1], soz + offset[2]), 0)
+				c_box = candidate.world_box
+				if not any(boxes_intersect(c_box, ex.world_box, margin=1) for ex in self.pieces):
+					self.pieces.append(candidate)
+					self.spawner_pieces.append(candidate)
 
 		# Index all bounding boxes for fast mob spawn region queries
 		self.spawn_boxes = [p.world_box for p in self.pieces]

@@ -158,6 +158,7 @@ PALETTE_ITEMS = [
 	(283, "Red Tulip", "flower_tulip_red"),
 	(284, "Orange Tulip", "flower_tulip_orange"),
 	(285, "Oxeye Daisy", "flower_oxeye_daisy"),
+	(177, "Monster Spawner", "mob_spawner"),
 ]
 
 TOOL_ITEMS = [
@@ -588,6 +589,7 @@ BLOCK_MINING_PROPERTIES = {
 	94: (None, 0, 0.1, 173),       # Nether Wart Crop -> drops Nether Wart 173
 	95: ("pickaxe", 1, 2.0, 95),   # Nether Brick Slab
 	156: (None, 0, 0.0, 156),      # Oak Sapling
+	177: ("pickaxe", 1, 5.0, None), # Monster Spawner (Drops XP)
 	181: (None, 0, float('inf'), None), # End Portal Frame (Indestructible)
 	182: (None, 0, float('inf'), None), # Filled End Portal Frame (Indestructible)
 	183: (None, 0, float('inf'), None), # End Portal (Indestructible)
@@ -2533,7 +2535,7 @@ class InventoryGUI:
 		gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 
 		if self.window.camera.hurt_time > 0:
-			alpha = int(140 * (self.window.camera.hurt_time / 0.4))
+			alpha = int(140 * min(1.0, self.window.camera.hurt_time / 0.5))
 			self.hurt_flash.width = self.window.width
 			self.hurt_flash.height = self.window.height
 			self.hurt_flash.color = (255, 0, 0, alpha)

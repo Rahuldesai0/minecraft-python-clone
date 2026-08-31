@@ -42,6 +42,7 @@ class MobManager:
 		self.passive_spawn_timer = 0.0
 		self.hostile_spawn_timer = 0.0
 		self.spawner_tick_timer = 0.0
+		self.active_spawners = {}  # pos -> {"mob_type": str, "delay": float}
 		self.max_passive_mobs = 24
 		self.max_hostile_mobs = 28
 		self.max_surface_hostiles = 20
@@ -544,6 +545,185 @@ class MobManager:
 					self.spawn_mob(mob_type, (sx, spawn_y, sz))
 					cave_hostiles += 1
 
+	def update_spawners(self, dt, player_pos, time_of_day=0.5, flying=False):
+		"""
+		Ticks active Monster Spawners (Block ID 52):
+		1. Activated only when player distance <= 16.0 blocks.
+		2. Spawns mobs at intervals of 10.0 to 40.0 seconds.
+		3. Spawns 1 to 4 mobs at a time based on space availability.
+		4. Spawn area: 7x7 horizontal area ([-3, +3] in X and Z) and 5 blocks vertically ([-1, +4] relative to spawner).
+		5. Light level requirements:
+		   - Zombie / Skeleton / Spider: light level <= 7
+		   - Blaze: light level <= 11 (Nether dimension)
+		   - Silverfish: light level <= 11
+		6. Nearby mob cap: <= 6 of same mob within 9x9 area.
+		"""
+		if not player_pos:
+			return
+
+		px, py, pz = player_pos
+		curr_dim = getattr(self.world, "dimension", "overworld")
+		world_seed = getattr(self.world, "seed", 0)
+
+		# 1. Collect all nearby spawners within player active search radius (48 blocks)
+		nearby_spawners = []  # list of (spx, spy, spz, mob_type)
+
+		if curr_dim == "overworld":
+			# Dungeon Spawners (Zombie, Skeleton, Spider)
+			try:
+				import dungeon
+				d_spawners = dungeon.get_nearby_dungeon_spawners(player_pos, seed=world_seed, radius=48)
+				for d in d_spawners:
+					spx, spy, spz = d["pos"]
+					nearby_spawners.append((spx, spy, spz, d["mob_type"]))
+			except Exception:
+				pass
+
+			# Stronghold Silverfish Spawner (Portal Room)
+			try:
+				import stronghold_manager
+				sf_spawners = stronghold_manager.get_nearby_silverfish_spawners(player_pos, seed=world_seed, radius=48)
+				for spx, spy, spz in sf_spawners:
+					nearby_spawners.append((spx, spy, spz, "silverfish"))
+			except Exception:
+				pass
+
+		elif curr_dim == "nether":
+			# Nether Fortress Blaze Spawners (2 platforms per fortress)
+			try:
+				import fortress_manager
+				f_spawners = fortress_manager.get_nearby_spawner_positions(player_pos, seed=world_seed, radius=48)
+				for spx, spy, spz in f_spawners:
+					nearby_spawners.append((spx, spy, spz, "blaze"))
+			except Exception:
+				pass
+
+		# Also scan loaded chunks within 24 blocks of player for any placed / loaded Block 177
+		ipx, ipy, ipz = int(round(px)), int(round(py)), int(round(pz))
+		for cdx in (-1, 0, 1):
+			for cdz in (-1, 0, 1):
+				cx = (ipx // 16) + cdx
+				cz = (ipz // 16) + cdz
+				c_pos = (cx, 0, cz)
+				if hasattr(self.world, "chunks") and c_pos in self.world.chunks:
+					chk = self.world.chunks[c_pos]
+					if hasattr(chk, "blocks") and 177 in chk.blocks:
+						for lx in range(16):
+							for ly in range(max(0, ipy - 20), min(256, ipy + 20)):
+								for lz in range(16):
+									if chk.blocks[lx * 4096 + ly * 16 + lz] == 177:
+										wx = cx * 16 + lx
+										wz = cz * 16 + lz
+										if not any(s[0] == wx and s[1] == ly and s[2] == wz for s in nearby_spawners):
+											default_mob = "blaze" if curr_dim == "nether" else "zombie"
+											if (wx, ly, wz) in self.active_spawners:
+												default_mob = self.active_spawners[(wx, ly, wz)].get("mob_type", default_mob)
+											nearby_spawners.append((wx, ly, wz, default_mob))
+
+		# Also include already tracked / placed spawners in active_spawners
+		for (cspx, cspy, cspz), cdata in list(self.active_spawners.items()):
+			if not any(spx == cspx and spy == cspy and spz == cspz for spx, spy, spz, _ in nearby_spawners):
+				nearby_spawners.append((cspx, cspy, cspz, cdata.get("mob_type", "zombie")))
+
+		# 2. Process each active spawner
+		for spx, spy, spz, mob_type in nearby_spawners:
+			sp_pos = (int(round(spx)), int(round(spy)), int(round(spz)))
+
+			# Verify spawner block is still intact (Block ID 177 = Mob Spawner)
+			# (If broken by player, skip)
+			block_num = self.world.get_block_number(sp_pos)
+			if block_num != 177 and block_num != 0:
+				continue
+
+			# Check player proximity (Activation range <= 16.0 blocks in X-Z horizontal direction)
+			xz_dist_sq = (spx - px) ** 2 + (spz - pz) ** 2
+			if xz_dist_sq > 16.0 * 16.0:
+				continue
+
+			# Initialize spawner state if new (quick 1.5-4s initial countdown on first encounter)
+			if sp_pos not in self.active_spawners:
+				self.active_spawners[sp_pos] = {
+					"mob_type": mob_type,
+					"delay": random.uniform(1.5, 4.0),
+				}
+
+			sp_data = self.active_spawners[sp_pos]
+			sp_data["delay"] -= dt
+
+			if sp_data["delay"] <= 0.0:
+				# Reset countdown to next random interval (10 to 40 seconds)
+				sp_data["delay"] = random.uniform(10.0, 40.0)
+
+				# Check nearby mob cap (Max 6 of same mob within 9x9 area)
+				nearby_same_mobs = sum(
+					1 for m in self.mobs
+					if m.mob_type == mob_type and
+					abs(m.position[0] - spx) <= 4.5 and
+					abs(m.position[1] - spy) <= 4.5 and
+					abs(m.position[2] - spz) <= 4.5
+				)
+				if nearby_same_mobs >= 6:
+					continue
+
+				# Check total mob caps
+				if curr_dim == "nether" and len(self.mobs) >= self.max_nether_mobs:
+					continue
+				if curr_dim == "overworld" and len(self.mobs) >= self.max_hostile_mobs + 10:
+					continue
+
+				# Roll 1 to 4 mobs to spawn
+				spawn_batch = random.randint(1, 4)
+				spawned_this_cycle = 0
+
+				# Attempt spawn placements within 7x7 area horizontally ([-3, +3]) and 5 blocks vertically ([-1, +3])
+				for _ in range(48):
+					if spawned_this_cycle >= spawn_batch:
+						break
+
+					ox = random.randint(-3, 3)
+					oz = random.randint(-3, 3)
+
+					for oy in (0, 1, -1, 2):
+						sx = spx + ox
+						sy = spy + oy
+						sz = spz + oz
+
+						# 1. Clearance & Space availability check
+						# Mob body position must be in air/passable blocks
+						b_feet = self.world.get_block_number((sx, sy, sz))
+						b_head = self.world.get_block_number((sx, sy + 1, sz))
+						b_floor = self.world.get_block_number((sx, sy - 1, sz))
+
+						if b_feet != 0 or (mob_type not in ("spider", "silverfish") and b_head != 0):
+							continue
+
+						# Land mobs require solid floor underneath; Blazes can spawn in air
+						if mob_type != "blaze":
+							if b_floor == 0 or b_floor in (9, 19, 15, 20):
+								continue
+
+						# 2. Light level requirements
+						if mob_type in ("zombie", "skeleton", "spider"):
+							# Must be light level 7 or below (disabled by torches)
+							if not self.is_valid_overworld_hostile_light((sx, sy, sz), time_of_day=time_of_day):
+								continue
+						elif mob_type == "blaze":
+							# Nether Blaze spawner light requirement: light level <= 11
+							eff_l, sky_l, blk_l = self.world.get_light_at((sx, sy, sz))
+							if blk_l > 11:
+								continue
+						elif mob_type == "silverfish":
+							# Stronghold Portal Room Silverfish Spawner (spawns on stairs/floor around spawner)
+							pass
+
+						# Spawn the mob with slight center offset
+						spawn_x = sx + 0.5
+						spawn_y = sy + (0.1 if mob_type != "blaze" else 0.5)
+						spawn_z = sz + 0.5
+						self.spawn_mob(mob_type, (spawn_x, spawn_y, spawn_z))
+						spawned_this_cycle += 1
+						break
+
 	def update(self, dt, player_pos, camera=None, gui=None, tnt_manager=None, item_drop_manager=None, arrow_manager=None, time_of_day=0.5, flying=False):
 		# Dimension Safeguard: Only update mobs if this manager matches the active player dimension
 		if camera:
@@ -571,45 +751,8 @@ class MobManager:
 
 		px, py, pz = player_pos
 
-		# Active Spawner Platform Spawner Tick (Every 4.0s)
-		self.spawner_tick_timer += dt
-		if self.spawner_tick_timer >= 4.0:
-			self.spawner_tick_timer = 0.0
-			# 1. Blaze Spawners (Nether Fortress)
-			if getattr(self.world, "dimension", "overworld") == "nether" and player_pos and not flying:
-				world_seed = getattr(self.world, "seed", 0)
-				spawners = fortress_manager.get_nearby_spawner_positions(player_pos, seed=world_seed, radius=32)
-				for spx, spy, spz in spawners:
-					dist = math.sqrt((spx - px) ** 2 + (spy - py) ** 2 + (spz - pz) ** 2)
-					if dist <= 24.0:
-						nearby_blazes = sum(1 for m in self.mobs if m.mob_type == "blaze" and math.sqrt((m.position[0] - spx) ** 2 + (m.position[1] - spy) ** 2 + (m.position[2] - spz) ** 2) <= 16.0)
-						if nearby_blazes < 6 and len(self.mobs) < self.max_nether_mobs:
-							sp_count = random.randint(1, 3)
-							for _ in range(sp_count):
-								if len(self.mobs) >= self.max_nether_mobs:
-									break
-								off_x = spx + random.uniform(-2.0, 2.0)
-								off_y = spy + random.uniform(0.5, 2.5)
-								off_z = spz + random.uniform(-2.0, 2.0)
-								self.spawn_mob("blaze", (off_x, off_y, off_z))
-
-			# 2. Portal Room Silverfish Spawners (Overworld Strongholds)
-			if getattr(self.world, "dimension", "overworld") == "overworld" and player_pos and not flying:
-				world_seed = getattr(self.world, "seed", 0)
-				try:
-					sf_spawners = stronghold_manager.get_nearby_silverfish_spawners(player_pos, seed=world_seed, radius=32)
-					for spx, spy, spz in sf_spawners:
-						dist = math.sqrt((spx - px) ** 2 + (spy - py) ** 2 + (spz - pz) ** 2)
-						if dist <= 16.0:
-							nearby_sf = sum(1 for m in self.mobs if m.mob_type == "silverfish" and math.sqrt((m.position[0] - spx) ** 2 + (m.position[2] - spz) ** 2) <= 10.0)
-							if nearby_sf < 6:
-								for _ in range(random.randint(1, 2)):
-									sx = spx + random.uniform(-1.0, 1.0)
-									sy = spy + 0.1
-									sz = spz + random.uniform(-1.0, 1.0)
-									self.spawn_mob("silverfish", (sx, sy, sz))
-				except Exception:
-					pass
+		# Active Monster Spawners (10-40s Interval, 1-4 mobs, 7x7x5 area, light requirements)
+		self.update_spawners(dt, player_pos, time_of_day=time_of_day, flying=flying)
 
 		px, py, pz = player_pos
 
@@ -713,9 +856,6 @@ class MobManager:
 
 	def draw(self, camera, world=None, sky_factor=1.0, min_light=0.20):
 		"""Render active 3D models for all passive, hostile, and neutral mobs."""
-		if not self.mobs and not (hasattr(self, 'fireball_manager') and self.fireball_manager and self.fireball_manager.fireballs):
-			return
-
 		for mob in self.mobs:
 			if world:
 				mx, my, mz = mob.position
@@ -824,3 +964,68 @@ class MobManager:
 		# Draw active Small Fireball projectiles
 		if hasattr(self, 'fireball_manager') and self.fireball_manager:
 			self.fireball_manager.draw(camera)
+
+		# Draw Spinning Miniature Mobs inside active/nearby Monster Spawners
+		self.draw_spawners(camera, world=world)
+
+	def draw_spawners(self, camera, world=None):
+		"""Renders miniature spinning 3D mob inside monster spawner cages and flame particles."""
+		if not camera or not self.active_spawners:
+			return
+
+		import time
+		cur_t = time.time()
+		px, py, pz = camera.position
+
+		for (spx, spy, spz), sdata in list(self.active_spawners.items()):
+			# Check if spawner block is still intact
+			b_curr = self.world.get_block_number((spx, spy, spz))
+			if b_curr != 177 and b_curr != 0:
+				continue
+
+			dist_sq = (spx + 0.5 - px) ** 2 + (spy + 0.5 - py) ** 2 + (spz + 0.5 - pz) ** 2
+			if dist_sq > 36.0 * 36.0:
+				continue
+
+			mob_t = sdata.get("mob_type", "zombie")
+			is_active = ((spx + 0.5 - px) ** 2 + (spz + 0.5 - pz) ** 2) <= 16.0 * 16.0
+			spin_speed = 3.5 if is_active else 1.2
+			spin_yaw = (cur_t * spin_speed) % math.tau
+
+			# Render miniature mob inside cage
+			if mob_t == "spider":
+				m_pos = (spx + 0.5, spy + 0.35, spz + 0.5)
+				self.spider_model.render(camera, m_pos, spin_yaw, 0.0, cur_t * 2.0, True, scale=0.38, light_mult=1.1)
+			elif mob_t == "skeleton":
+				m_pos = (spx + 0.5, spy + 0.10, spz + 0.5)
+				self.skeleton_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.40, light_mult=1.1)
+			elif mob_t == "blaze":
+				m_pos = (spx + 0.5, spy + 0.18, spz + 0.5)
+				self.blaze_model.render(camera, m_pos, spin_yaw, 0.0, cur_t * 3.0, True, scale=0.38, light_mult=1.2)
+			elif mob_t == "silverfish":
+				m_pos = (spx + 0.5, spy + 0.42, spz + 0.5)
+				self.silverfish_model.render(camera, m_pos, spin_yaw, 0.0, cur_t * 4.0, True, scale=0.55, light_mult=1.1)
+			elif mob_t == "creeper":
+				m_pos = (spx + 0.5, spy + 0.15, spz + 0.5)
+				self.creeper_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.40, light_mult=1.1)
+			elif mob_t == "zombie_pigman":
+				m_pos = (spx + 0.5, spy + 0.10, spz + 0.5)
+				self.zombie_pigman_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.40, light_mult=1.1)
+			elif mob_t == "enderman":
+				m_pos = (spx + 0.5, spy + 0.05, spz + 0.5)
+				self.enderman_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.28, light_mult=1.1)
+			elif mob_t == "pig":
+				m_pos = (spx + 0.5, spy + 0.25, spz + 0.5)
+				self.pig_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.40, light_mult=1.1)
+			elif mob_t == "cow":
+				m_pos = (spx + 0.5, spy + 0.20, spz + 0.5)
+				self.cow_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.35, light_mult=1.1)
+			elif mob_t == "sheep":
+				m_pos = (spx + 0.5, spy + 0.20, spz + 0.5)
+				self.sheep_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.38, light_mult=1.1)
+			elif mob_t == "chicken":
+				m_pos = (spx + 0.5, spy + 0.35, spz + 0.5)
+				self.chicken_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.45, light_mult=1.1)
+			else: # Default zombie
+				m_pos = (spx + 0.5, spy + 0.10, spz + 0.5)
+				self.zombie_model.render(camera, m_pos, spin_yaw, 0.0, 0.0, False, scale=0.40, light_mult=1.1)

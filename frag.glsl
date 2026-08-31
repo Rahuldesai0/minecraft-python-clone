@@ -18,6 +18,8 @@ uniform vec3 sun_direction;     // Normalized vector to Sun in world space
 uniform vec3 camera_pos;        // Player eye position
 uniform float game_time;        // Elapsed time (seconds) for wave/reflection dynamics
 uniform int dimension_id;       // 0: Overworld, 1: Nether, 2: End
+uniform int num_spawners;       // Active spawner count within visual range
+uniform vec3 spawner_positions[16]; // Active spawner positions for shader radiance
 
 in vec3 local_position;
 in vec3 interpolated_tex_coords;
@@ -95,6 +97,7 @@ void main(void) {
 	bool is_diamond_ore = (tex_id == 20);
 	bool is_gold_ore = (tex_id == 40);
 	bool is_glass = (tex_id == 21);
+	bool is_mob_spawner = (tex_id == 145);
 	bool is_metallic = (is_gold || is_iron_block || is_diamond_block);
 	bool is_reflective = (is_water || is_ice || is_metallic || is_glass);
 	bool is_defect = (is_glass && texture_colour.r > 0.92 && texture_colour.g > 0.92 && texture_colour.b > 0.92 && texture_colour.a > 0.5);
@@ -196,11 +199,25 @@ void main(void) {
 		torch_light = vec3(1.15, 0.80, 0.40) * b_curve * 1.35;
 	}
 
+	// Spawner Dynamic Radial Light Emission (in Shader Mode only)
+	vec3 spawner_light = vec3(0.0);
+	for (int si = 0; si < num_spawners; si++) {
+		vec3 sp_pos = spawner_positions[si] + vec3(0.5);
+		float s_dist = length(local_position - sp_pos);
+		if (s_dist < 9.0) {
+			float s_atten = max(0.0, 1.0 - (s_dist / 9.0));
+			float s_curve = s_atten * s_atten;
+			float s_flicker = 0.90 + 0.10 * sin(game_time * 7.5 + float(si) * 2.3);
+			vec3 s_color = vec3(1.25, 0.60, 0.18) * (s_curve * s_flicker * 1.35);
+			spawner_light += s_color;
+		}
+	}
+
 	// Ambient Occlusion from vertex corner shading
 	float ao = face_shd_val;
 
 	// Total Diffuse Illumination
-	vec3 total_illumination = (direct_sun + ambient_light + torch_light) * ao;
+	vec3 total_illumination = (direct_sun + ambient_light + torch_light + spawner_light) * ao;
 
 	// Base shaded diffuse color
 	vec3 base_tint = is_glass ? vec3(0.92, 0.97, 1.05) : vec3(1.0);
@@ -294,6 +311,14 @@ void main(void) {
 
 			shaded_color += (mineral_glow + spk_glint);
 		}
+	}
+
+	// Mob Spawner Fiery Core Glow in Shader Mode
+	if (is_mob_spawner) {
+		float flame_pulse = 0.88 + 0.12 * sin(game_time * 6.5 + local_position.x * 4.0 + local_position.z * 4.0);
+		float flame_flicker = fract(sin(dot(floor(local_position * 12.0), vec3(12.9898, 78.233, 45.164)) + floor(game_time * 10.0)) * 43758.5453);
+		vec3 spawner_glow = vec3(1.35, 0.70, 0.22) * (flame_pulse + flame_flicker * 0.15) * 1.5;
+		shaded_color = max(shaded_color, texture_colour.rgb * spawner_glow) + vec3(0.18, 0.08, 0.02);
 	}
 
 	// 6. Highly Reflective Water, Ice, Glass & Metallic Blocks

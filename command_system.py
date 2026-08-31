@@ -19,6 +19,8 @@ COLOR_WARN    = (255, 255, 85, 255)   # Minecraft Yellow
 STRUCTURE_DIMENSIONS = {
 	"village": "overworld",
 	"stronghold": "overworld",
+	"dungeon": "overworld",
+	"spawner": "overworld",
 	"fortress": "nether",
 	"nether_fortress": "nether",
 	"pillars": "end",
@@ -326,6 +328,31 @@ def execute_command(game, raw_cmd):
 			else:
 				return False, "Could not find structure 'stronghold' within 2000 blocks.", COLOR_WARN
 
+		elif struct_name in ("dungeon", "spawner"):
+			import dungeon
+			curr_cx = int(math.floor(px / 16.0))
+			curr_cz = int(math.floor(pz / 16.0))
+			closest_d = None
+			min_d = float('inf')
+
+			# Search up to 60 chunks (960 blocks)
+			for dx in range(-60, 61):
+				for dz in range(-60, 61):
+					d_data = dungeon.get_dungeon_in_chunk(curr_cx + dx, curr_cz + dz, seed)
+					if d_data:
+						dwx, dwy, dwz, mob_t = d_data
+						floor_y = dwy - 2
+						dist = math.sqrt((dwx - px) ** 2 + (dwz - pz) ** 2)
+						if dist <= 1000.0 and dist < min_d:
+							min_d = dist
+							closest_d = (dwx, floor_y, dwz, mob_t, dist)
+
+			if closest_d:
+				dwx, floor_y, dwz, mob_t, dist = closest_d
+				return True, f"[Structure] Closest {mob_t} dungeon is at X: {dwx}, Y: {floor_y}, Z: {dwz} ({dist:.1f} blocks away)", COLOR_INFO
+			else:
+				return False, "Could not find any dungeons within 1000 blocks.", COLOR_WARN
+
 		elif struct_name in ("fortress", "nether_fortress"):
 			import fortress_manager
 			curr_rx = int(math.floor(px / 384.0))
@@ -392,5 +419,90 @@ def execute_command(game, raw_cmd):
 			else:
 				return False, "Obsidian Spawn Platform is outside 2000 blocks.", COLOR_WARN
 
+	# -------------------------------------------------------------
+	# 5. TIME (/time set <preset|val> or /time add <seconds>)
+	# -------------------------------------------------------------
+	elif cmd == "time":
+		if not args:
+			tod = getattr(game, "time_of_day", 0.25) % 1.0
+			total_min = int(tod * 24.0 * 60.0)
+			hours = (total_min // 60)
+			mins = total_min % 60
+			period = "AM" if hours < 12 else "PM"
+			disp_hour = hours % 12
+			if disp_hour == 0:
+				disp_hour = 12
+			return True, f"Current time is {disp_hour}:{mins:02d} {period} (time_of_day: {tod:.3f})", COLOR_INFO
+
+		subcmd = args[0].lower()
+		if subcmd == "set":
+			if len(args) < 2:
+				return False, "Usage: /time set <sunrise | midday | sunset | midnight | value>", COLOR_ERROR
+
+			target_val = args[1].lower()
+			PRESETS = {
+				"sunrise": 0.25,
+				"dawn": 0.25,
+				"morning": 0.25,
+				"midday": 0.50,
+				"noon": 0.50,
+				"day": 0.50,
+				"sunset": 0.75,
+				"dusk": 0.75,
+				"midnight": 0.0,
+				"night": 0.0,
+			}
+
+			if target_val in PRESETS:
+				new_tod = PRESETS[target_val]
+				game.time_of_day = new_tod
+				if hasattr(game, "update_sky_color"):
+					game.update_sky_color()
+				name_cap = target_val.capitalize()
+				return True, f"Set time to {name_cap} ({new_tod:.2f})", COLOR_SUCCESS
+			else:
+				try:
+					num_val = float(target_val)
+					if num_val > 1.0 and num_val <= 24000:
+						# Minecraft ticks (0..24000)
+						new_tod = ((num_val / 24000.0) + 0.25) % 1.0
+					else:
+						new_tod = num_val % 1.0
+					game.time_of_day = new_tod
+					if hasattr(game, "update_sky_color"):
+						game.update_sky_color()
+					return True, f"Set time to {new_tod:.3f}", COLOR_SUCCESS
+				except ValueError:
+					return False, f"Unknown time preset: '{target_val}' (Use: sunrise, midday, sunset, midnight)", COLOR_ERROR
+
+		elif subcmd == "add":
+			if len(args) < 2:
+				return False, "Usage: /time add <seconds>", COLOR_ERROR
+			try:
+				sec_to_add = float(args[1])
+				# 1200 seconds = 1 full day cycle (20 minutes)
+				tod_delta = sec_to_add / 1200.0
+				game.time_of_day = (getattr(game, "time_of_day", 0.25) + tod_delta) % 1.0
+				if hasattr(game, "update_sky_color"):
+					game.update_sky_color()
+				sign = "+" if sec_to_add >= 0 else ""
+				return True, f"Added {sign}{sec_to_add:.1f}s to world time (now {game.time_of_day:.3f})", COLOR_SUCCESS
+			except ValueError:
+				return False, f"Invalid number of seconds: '{args[1]}'", COLOR_ERROR
+
+		elif subcmd == "query":
+			tod = getattr(game, "time_of_day", 0.25) % 1.0
+			total_min = int(tod * 24.0 * 60.0)
+			hours = (total_min // 60)
+			mins = total_min % 60
+			period = "AM" if hours < 12 else "PM"
+			disp_hour = hours % 12
+			if disp_hour == 0:
+				disp_hour = 12
+			return True, f"Current time is {disp_hour}:{mins:02d} {period} (time_of_day: {tod:.3f})", COLOR_INFO
+
+		else:
+			return False, f"Unknown subcommand: '{subcmd}'. Use: /time set <preset> or /time add <seconds>", COLOR_ERROR
+
 	else:
-		return False, f"Unknown command: '/{cmd}'. Available: /tp, /summon, /kill, /locate", COLOR_ERROR
+		return False, f"Unknown command: '/{cmd}'. Available: /tp, /summon, /kill, /locate, /time", COLOR_ERROR

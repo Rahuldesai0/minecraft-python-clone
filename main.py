@@ -84,6 +84,8 @@ class Window(pyglet.window.Window):
 		self.shadow_world_size_loc = self.shader.find_uniform(b"shadow_world_size")
 		self.scene_texture_loc = self.shader.find_uniform(b"scene_texture")
 		self.window_size_loc = self.shader.find_uniform(b"window_size")
+		self.spawner_positions_loc = self.shader.find_uniform(b"spawner_positions")
+		self.num_spawners_loc = self.shader.find_uniform(b"num_spawners")
 		self.scene_texture = None
 		self.scene_tex_size = (0, 0)
 		self.lighting_mode = "BLOCK"
@@ -168,6 +170,8 @@ class Window(pyglet.window.Window):
 		self.command_feedback_color = (255, 255, 255, 255)
 		self.last_death_pos = None
 		self.last_death_dimension = "overworld"
+		self.time_of_day = 0.25
+		self.cycle_speed = 1.0 / 1200.0
 
 		# Entity Directional Shadow Renderer (Player & Mobs) & World Shadow Map (Trees, Mountains)
 		self.entity_shadows = entity_shadows.EntityShadowRenderer()
@@ -542,9 +546,6 @@ class Window(pyglet.window.Window):
 			cx - thick // 2, cy - size, thick, size * 2,
 			color=(255, 255, 255, 255), batch=self.crosshair_batch
 		)
-
-		self.time_of_day = 0.25  # World starts at Sunrise (0.25)
-		self.cycle_speed = 1.0 / 1200.0  # Exactly 20-minute full day/night cycle (1200 seconds)
 
 	def _save_current_dimension_and_unload(self):
 		"""Saves dirty chunks, containers, drops, and destroys the active world to prevent CPU/GPU memory leaks."""
@@ -1155,6 +1156,15 @@ class Window(pyglet.window.Window):
 							elif b_num in (220, 221):  # Bed Foot or Bed Head
 								actual_drop_id = 219  # 1 Bed item (219)
 								drop_qty = 1
+							elif b_num == 177:  # Mob Spawner (drops 15-43 XP)
+								import random
+								actual_drop_id = None
+								self.item_drop_manager.spawn_xp_orb(
+									random.randint(15, 43),
+									[target_block[0] + 0.5, target_block[1] + 0.5, target_block[2] + 0.5]
+								)
+								if hasattr(self, "mob_manager") and hasattr(self.mob_manager, "active_spawners"):
+									self.mob_manager.active_spawners.pop(target_block, None)
 							elif b_num in (184, 185, 186, 187):  # Infested Blocks (Monster Egg)
 								actual_drop_id = None
 								if hasattr(self, "mob_manager") and self.mob_manager:
@@ -1455,6 +1465,31 @@ class Window(pyglet.window.Window):
 			gl.glUniform1f(self.game_time_loc, getattr(self, "total_game_time", 0.0))
 		if hasattr(self, "dimension_id_loc") and self.dimension_id_loc is not None:
 			gl.glUniform1i(self.dimension_id_loc, dim_id)
+
+		# Spawner Dynamic Light & Glow (Active in Shader Mode only)
+		is_shader_mode = (getattr(self, "lighting_mode", "BLOCK") == "RAYTRACED")
+		if is_shader_mode and hasattr(self, "spawner_positions_loc") and self.spawner_positions_loc is not None:
+			nearby_spawners = []
+			if hasattr(self, "mob_manager") and self.mob_manager:
+				px, py, pz = self.camera.position
+				for sp_pos in list(self.mob_manager.active_spawners.keys()):
+					if math.sqrt((sp_pos[0] - px) ** 2 + (sp_pos[2] - pz) ** 2) <= 32.0:
+						nearby_spawners.append(sp_pos)
+						if len(nearby_spawners) >= 16:
+							break
+
+			num_sp = len(nearby_spawners)
+			if hasattr(self, "num_spawners_loc") and self.num_spawners_loc is not None:
+				gl.glUniform1i(self.num_spawners_loc, num_sp)
+			if num_sp > 0:
+				flat_coords = []
+				for sp in nearby_spawners:
+					flat_coords.extend([float(sp[0]), float(sp[1]), float(sp[2])])
+				arr_type = gl.GLfloat * len(flat_coords)
+				gl.glUniform3fv(self.spawner_positions_loc, num_sp, arr_type(*flat_coords))
+		else:
+			if hasattr(self, "num_spawners_loc") and self.num_spawners_loc is not None:
+				gl.glUniform1i(self.num_spawners_loc, 0)
 
 		# Real-Time Directional Shadows (Trees, Mountains, Terrain, Buildings)
 		if hasattr(self, "world_shadow_map") and self.world_shadow_map is not None:
@@ -1813,6 +1848,47 @@ class Window(pyglet.window.Window):
 
 			# Restore standard alpha blending
 			gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+
+			# Crosshair Target Inspection HUD for Monster Spawners
+			target_spawner_mob = None
+			def check_target_spawner(curr_b, next_b, face, hit_p):
+				nonlocal target_spawner_mob
+				if self.world.get_block_number(next_b) == 177:
+					sp_data = getattr(self.mob_manager, "active_spawners", {}).get(next_b)
+					if sp_data:
+						target_spawner_mob = sp_data.get("mob_type", "zombie").capitalize()
+					else:
+						dim = getattr(self.world, "dimension", "overworld")
+						target_spawner_mob = "Blaze" if dim == "nether" else "Zombie"
+				return True
+
+			hit_ray = hit.Hit_ray(self.world, self.camera.rotation, self.camera.position)
+			while hit_ray.distance < 5.0:
+				if hit_ray.step(check_target_spawner):
+					break
+
+			if target_spawner_mob:
+				sp_text = f"Monster Spawner ({target_spawner_mob})"
+				sp_lbl = pyglet.text.Label(
+					sp_text,
+					font_name="Arial",
+					font_size=11,
+					x=self.width // 2,
+					y=self.height // 2 + 28,
+					anchor_x="center",
+					anchor_y="center",
+					color=(255, 215, 100, 240)
+				)
+				gui.draw_bordered_box(
+					self.width // 2 - sp_lbl.content_width // 2 - 8,
+					self.height // 2 + 18,
+					sp_lbl.content_width + 16,
+					20,
+					1,
+					(20, 20, 20, 190),
+					(255, 200, 60, 220)
+				)
+				sp_lbl.draw()
 
 		# 4. Render sleek Mining Progress Bar overlay right below crosshair
 		self.draw_breaking_overlay()
@@ -2255,7 +2331,7 @@ class Window(pyglet.window.Window):
 
 		self.holding = self.gui.get_current_block_id()
 		is_shift_down = bool(modifiers & pyglet.window.key.MOD_SHIFT) or self.keys_down.get(pyglet.window.key.LSHIFT, False) or self.keys_down.get(pyglet.window.key.RSHIFT, False)
-		is_placeable = (0 < self.holding < 100) or (self.holding == 156) or (178 <= self.holding <= 187) or (204 <= self.holding <= 285) or (self.holding == 219)
+		is_placeable = (0 < self.holding < 100) or (self.holding in (156, 177)) or (178 <= self.holding <= 187) or (204 <= self.holding <= 285) or (self.holding == 219)
 		INTERACTIVE_BLOCKS = (
 			26, 27, 37, 54, 55, 56, 57, 58, 59,
 			43, 44, 45, 46, 65, 66, 67, 68,
@@ -2517,6 +2593,17 @@ class Window(pyglet.window.Window):
 						return
 				return
 
+			# 14. Monster Spawner (177)
+			elif held_item == 177:
+				self.world.set_block(target_pos, 177)
+				if hasattr(self, "mob_manager") and self.mob_manager:
+					dim = getattr(self.world, "dimension", "overworld")
+					default_mob = "blaze" if dim == "nether" else "zombie"
+					self.mob_manager.active_spawners[target_pos] = {
+						"mob_type": default_mob,
+						"delay": 2.0,
+					}
+
 			else:
 				self.world.set_block(target_pos, held_item)
 
@@ -2527,6 +2614,39 @@ class Window(pyglet.window.Window):
 			if self.world.get_block_number(current_block) != 14 and 0 <= current_block[1] < 256:
 				if button == pyglet.window.mouse.RIGHT:
 					target_b = self.world.get_block_number(next_block)
+
+					# 0. Monster Spawner (177) Inspection & Mob Configuration
+					if target_b == 177:
+						ITEM_TO_SPAWNER_MOB = {
+							166: "zombie",      # Rotten Flesh
+							167: "skeleton",    # Bone
+							168: "spider",      # String
+							169: "creeper",     # Gunpowder
+							170: "blaze",       # Blaze Rod
+							176: "enderman",    # Ender Pearl
+							184: "silverfish",  # Infested Stone
+							185: "silverfish",
+							186: "silverfish",
+							187: "silverfish",
+						}
+						if self.holding in ITEM_TO_SPAWNER_MOB:
+							new_mob = ITEM_TO_SPAWNER_MOB[self.holding]
+							if hasattr(self, "mob_manager") and self.mob_manager:
+								self.mob_manager.active_spawners[next_block] = {
+									"mob_type": new_mob,
+									"delay": 2.0,
+								}
+							self.gui.show_message(f"Spawner set to: {new_mob.capitalize()}")
+							return
+						elif not is_placeable:
+							sp_data = getattr(self.mob_manager, "active_spawners", {}).get(next_block)
+							if sp_data:
+								m_type = sp_data.get("mob_type", "zombie").capitalize()
+							else:
+								dim = getattr(self.world, "dimension", "overworld")
+								m_type = "Blaze" if dim == "nether" else "Zombie"
+							self.gui.show_message(f"Monster Spawner: {m_type}")
+							return
 
 					# 1. Bucket interactions (147 = Empty Bucket, 148 = Water Bucket, 149 = Lava Bucket)
 					if self.holding == 147:

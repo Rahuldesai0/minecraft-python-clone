@@ -34,6 +34,7 @@ BLOCK_INFESTED_STONE_BRICK = 184
 BLOCK_INFESTED_MOSSY = 185
 BLOCK_INFESTED_CRACKED = 186
 BLOCK_INFESTED_STONE = 187
+BLOCK_MOB_SPAWNER = 177
 
 # Directions & Orientations (0: North -Z, 1: East +X, 2: South +Z, 3: West -X)
 DIR_VECTORS = {
@@ -457,6 +458,7 @@ class StrongholdPortalRoomPiece(StrongholdPiece):
 			# Iron bars decorative pedestal under spawner
 			sp_rx, sp_ry, sp_rz = rotate_point(0, 0, 3, self.rot)
 			blocks[(ox + sp_rx, oy + sp_ry, oz + sp_rz)] = BLOCK_IRON_BARS
+			blocks[self.spawner_pos] = BLOCK_MOB_SPAWNER
 
 		return blocks, {}
 
@@ -577,13 +579,13 @@ class Stronghold:
 
 		# Guarantee Portal Room if loop exited without one
 		if not portal_room_generated and open_connectors:
-			for conn in open_connectors:
-				cx, cy, cz, crot = conn
-				candidate = StrongholdPortalRoomPiece((cx, cy, cz), crot)
-				self.pieces.append(candidate)
-				if candidate.spawner_pos:
-					self.spawners.append(candidate.spawner_pos)
-				break
+			conn = open_connectors.pop(0)
+			cx, cy, cz, crot = conn
+			candidate = StrongholdPortalRoomPiece((cx, cy, cz), crot)
+			self.pieces.append(candidate)
+			portal_room_generated = True
+			if candidate.spawner_pos:
+				self.spawners.append(candidate.spawner_pos)
 
 		# Seal all remaining open connectors with dead ends
 		for cx, cy, cz, crot in open_connectors:
@@ -696,8 +698,8 @@ def stamp_stronghold_blocks_for_chunk(chunk_x, chunk_z, flat_bytes, seed=0):
 
 	positions = get_stronghold_positions(seed)
 	for sx, sy, sz in positions:
-		# Check if stronghold bounding box (approx 120x120 blocks) overlaps this chunk
-		if not (min_cx > sx + 120 or max_cx < sx - 120 or min_cz > sz + 120 or max_cz < sz - 120):
+		# Check if stronghold bounding box (approx 160x160 blocks) overlaps this chunk
+		if not (min_cx > sx + 160 or max_cx < sx - 160 or min_cz > sz + 160 or max_cz < sz - 160):
 			sh = get_stronghold_at_origin((sx, sy, sz), seed)
 			for (wx, wy, wz), b_id in sh.blocks.items():
 				if min_cx <= wx <= max_cx and min_cz <= wz <= max_cz and 0 <= wy < 256:
@@ -720,6 +722,6 @@ def get_nearby_silverfish_spawners(player_pos, seed=0, radius=48):
 				sp_dx = sp[0] - px
 				sp_dy = sp[1] - py
 				sp_dz = sp[2] - pz
-				if math.sqrt(sp_dx * sp_dx + sp_dy * sp_dy + sp_dz * sp_dz) <= radius:
+				if math.sqrt(sp_dx * sp_dx + sp_dz * sp_dz) <= radius and abs(sp_dy) <= 64:
 					spawners.append(sp)
 	return spawners

@@ -132,8 +132,10 @@ class BaseMobModel:
 		self.vbo_pos = None
 		self.vbo_tex = None
 		self.vbo_shd = None
+		self.current_scale = 1.0
 
-	def ensure_initialized(self):
+	def ensure_initialized(self, scale=1.0):
+		self.current_scale = scale
 		if self.texture_id is None:
 			self.load_texture(self.texture_path)
 		if self.shader_program is None:
@@ -257,9 +259,13 @@ class BaseMobModel:
 			for x, y, z in corners:
 				# 1. Rotate locally around part pivot
 				x, y, z = transform_point(x, y, z, rx=local_rot[0], ry=local_rot[1], rz=local_rot[2], pivot=local_pivot)
-				# 2. Rotate by body yaw around mob origin
+				# 2. Scale locally around mob center if specified
+				if getattr(self, "current_scale", 1.0) != 1.0:
+					sc = self.current_scale
+					x, y, z = x * sc, y * sc, z * sc
+				# 3. Rotate by body yaw around mob origin
 				x, y, z = transform_point(x, y, z, ry=body_yaw, pivot=(0.0, 0.0, 0.0))
-				# 3. Translate to world mob position
+				# 4. Translate to world mob position
 				transformed.append((x + bx, y + by, z + bz))
 
 			for idx in (0, 1, 2, 0, 2, 3):
@@ -268,6 +274,7 @@ class BaseMobModel:
 				shd_data.append(shading)
 
 	def _draw_mesh(self, camera, pos_data, tex_data, shd_data, hurt_time=0.0, light_mult=1.0):
+		self.current_scale = 1.0
 		self.ensure_initialized()
 		if not self.shader_program:
 			return
@@ -335,7 +342,7 @@ class PigModel(BaseMobModel):
 		self.uv_leg   = build_cuboid_uv_atlas(0, 16, 4, 6, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -413,7 +420,7 @@ class CowModel(BaseMobModel):
 		self.uv_leg    = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -532,7 +539,7 @@ class SheepModel(BaseMobModel):
 		self.uv_leg  = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_grazing=False, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -606,7 +613,7 @@ class ChickenModel(BaseMobModel):
 		self.uv_leg    = build_cuboid_uv_atlas(26, 0, 3, 5, 3, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, wing_flap=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -724,7 +731,7 @@ class ZombieModel(BaseMobModel):
 		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, attack_anim_time=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -823,7 +830,7 @@ class ZombiePigmanModel(BaseMobModel):
 		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 4, 12, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_angry=False, attack_anim_time=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -926,7 +933,7 @@ class SkeletonModel(BaseMobModel):
 		self.uv_leg_r = build_cuboid_uv_atlas(0, 16, 2, 12, 2, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_aiming=False, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -1061,7 +1068,7 @@ class SpiderModel(BaseMobModel):
 		self.uv_leg     = build_cuboid_uv_atlas(18, 0, 16, 2, 2, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_climbing=False, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -1141,7 +1148,7 @@ class CreeperModel(BaseMobModel):
 		self.uv_leg  = build_cuboid_uv_atlas(0, 16, 4, 6, 4, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, fuse_progress=0.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -1241,7 +1248,7 @@ class BlazeModel(BaseMobModel):
 		self.uv_rod  = build_cuboid_uv_atlas(0, 16, 2, 8, 2, tw, th)
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, is_charging=False, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		if not self.texture_id or not self.shader_program:
 			return
 
@@ -1329,8 +1336,8 @@ class EndermanModel(BaseMobModel):
 		self.uv_arm = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
 		self.uv_leg = build_cuboid_uv_atlas(56, 0, 2, 30, 2, tex_w=64, tex_h=32)
 
-	def ensure_initialized(self):
-		super().ensure_initialized()
+	def ensure_initialized(self, scale=1.0):
+		super().ensure_initialized(scale=scale)
 		if self.eyes_texture_id is None and os.path.exists(self.eyes_texture_path):
 			try:
 				img = pyglet.image.load(self.eyes_texture_path)
@@ -1348,7 +1355,7 @@ class EndermanModel(BaseMobModel):
 				print(f"Error loading enderman eyes: {e}")
 
 	def render(self, camera, pos, yaw, pitch, walk_time, is_moving, hurt_time=0.0, target_yaw=None, is_screaming=False, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		pos_data, tex_data, shd_data = [], [], []
 		head_pos_data, head_tex_data, head_shd_data = [], [], []
 		t_yaw = target_yaw if target_yaw is not None else yaw
@@ -1494,7 +1501,7 @@ class SilverfishModel(BaseMobModel):
 		]
 
 	def render(self, camera, pos, yaw, pitch, walk_time=0.0, is_moving=False, hurt_time=0.0, target_yaw=None, light_mult=1.0, **kwargs):
-		self.ensure_initialized()
+		self.ensure_initialized(scale=kwargs.get("scale", 1.0))
 		pos_data = []
 		tex_data = []
 		shd_data = []
