@@ -932,7 +932,10 @@ class MeleeAttackGoal:
 					self.cooldown_timer = self.cooldown_max
 					self.mob.attack_anim_time = 0.35
 					if camera and hasattr(camera, "take_damage"):
-						camera.take_damage(self.damage, flying=is_creative, gui=gui, world=world)
+						base_dmg = self.damage
+						if getattr(self.mob, "is_new_moon_empowered", False):
+							base_dmg = int(math.ceil(base_dmg * 1.30)) + 1
+						camera.take_damage(base_dmg, flying=is_creative, gui=gui, world=world)
 		else:
 			# Pursue target
 			self.repath_timer -= dt
@@ -1271,6 +1274,10 @@ class HostileEntity(MobEntity):
 	"""Base reusable hostile mob entity with targeting, combat, and sunlight goals."""
 	def __init__(self, entity_id, position, mob_type, max_health=20, speed=0.23, width=0.6, height=1.9):
 		super().__init__(entity_id, position, mob_type=mob_type, max_health=max_health, speed=speed, width=width, height=height)
+		self.is_hostile = True
+		self.is_new_moon_empowered = False
+		self.damage_multiplier = 1.0
+		self.speed_multiplier = 1.0
 		self.target = None
 		self.attack_anim_time = 0.0
 		self.is_aiming = False
@@ -1591,8 +1598,9 @@ class CreeperAttackGoal:
 					self.mob.is_dead = True
 					import explosion
 					ex_pos = (mx, my + 0.85, mz)
+					cur_power = self.explosion_power * (1.25 if getattr(self.mob, 'is_new_moon_empowered', False) else 1.0)
 					explosion.create_explosion(
-						world, ex_pos, power=self.explosion_power, source_entity=self.mob,
+						world, ex_pos, power=cur_power, source_entity=self.mob,
 						tnt_manager=tnt_manager, mob_manager=mob_manager,
 						camera=camera, gui=gui, item_drop_manager=item_drop_manager
 					)
@@ -1622,8 +1630,9 @@ class CreeperAttackGoal:
 					self.mob.is_dead = True
 					import explosion
 					ex_pos = (mx, my + 0.85, mz)
+					cur_power = self.explosion_power * (1.25 if getattr(self.mob, 'is_new_moon_empowered', False) else 1.0)
 					explosion.create_explosion(
-						world, ex_pos, power=self.explosion_power, source_entity=self.mob,
+						world, ex_pos, power=cur_power, source_entity=self.mob,
 						tnt_manager=tnt_manager, mob_manager=mob_manager,
 						camera=camera, gui=gui, item_drop_manager=item_drop_manager
 					)

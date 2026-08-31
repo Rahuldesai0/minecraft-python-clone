@@ -43,6 +43,7 @@ class Window(pyglet.window.Window):
 		# create world
 
 		self.world = world.World()
+		self.world.window = self
 		self.dimension = "overworld"
 		self.texture_manager = self.world.texture_manager
 		self.block_types = self.world.block_types
@@ -86,6 +87,8 @@ class Window(pyglet.window.Window):
 		self.window_size_loc = self.shader.find_uniform(b"window_size")
 		self.spawner_positions_loc = self.shader.find_uniform(b"spawner_positions")
 		self.num_spawners_loc = self.shader.find_uniform(b"num_spawners")
+		self.moon_brightness_loc = self.shader.find_uniform(b"moon_brightness")
+		self.moon_phase_loc = self.shader.find_uniform(b"moon_phase")
 		self.scene_texture = None
 		self.scene_tex_size = (0, 0)
 		self.lighting_mode = "BLOCK"
@@ -171,6 +174,7 @@ class Window(pyglet.window.Window):
 		self.last_death_pos = None
 		self.last_death_dimension = "overworld"
 		self.time_of_day = 0.25
+		self.day_count = 0
 		self.cycle_speed = 1.0 / 1200.0
 
 		# Entity Directional Shadow Renderer (Player & Mobs) & World Shadow Map (Trees, Mountains)
@@ -180,6 +184,41 @@ class Window(pyglet.window.Window):
 
 		# Crosshair stuff
 		self.create_crosshair()
+
+	@property
+	def moon_phase(self):
+		"""Returns current moon phase (0..7):
+		0: Full Moon (100% light)
+		1: Waning Gibbous (75%)
+		2: Third Quarter (50%)
+		3: Waning Crescent (25%)
+		4: New Moon (5% light, empowered hostile mobs)
+		5: Waxing Crescent (25%)
+		6: First Quarter (50%)
+		7: Waxing Gibbous (75%)
+		"""
+		return int(getattr(self, "day_count", 0)) % 8
+
+	@property
+	def moon_brightness(self):
+		"""Returns 0.05..1.0 brightness multiplier for the current moon phase."""
+		BRIGHTNESS_MAP = [1.00, 0.75, 0.50, 0.25, 0.05, 0.25, 0.50, 0.75]
+		return BRIGHTNESS_MAP[self.moon_phase]
+
+	@property
+	def moon_phase_name(self):
+		"""Returns human-readable name of the current moon phase."""
+		PHASE_NAMES = [
+			"Full Moon",
+			"Waning Gibbous",
+			"Third Quarter",
+			"Waning Crescent",
+			"New Moon",
+			"Waxing Crescent",
+			"First Quarter",
+			"Waxing Gibbous",
+		]
+		return PHASE_NAMES[self.moon_phase]
 
 	def start_new_world_generation(self, raw_name="", raw_seed=""):
 		folder_name = world_save.get_unique_world_name(raw_name)
@@ -196,8 +235,9 @@ class Window(pyglet.window.Window):
 		self.world_seed = seed_val
 		self.is_saved_load = False
 
-		# Fresh worlds ALWAYS start at Sunrise (0.25)
+		# Fresh worlds ALWAYS start at Sunrise (0.25) on Day 0 (Full Moon)
 		self.time_of_day = 0.25
+		self.day_count = 0
 		self.update_sky_color()
 
 		if hasattr(self, 'world') and self.world is not None:
@@ -217,6 +257,7 @@ class Window(pyglet.window.Window):
 			texture_manager_instance=getattr(self, "texture_manager", None),
 			block_types_table=getattr(self, "block_types", None)
 		)
+		self.world.window = self
 		self.dimension = "overworld"
 		self.overworld = None
 		self.nether_world = None
@@ -293,6 +334,7 @@ class Window(pyglet.window.Window):
 			texture_manager_instance=getattr(self, "texture_manager", None),
 			block_types_table=getattr(self, "block_types", None)
 		)
+		self.world.window = self
 		self.overworld = None
 		self.nether_world = None
 		self.end_world = None
@@ -334,6 +376,7 @@ class Window(pyglet.window.Window):
 
 		# Restore world attributes
 		self.time_of_day = w_info.get('time_of_day', 0.25)
+		self.day_count = w_info.get('day_count', 0)
 		self.update_sky_color()
 
 		if saved_dim == "nether":
@@ -467,6 +510,7 @@ class Window(pyglet.window.Window):
 			import end_generator
 			world_data = {
 				'time_of_day': self.time_of_day,
+				'day_count': getattr(self, 'day_count', 0),
 				'render_distance': self.world.render_distance if self.world else self.global_render_distance,
 				'dimension': curr_dim,
 				'dragon_defeated': getattr(end_generator.end_generator, 'dragon_defeated', False)
@@ -577,6 +621,21 @@ class Window(pyglet.window.Window):
 
 			self.world = None
 
+		if hasattr(self, "mob_manager") and self.mob_manager:
+			self.mob_manager.mobs.clear()
+			self.mob_manager.active_spawners.clear()
+			if hasattr(self.mob_manager, "spawner_particles"):
+				self.mob_manager.spawner_particles.clear()
+			if hasattr(self.mob_manager, "fireball_manager") and self.mob_manager.fireball_manager:
+				self.mob_manager.fireball_manager.fireballs.clear()
+
+		if hasattr(self, "item_drop_manager") and self.item_drop_manager:
+			self.item_drop_manager.drops.clear()
+		if hasattr(self, "arrow_manager") and self.arrow_manager:
+			self.arrow_manager.arrows.clear()
+		if hasattr(self, "tnt_manager") and self.tnt_manager:
+			self.tnt_manager.tnt_entities.clear()
+
 		self.overworld = None
 		self.nether_world = None
 		self.end_world = None
@@ -591,6 +650,7 @@ class Window(pyglet.window.Window):
 			texture_manager_instance=getattr(self, "texture_manager", None),
 			block_types_table=getattr(self, "block_types", None)
 		)
+		dest_world.window = self
 
 		if hasattr(self, "dimension_chests") and dest_dim in self.dimension_chests:
 			dest_world.chests.update(self.dimension_chests[dest_dim])
@@ -812,11 +872,11 @@ class Window(pyglet.window.Window):
 			dest_world = self._load_and_setup_dimension(target_dim)
 			self.world = dest_world
 
-			# Pre-generate and mesh destination chunks
+			# Pre-generate and mesh immediate 3x3 destination chunks
 			cx = int(math.floor(x / 16.0))
 			cz = int(math.floor(z / 16.0))
-			for dx in range(-2, 3):
-				for dz in range(-2, 3):
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
 					cpos = (cx + dx, 0, cz + dz)
 					if cpos not in dest_world.chunks:
 						dest_world.chunks[cpos] = dest_world.generate_chunk(cpos[0], cpos[2])
@@ -835,8 +895,17 @@ class Window(pyglet.window.Window):
 			# Local dimension teleport
 			cx = int(math.floor(x / 16.0))
 			cz = int(math.floor(z / 16.0))
-			for dx in range(-2, 3):
-				for dz in range(-2, 3):
+
+			# 1. Instantly purge all distant chunks, cancel distant generation futures, and flush load/mesh queues
+			self.world.purge_distant_chunks(cx, cz)
+
+			# 2. Despawn distant mobs & spawner trackers
+			if hasattr(self, "mob_manager") and self.mob_manager:
+				self.mob_manager.purge_distant_mobs(self.camera.position)
+
+			# 3. Pre-generate immediate 3x3 chunks around target destination
+			for dx in range(-1, 2):
+				for dz in range(-1, 2):
 					cpos = (cx + dx, 0, cz + dz)
 					if cpos not in self.world.chunks:
 						self.world.chunks[cpos] = self.world.generate_chunk(cpos[0], cpos[2])
@@ -845,6 +914,9 @@ class Window(pyglet.window.Window):
 			self.camera.position = [float(x), float(y) + self.camera.eye_offset, float(z)]
 			self.camera.velocity_y = 0.0
 			self.camera.fall_start_y = None
+
+			if hasattr(self, "mob_manager") and self.mob_manager:
+				self.mob_manager.populate_initial_mobs(self.camera.position)
 
 	def update_sky_color(self):
 		if getattr(self, "dimension", "overworld") == "nether":
@@ -857,8 +929,11 @@ class Window(pyglet.window.Window):
 			return
 
 		tod = self.time_of_day % 1.0
+		mb = getattr(self, "moon_brightness", 1.0)
 
-		night_c = (0.05, 0.05, 0.12)
+		# Night sky tone naturally scales with Moon Phase (Deep obsidian on New Moon, bright pale navy on Full Moon)
+		night_mult = 0.20 + 0.80 * mb
+		night_c = (0.05 * night_mult, 0.05 * night_mult, 0.12 * night_mult)
 		dawn_c  = (0.90, 0.48, 0.22)
 		day_c   = (0.50, 0.78, 1.00)
 		dusk_c  = (0.85, 0.38, 0.18)
@@ -1363,8 +1438,10 @@ class Window(pyglet.window.Window):
 		
 		# Advance day/night cycle smoothly without jumping on window resizes
 		clamped_dt = min(delta_time, 0.05)
-		self.time_of_day += self.cycle_speed * clamped_dt
-		self.time_of_day %= 1.0  # Keep time_of_day in the range [0.0, 1.0]
+		new_tod = self.time_of_day + self.cycle_speed * clamped_dt
+		if new_tod >= 1.0:
+			self.day_count = getattr(self, "day_count", 0) + int(new_tod)
+		self.time_of_day = new_tod % 1.0
 
 	def get_scene_texture(self, width, height):
 		if self.scene_texture is None or self.scene_tex_size != (width, height):
@@ -1445,8 +1522,9 @@ class Window(pyglet.window.Window):
 			# Fast sunrise/sunset light ramp: Level 6/7 night -> Level 15 day as sun clears the horizon
 			t_sun = max(0.0, min(1.0, (sun_y + 0.10) / 0.30))
 			smooth_t = t_sun * t_sun * (3.0 - 2.0 * t_sun)
-			sky_factor = 0.40 + 0.60 * smooth_t
-			min_light = 0.20
+			mb = float(self.moon_brightness)
+			sky_factor = (0.35 + 0.05 * mb) + (0.60 * smooth_t)
+			min_light = 0.16 + 0.04 * mb
 			dim_id = 0
 
 		self.current_sky_factor = sky_factor
@@ -1465,6 +1543,10 @@ class Window(pyglet.window.Window):
 			gl.glUniform1f(self.game_time_loc, getattr(self, "total_game_time", 0.0))
 		if hasattr(self, "dimension_id_loc") and self.dimension_id_loc is not None:
 			gl.glUniform1i(self.dimension_id_loc, dim_id)
+		if hasattr(self, "moon_brightness_loc") and self.moon_brightness_loc is not None:
+			gl.glUniform1f(self.moon_brightness_loc, float(self.moon_brightness))
+		if hasattr(self, "moon_phase_loc") and self.moon_phase_loc is not None:
+			gl.glUniform1i(self.moon_phase_loc, int(self.moon_phase))
 
 		# Spawner Dynamic Light & Glow (Active in Shader Mode only)
 		is_shader_mode = (getattr(self, "lighting_mode", "BLOCK") == "RAYTRACED")
@@ -1632,7 +1714,8 @@ class Window(pyglet.window.Window):
 				overworld_sky.overworld_sky_renderer.render(
 					self.camera,
 					time_of_day=getattr(self, "time_of_day", 0.25),
-					total_time=getattr(self, "total_game_time", 0.0)
+					total_time=getattr(self, "total_game_time", 0.0),
+					moon_phase=getattr(self, "moon_phase", 0)
 				)
 			except Exception as e:
 				pass
@@ -1670,7 +1753,15 @@ class Window(pyglet.window.Window):
 		R = 380.0
 
 		sun_layer = float(self.world.texture_manager.textures.index("sun")) if "sun" in self.world.texture_manager.textures else 0.0
-		moon_layer = float(self.world.texture_manager.textures.index("moon")) if "moon" in self.world.texture_manager.textures else 0.0
+		phase = getattr(self, "moon_phase", 0)
+		mb = getattr(self, "moon_brightness", 1.0)
+		phase_tex = f"moon_phase_{phase}"
+		if phase_tex in self.world.texture_manager.textures:
+			moon_layer = float(self.world.texture_manager.textures.index(phase_tex))
+		elif "moon" in self.world.texture_manager.textures:
+			moon_layer = float(self.world.texture_manager.textures.index("moon"))
+		else:
+			moon_layer = 0.0
 
 		pos_data = []
 		tex_data = []
@@ -1711,7 +1802,7 @@ class Window(pyglet.window.Window):
 			v_idx += 4
 
 		build_celestial_quad(sun_dx, sun_dy, sun_dz, sun_layer, size=65.0)
-		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=55.0)
+		build_celestial_quad(moon_dx, moon_dy, moon_dz, moon_layer, size=55.0, shading_val=max(0.15, mb))
 
 		# Stars are ONLY drawn during Night (tod < 0.20 or tod >= 0.80)
 		# They are completely undrawn (0 geometry) during daytime and sunrise!

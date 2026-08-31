@@ -437,9 +437,47 @@ def execute_command(game, raw_cmd):
 		subcmd = args[0].lower()
 		if subcmd == "set":
 			if len(args) < 2:
-				return False, "Usage: /time set <sunrise | midday | sunset | midnight | value>", COLOR_ERROR
+				return False, "Usage: /time set <sunrise | midday | sunset | midnight | moon <phase> | day <num> | value>", COLOR_ERROR
 
 			target_val = args[1].lower()
+
+			# Sub-preset: /time set moon <phase_name_or_int>
+			if target_val == "moon":
+				if len(args) < 3:
+					return False, "Usage: /time set moon <0-7 | full | new | waning_gibbous | third_quarter | waning_crescent | waxing_crescent | first_quarter | waxing_gibbous>", COLOR_ERROR
+				m_arg = args[2].lower()
+				PHASE_ALIASES = {
+					"full": 0, "full_moon": 0, "0": 0,
+					"waning_gibbous": 1, "gibbous_waning": 1, "1": 1,
+					"third_quarter": 2, "last_quarter": 2, "2": 2,
+					"waning_crescent": 3, "crescent_waning": 3, "3": 3,
+					"new": 4, "new_moon": 4, "4": 4,
+					"waxing_crescent": 5, "crescent_waxing": 5, "5": 5,
+					"first_quarter": 6, "6": 6,
+					"waxing_gibbous": 7, "gibbous_waxing": 7, "7": 7,
+				}
+				if m_arg in PHASE_ALIASES:
+					target_phase = PHASE_ALIASES[m_arg]
+					game.day_count = target_phase
+					game.time_of_day = 0.0  # Set to midnight to view moon
+					if hasattr(game, "update_sky_color"):
+						game.update_sky_color()
+					return True, f"Set Moon to Phase {target_phase} ({game.moon_phase_name}, Day {game.day_count}) at Midnight", COLOR_SUCCESS
+				else:
+					return False, f"Unknown moon phase: '{m_arg}'. (Options: full, new, waning_gibbous, third_quarter, waning_crescent, waxing_crescent, first_quarter, waxing_gibbous, 0-7)", COLOR_ERROR
+
+			# Sub-preset: /time set day <day_number>
+			if target_val == "day" and len(args) >= 3:
+				try:
+					d_num = int(args[2])
+					game.day_count = max(0, d_num)
+					game.time_of_day = 0.50
+					if hasattr(game, "update_sky_color"):
+						game.update_sky_color()
+					return True, f"Set world to Day {game.day_count} (Moon Phase: {game.moon_phase_name})", COLOR_SUCCESS
+				except ValueError:
+					return False, f"Invalid day number: '{args[2]}'", COLOR_ERROR
+
 			PRESETS = {
 				"sunrise": 0.25,
 				"dawn": 0.25,
@@ -459,7 +497,7 @@ def execute_command(game, raw_cmd):
 				if hasattr(game, "update_sky_color"):
 					game.update_sky_color()
 				name_cap = target_val.capitalize()
-				return True, f"Set time to {name_cap} ({new_tod:.2f})", COLOR_SUCCESS
+				return True, f"Set time to {name_cap} ({new_tod:.2f}) [Day {getattr(game, 'day_count', 0)}: {getattr(game, 'moon_phase_name', 'Full Moon')}]", COLOR_SUCCESS
 			else:
 				try:
 					num_val = float(target_val)
@@ -471,9 +509,9 @@ def execute_command(game, raw_cmd):
 					game.time_of_day = new_tod
 					if hasattr(game, "update_sky_color"):
 						game.update_sky_color()
-					return True, f"Set time to {new_tod:.3f}", COLOR_SUCCESS
+					return True, f"Set time to {new_tod:.3f} [Day {getattr(game, 'day_count', 0)}: {getattr(game, 'moon_phase_name', 'Full Moon')}]", COLOR_SUCCESS
 				except ValueError:
-					return False, f"Unknown time preset: '{target_val}' (Use: sunrise, midday, sunset, midnight)", COLOR_ERROR
+					return False, f"Unknown time preset: '{target_val}' (Use: sunrise, midday, sunset, midnight, moon <phase>)", COLOR_ERROR
 
 		elif subcmd == "add":
 			if len(args) < 2:
@@ -482,15 +520,19 @@ def execute_command(game, raw_cmd):
 				sec_to_add = float(args[1])
 				# 1200 seconds = 1 full day cycle (20 minutes)
 				tod_delta = sec_to_add / 1200.0
-				game.time_of_day = (getattr(game, "time_of_day", 0.25) + tod_delta) % 1.0
+				cur_time = getattr(game, "day_count", 0) * 1.0 + (getattr(game, "time_of_day", 0.25))
+				new_time = cur_time + tod_delta
+				game.day_count = max(0, int(math.floor(new_time)))
+				game.time_of_day = new_time % 1.0
 				if hasattr(game, "update_sky_color"):
 					game.update_sky_color()
 				sign = "+" if sec_to_add >= 0 else ""
-				return True, f"Added {sign}{sec_to_add:.1f}s to world time (now {game.time_of_day:.3f})", COLOR_SUCCESS
+				return True, f"Added {sign}{sec_to_add:.1f}s to world time (Day {game.day_count}, Moon: {game.moon_phase_name}, Time: {game.time_of_day:.3f})", COLOR_SUCCESS
 			except ValueError:
 				return False, f"Invalid number of seconds: '{args[1]}'", COLOR_ERROR
 
 		elif subcmd == "query":
+			q_target = args[1].lower() if len(args) > 1 else "time"
 			tod = getattr(game, "time_of_day", 0.25) % 1.0
 			total_min = int(tod * 24.0 * 60.0)
 			hours = (total_min // 60)
@@ -499,10 +541,19 @@ def execute_command(game, raw_cmd):
 			disp_hour = hours % 12
 			if disp_hour == 0:
 				disp_hour = 12
-			return True, f"Current time is {disp_hour}:{mins:02d} {period} (time_of_day: {tod:.3f})", COLOR_INFO
+
+			if q_target in ("moon", "phase", "moon_phase"):
+				m_name = getattr(game, "moon_phase_name", "Full Moon")
+				m_idx = getattr(game, "moon_phase", 0)
+				m_br = int(round(getattr(game, "moon_brightness", 1.0) * 100))
+				return True, f"Moon Phase: {m_name} (Phase {m_idx}/7, Illumination: {m_br}%, Day {getattr(game, 'day_count', 0)})", COLOR_INFO
+			elif q_target in ("day", "daytime"):
+				return True, f"Current Day: {getattr(game, 'day_count', 0)} (Moon Phase: {getattr(game, 'moon_phase_name', 'Full Moon')})", COLOR_INFO
+			else:
+				return True, f"Current time is {disp_hour}:{mins:02d} {period} (time_of_day: {tod:.3f}, Day {getattr(game, 'day_count', 0)}, Moon: {getattr(game, 'moon_phase_name', 'Full Moon')})", COLOR_INFO
 
 		else:
-			return False, f"Unknown subcommand: '{subcmd}'. Use: /time set <preset> or /time add <seconds>", COLOR_ERROR
+			return False, f"Unknown subcommand: '{subcmd}'. Use: /time set <preset>, /time add <seconds>, or /time query [moon|day|time]", COLOR_ERROR
 
 	else:
 		return False, f"Unknown command: '/{cmd}'. Available: /tp, /summon, /kill, /locate, /time", COLOR_ERROR

@@ -18,6 +18,7 @@ uniform vec3 sun_direction;     // Normalized vector to Sun in world space
 uniform vec3 camera_pos;        // Player eye position
 uniform float game_time;        // Elapsed time (seconds) for wave/reflection dynamics
 uniform int dimension_id;       // 0: Overworld, 1: Nether, 2: End
+uniform float moon_brightness;  // 0.05 (New Moon) to 1.0 (Full Moon)
 uniform int num_spawners;       // Active spawner count within visual range
 uniform vec3 spawner_positions[16]; // Active spawner positions for shader radiance
 
@@ -161,14 +162,15 @@ void main(void) {
 	// Celestial Sun & Sky Colors (Smooth continuous day/sunset/night gradients)
 	vec3 midday_sun = vec3(1.35, 1.28, 1.15);
 	vec3 sunset_sun = vec3(1.50, 0.68, 0.22);
-	vec3 moon_light = vec3(0.42, 0.55, 0.88);
+	float mb = (moon_brightness <= 0.0) ? 1.0 : moon_brightness;
+	vec3 moon_light = vec3(0.42, 0.55, 0.88) * (0.10 + 0.90 * mb);
 
 	vec3 direct_day_sun = mix(midday_sun, sunset_sun, horizon_factor);
 	vec3 direct_sun_color = mix(moon_light, direct_day_sun, day_factor);
 
 	vec3 midday_sky = vec3(0.55, 0.72, 0.98) * 0.50;
 	vec3 sunset_sky = vec3(0.75, 0.45, 0.30) * 0.55;
-	vec3 night_sky  = vec3(0.12, 0.16, 0.30);
+	vec3 night_sky  = vec3(0.12, 0.16, 0.30) * (0.15 + 0.85 * mb);
 
 	vec3 direct_day_sky = mix(midday_sky, sunset_sky, horizon_factor);
 	vec3 ambient_sky_color = mix(night_sky, direct_day_sky, day_factor);

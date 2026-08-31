@@ -2240,6 +2240,8 @@ class World:
 		self.texture_manager.add_texture("end_stone")
 		self.texture_manager.add_texture("sun")
 		self.texture_manager.add_texture("moon")
+		for phase in range(8):
+			self.texture_manager.add_texture(f"moon_phase_{phase}")
 		self.texture_manager.add_texture("experience_orb")
 		for frame in range(4):
 			self.texture_manager.add_texture(f"experience_orb_{frame}")
@@ -3991,8 +3993,65 @@ class World:
 			self._rebuild_load_queue(player_cx, player_cz)
 
 		to_unload = [pos for pos in self.chunks if max(abs(pos[0] - player_cx), abs(pos[2] - player_cz)) > self.unload_distance]
-		for chunk_pos in to_unload[:2]:
+		for chunk_pos in to_unload[:4]:
 			self.unload_chunk(chunk_pos)
+
+	def purge_distant_chunks(self, player_cx, player_cz, max_dist=None):
+		"""
+		Immediately unloads all distant chunks, cancels pending generation/meshing futures,
+		and flushes worker queues for areas outside the player's active radius.
+		Instantly frees GPU VRAM, stops CPU thread spinning, and prevents overheating.
+		"""
+		limit_dist = max_dist if max_dist is not None else self.unload_distance
+
+		# 1. Immediately unload all chunks exceeding distance limit
+		distant_chunks = [
+			cpos for cpos in list(self.chunks.keys())
+			if max(abs(cpos[0] - player_cx), abs(cpos[2] - player_cz)) > limit_dist
+		]
+		for cpos in distant_chunks:
+			self.unload_chunk(cpos)
+
+		# 2. Cancel and purge all pending generation futures for distant chunks
+		for cpos in list(self.chunk_generation_futures.keys()):
+			if max(abs(cpos[0] - player_cx), abs(cpos[2] - player_cz)) > limit_dist:
+				fut = self.chunk_generation_futures.pop(cpos, None)
+				if fut:
+					fut.cancel()
+
+		# 3. Cancel and purge all pending section meshing futures for distant chunks
+		for sec_key in list(self.section_mesh_futures.keys()):
+			cx, cz, sy = sec_key
+			if max(abs(cx - player_cx), abs(cz - player_cz)) > limit_dist:
+				fut = self.section_mesh_futures.pop(sec_key, None)
+				if fut:
+					fut.cancel()
+
+		# 4. Clear and rebuild load and meshing queues
+		self._load_queue = [
+			cpos for cpos in self._load_queue
+			if max(abs(cpos[0] - player_cx), abs(cpos[2] - player_cz)) <= self.render_distance
+		]
+		self.section_mesh_queue = {
+			(cx, cz, sy) for (cx, cz, sy) in self.section_mesh_queue
+			if max(abs(cx - player_cx), abs(cz - player_cz)) <= self.render_distance
+		}
+		self.pending_section_uploads = [
+			item for item in self.pending_section_uploads
+			if max(abs(item[0] - player_cx), abs(item[1] - player_cz)) <= self.render_distance
+		]
+
+		# 5. Rebuild load queue for new player position
+		self._last_player_chunk = (player_cx, player_cz)
+		self._rebuild_load_queue(player_cx, player_cz)
+
+		# 6. Rebuild shadow map for the new center
+		if hasattr(self, 'shadow_map') and self.shadow_map:
+			try:
+				self.shadow_map.center_chunk = (player_cx, player_cz)
+				self.shadow_map.rebuild_all_chunks(self)
+			except Exception:
+				pass
 
 	def unload_chunk(self, chunk_position):
 		if chunk_position in self.dirty_chunks:

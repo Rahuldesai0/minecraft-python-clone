@@ -136,7 +136,7 @@ class ChunkSection:
 
 	def delete(self):
 		if self.vao is not None:
-			if hasattr(self.world, 'free_chunk_pool'):
+			if hasattr(self.world, 'free_chunk_pool') and len(self.world.free_chunk_pool) < 128:
 				self.world.free_chunk_pool.append((
 					self.vao,
 					self.vertex_position_vbo,
@@ -145,11 +145,14 @@ class ChunkSection:
 					self.ibo
 				))
 			else:
-				gl.glDeleteVertexArrays(1, self.vao)
-				gl.glDeleteBuffers(1, self.vertex_position_vbo)
-				gl.glDeleteBuffers(1, self.tex_coord_vbo)
-				gl.glDeleteBuffers(1, self.shading_values_vbo)
-				gl.glDeleteBuffers(1, self.ibo)
+				try:
+					gl.glDeleteVertexArrays(1, self.vao)
+					gl.glDeleteBuffers(1, self.vertex_position_vbo)
+					gl.glDeleteBuffers(1, self.tex_coord_vbo)
+					gl.glDeleteBuffers(1, self.shading_values_vbo)
+					gl.glDeleteBuffers(1, self.ibo)
+				except Exception:
+					pass
 			self.vao = None
 			self.opaque_indices_length = 0
 			self.translucent_indices_length = 0

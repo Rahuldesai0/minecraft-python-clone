@@ -51,6 +51,35 @@ class MobManager:
 		self.max_blaze_mobs = 20
 		self.max_end_mobs = 14
 
+	def is_new_moon_night(self, time_of_day=None):
+		"""Checks if current time is night on a New Moon (phase 4) in the Overworld."""
+		curr_dim = getattr(self.world, "dimension", "overworld")
+		if curr_dim != "overworld":
+			return False
+		win = getattr(self.world, "window", None)
+		if win is not None and hasattr(win, "day_count"):
+			day_count = win.day_count
+		elif hasattr(self, "day_count"):
+			day_count = self.day_count
+		elif hasattr(self.world, "day_count"):
+			day_count = self.world.day_count
+		else:
+			day_count = 0
+		if (int(day_count) % 8) != 4:
+			return False
+
+		if time_of_day is None:
+			if win is not None and hasattr(win, "time_of_day"):
+				tod = float(win.time_of_day) % 1.0
+			elif hasattr(self, "last_time_of_day"):
+				tod = float(self.last_time_of_day) % 1.0
+			else:
+				tod = 0.0
+		else:
+			tod = float(time_of_day) % 1.0
+
+		return (tod < 0.23 or tod > 0.77)
+
 	def spawn_mob(self, mob_type, position):
 		eid = self.next_entity_id
 		self.next_entity_id += 1
@@ -81,6 +110,16 @@ class MobManager:
 			mob = mob_entity.CreeperEntity(eid, position)
 		else:
 			mob = mob_entity.CowEntity(eid, position)
+
+		# On New Moon night in Overworld, hostile mobs spawn empowered with +25% HP, +30% Damage, +15% Speed!
+		is_hostile_mob = getattr(mob, "is_hostile", False) or (mob.mob_type in ("zombie", "skeleton", "spider", "creeper", "enderman", "silverfish", "blaze"))
+		if is_hostile_mob and self.is_new_moon_night():
+			mob.is_new_moon_empowered = True
+			mob.damage_multiplier = 1.30
+			mob.speed_multiplier = 1.20
+			mob.max_health = int(mob.max_health * 1.25)
+			mob.health = mob.max_health
+			mob.speed = mob.speed * 1.15
 
 		self.mobs.append(mob)
 		return mob
@@ -736,6 +775,13 @@ class MobManager:
 
 		# Throttled passive and hostile mob spawning
 		self.passive_spawn_timer += dt
+		self.last_time_of_day = time_of_day
+		is_new_moon = self.is_new_moon_night(time_of_day)
+		if getattr(self.world, "dimension", "overworld") == "overworld":
+			for m in self.mobs:
+				if getattr(m, "is_hostile", False):
+					m.is_new_moon_empowered = is_new_moon
+
 		if self.passive_spawn_timer >= 2.0:
 			self.passive_spawn_timer = 0.0
 			curr_dim = getattr(self.world, "dimension", "overworld")
@@ -853,6 +899,39 @@ class MobManager:
 							other.become_angry(attacker_pos)
 			return True
 		return False
+
+	def purge_distant_mobs(self, player_pos, max_dist=48.0):
+		"""
+		Immediately despawns distant mobs and distant spawner tracking when player teleports.
+		Prevents background AI pathfinding and physics simulation from burning CPU and heating laptop.
+		"""
+		if not player_pos:
+			return
+		px, py, pz = player_pos
+		max_dist_sq = max_dist * max_dist
+
+		# 1. Filter active mobs
+		retained_mobs = []
+		for mob in self.mobs:
+			mx, my, mz = mob.position
+			dx, dy, dz = mx - px, my - py, mz - pz
+			if (dx * dx + dy * dy + dz * dz) <= max_dist_sq:
+				retained_mobs.append(mob)
+		self.mobs = retained_mobs
+
+		# 2. Filter active spawners
+		retained_spawners = {}
+		for sp_pos, sdata in self.active_spawners.items():
+			spx, spy, spz = sp_pos
+			dx, dz = spx - px, spz - pz
+			if (dx * dx + dz * dz) <= (64.0 * 64.0):
+				retained_spawners[sp_pos] = sdata
+		self.active_spawners = retained_spawners
+
+		# 3. Clear transient particle effects and reset aggro
+		if hasattr(self, "spawner_particles"):
+			self.spawner_particles.clear()
+		self.reset_all_aggro()
 
 	def draw(self, camera, world=None, sky_factor=1.0, min_light=0.20):
 		"""Render active 3D models for all passive, hostile, and neutral mobs."""

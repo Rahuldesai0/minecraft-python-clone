@@ -213,6 +213,8 @@ class ArrowEntity:
 		if hit_player and min_player_dist <= min_block_dist and (not hit_mob or min_player_dist <= min_mob_dist):
 			impact_speed = math.sqrt(self.velocity[0]**2 + self.velocity[1]**2 + self.velocity[2]**2)
 			base_damage = int(math.ceil(impact_speed * 2.0))
+			if self.shooter and getattr(self.shooter, 'is_new_moon_empowered', False):
+				base_damage = int(math.ceil(base_damage * 1.30)) + 1
 			total_damage = base_damage
 			camera.take_damage(total_damage, flying=getattr(camera, 'flying', False), gui=gui, world=world)
 			self.despawn = True

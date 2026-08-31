@@ -360,6 +360,11 @@ class OverworldRealisticSkyRenderer:
             tex_dir = 'd:/Programs/tp/textures'
             self.sun_tex = load_gl_texture(os.path.join(tex_dir, "overworld_sun.png"))
             self.moon_tex = load_gl_texture(os.path.join(tex_dir, "overworld_moon.png"))
+            self.moon_textures = []
+            for i in range(8):
+                ph_path = os.path.join(tex_dir, f"overworld_moon_phase_{i}.png")
+                t_obj = load_gl_texture(ph_path) if os.path.exists(ph_path) else self.moon_tex
+                self.moon_textures.append(t_obj)
             self.aurora_tex = load_gl_texture(os.path.join(tex_dir, "aurora_curtain.png"))
             self.star_tex = load_gl_texture(os.path.join(tex_dir, "space_star.png"))
 
@@ -440,7 +445,7 @@ class OverworldRealisticSkyRenderer:
         self.cloud_index_count = len(indices)
         gl.glBindVertexArray(0)
 
-    def render(self, camera, time_of_day=0.25, total_time=0.0):
+    def render(self, camera, time_of_day=0.25, total_time=0.0, moon_phase=0):
         if not self.initialized:
             self.init_gl()
         if not self.initialized or self.program is None:
@@ -649,10 +654,12 @@ class OverworldRealisticSkyRenderer:
             p, t, c, idxs = build_billboard_quad((sun_dx, sun_dy, sun_dz), 95.0, 95.0, color=(sr, sg, sb, sa))
             upload_and_draw(p, t, c, idxs)
 
-        # 4. Photorealistic Moon
-        if self.moon_tex and moon_dy > -0.15:
+        # 4. Photorealistic Moon with 8 Phases
+        phase_idx = int(moon_phase) % 8
+        moon_tex = self.moon_textures[phase_idx] if getattr(self, "moon_textures", None) and phase_idx < len(self.moon_textures) else self.moon_tex
+        if moon_tex and moon_dy > -0.15:
             gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, self.moon_tex)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, moon_tex)
 
             moon_elev_fade = max(0.0, min(1.0, (moon_dy + 0.15) / 0.25))
             p, t, c, idxs = build_billboard_quad((moon_dx, moon_dy, moon_dz), 80.0, 80.0, color=(1.0, 1.0, 1.0, moon_elev_fade))
