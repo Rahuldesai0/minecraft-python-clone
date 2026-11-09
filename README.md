@@ -179,7 +179,7 @@ Spawn any mob or the Ender Dragon boss in front of you or at specific coordinate
 ```text
 /summon <mob_name> [x] [y] [z]
 ```
-- **Available Entities**: `cow`, `pig`, `sheep`, `chicken`, `zombie`, `skeleton`, `spider`, `creeper`, `enderman`, `zombie_pigman`, `blaze`, `silverfish`, `ghast`, `magma_cube`, `ender_dragon`.
+- **Available Entities**: `cow`, `pig`, `sheep`, `chicken`, `zombie`, `skeleton`, `spider`, `creeper`, `enderman`, `zombie_pigman`, `blaze`, `silverfish`, `ender_dragon`.
 
 ### 4. World Time & Moon Phases (`/time`)
 Query or control the time of day, day counter, and lunar phase:
