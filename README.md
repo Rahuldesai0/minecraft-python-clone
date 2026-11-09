@@ -73,8 +73,6 @@ Switch seamlessly at any time via **Pause Menu → Settings → Lighting Mode**:
 - **Nether Mobs**:
   - *Zombie Pigman* (neutral unless attacked; triggers group aggro)
   - *Blaze* (hovers and fires 3-round fireball volleys)
-  - *Ghast* (aerial mob that shoots deflectable explosive fireballs)
-  - *Magma Cube* (jumping slimes that split into smaller cubes upon death)
 - **The Ender Dragon Boss**:
   - Full boss health bar, End Crystal healing beams, circling/strafing flight patterns, purple Dragon Fireball breath attacks, central fountain perching phase, and XP/exit portal activation upon defeat.
 
